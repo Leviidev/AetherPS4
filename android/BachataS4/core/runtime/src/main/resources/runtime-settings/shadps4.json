@@ -7,7 +7,7 @@
     "title": "Audio Backend",
     "help": "Controls shadPS4 audio backend.",
     "kind": "ENUM",
-    "defaultValue": null,
+    "defaultValue": "SDL",
     "minimum": null,
     "maximum": null,
     "choices": [
@@ -958,7 +958,7 @@
     "title": "Cursor State",
     "help": "Controls shadPS4 cursor state.",
     "kind": "ENUM",
-    "defaultValue": null,
+    "defaultValue": "0",
     "minimum": null,
     "maximum": null,
     "choices": [

@@ -109,7 +109,7 @@
     "title": "Avx",
     "help": "Expose AVX extension to CPUID and cpuinfo file. Default value is 2 on Arm64 and LoongArch64 because it's fully implemented in DynaRec, 0 otherwise. Available in WowBox64.",
     "kind": "ENUM",
-    "defaultValue": null,
+    "defaultValue": "0",
     "minimum": null,
     "maximum": null,
     "choices": [
@@ -1046,7 +1046,7 @@
     "title": "Log",
     "help": "Enable or disable Box64 logs, default value is 0 if stdout is not terminal, 1 otherwise. Available in WowBox64.",
     "kind": "ENUM",
-    "defaultValue": null,
+    "defaultValue": "0",
     "minimum": null,
     "maximum": null,
     "choices": [

@@ -164,7 +164,20 @@ private fun SettingsContent(
         is ProfileScope.Game -> "Settings (Game: ${scope.gameId})"
     }
     val preset = state.profile.box64Preset ?: Box64Preset.DEFAULT
-    val shown = if (state.runtime == SettingsRuntime.BOX64 && preset != Box64Preset.CUSTOM) emptyList() else state.settings
+    val gameScope = state.scope is ProfileScope.Game
+    val selectedGuestBackend = state.profile.guestBackend
+    // Box64 flags only when guest backend is explicitly Box64 (global null → FEX default).
+    val box64Selected = if (gameScope) {
+        selectedGuestBackend == RuntimeGuestBackend.BOX64
+    } else {
+        (selectedGuestBackend ?: RuntimeGuestBackend.FEX) == RuntimeGuestBackend.BOX64
+    }
+    val shown = when {
+        state.runtime != SettingsRuntime.BOX64 -> state.settings
+        !box64Selected -> emptyList()
+        preset != Box64Preset.CUSTOM -> emptyList()
+        else -> state.settings
+    }
     Scaffold(
         containerColor = BachataPalette.Canvas,
         bottomBar = { BachataActionBar("A  CONFIRM", "↔  CHANGE", "B  BACK") },
@@ -417,27 +430,29 @@ private fun SettingsContent(
                         contentPadding = PaddingValues(bottom = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        item {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(categoryScrollState)
-                                    .padding(horizontal = 16.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                categoriesList.forEachIndexed { index, category ->
-                                    val isSelected = if (category == "All") state.selectedCategory == null else state.selectedCategory == category
-                                    val isFocused = focusArea == "categories" && focusedCategoryIndex == index
-                                    CategoryTab(
-                                        label = category,
-                                        selected = isSelected,
-                                        focused = isFocused,
-                                        onClick = {
-                                            focusedCategoryIndex = index
-                                            onCategory(if (category == "All") null else category)
-                                        }
-                                    )
+                        if (state.runtime != SettingsRuntime.BOX64 || box64Selected) {
+                            item {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(categoryScrollState)
+                                        .padding(horizontal = 16.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    categoriesList.forEachIndexed { index, category ->
+                                        val isSelected = if (category == "All") state.selectedCategory == null else state.selectedCategory == category
+                                        val isFocused = focusArea == "categories" && focusedCategoryIndex == index
+                                        CategoryTab(
+                                            label = category,
+                                            selected = isSelected,
+                                            focused = isFocused,
+                                            onClick = {
+                                                focusedCategoryIndex = index
+                                                onCategory(if (category == "All") null else category)
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -449,44 +464,9 @@ private fun SettingsContent(
                                 }
                             }
                         }
-                        item {
-                            val ctx = LocalContext.current
-                            val clearKeysScope = rememberCoroutineScope()
-                            BachataPanel(
-                                modifier = Modifier
-                                    .padding(horizontal = 16.dp)
-                                    .fillMaxWidth(),
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(12.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    Text("Game import", fontWeight = FontWeight.Bold)
-                                    Text(
-                                        "Clears saved PKG passcodes used for package import.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                    )
-                                    BachataPrimaryButton(onClick = {
-                                        clearKeysScope.launch {
-                                            withContext(Dispatchers.IO) {
-                                                com.bachatas4.android.data.PkgKeyStore(ctx.filesDir).clear()
-                                            }
-                                            android.widget.Toast.makeText(
-                                                ctx,
-                                                "Saved PKG keys cleared",
-                                                android.widget.Toast.LENGTH_SHORT,
-                                            ).show()
-                                        }
-                                    }) {
-                                        Text("Clear saved PKG keys")
-                                    }
-                                }
-                            }
-                        }
-                        if (state.runtime == SettingsRuntime.SHADPS4) {
+                        // Game import card temporarily hidden; restore later.
+                        if (state.runtime == SettingsRuntime.BOX64) {
                             item {
-                                val gameScope = state.scope is ProfileScope.Game
-                                val selected = state.profile.guestBackend
                                 val options = if (gameScope) {
                                     listOf<RuntimeGuestBackend?>(null) + RuntimeGuestBackend.entries
                                 } else {
@@ -509,9 +489,9 @@ private fun SettingsContent(
                                             items(options) { option ->
                                                 val label = option?.name?.lowercase() ?: "inherit"
                                                 val isSelected = if (gameScope) {
-                                                    selected == option
+                                                    selectedGuestBackend == option
                                                 } else {
-                                                    (selected ?: RuntimeGuestBackend.FEX) == option
+                                                    (selectedGuestBackend ?: RuntimeGuestBackend.FEX) == option
                                                 }
                                                 CategoryTab(label, isSelected, focused = false) {
                                                     onGuestBackend(option)
@@ -519,7 +499,7 @@ private fun SettingsContent(
                                             }
                                         }
                                         Text(
-                                            if (gameScope && selected == null) {
+                                            if (gameScope && selectedGuestBackend == null) {
                                                 "Uses the global backend."
                                             } else {
                                                 "FEX is the default; Box64 remains an explicit compatibility fallback."
@@ -530,7 +510,7 @@ private fun SettingsContent(
                                 }
                             }
                         }
-                        if (state.runtime == SettingsRuntime.BOX64) {
+                        if (state.runtime == SettingsRuntime.BOX64 && box64Selected) {
                             item {
                                 BachataPanel(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth(), color = BachataPalette.RaisedSurface) {
                                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -719,6 +699,61 @@ private fun HighlightedText(
     Text(text = annotatedString, modifier = modifier, style = style, color = color)
 }
 
+/**
+ * Resolve stored enum value for display/selection.
+ * Unknown or missing values fall back to catalog default, then first choice.
+ */
+private fun resolveEnumChoice(spec: RuntimeSettingSpec, stored: JsonElement?): String {
+    val content = (stored as? JsonPrimitive)?.content
+    if (content != null && content in spec.choices) return content
+    val defaultContent = (spec.defaultValue as? JsonPrimitive)?.content
+    if (defaultContent != null && defaultContent in spec.choices) return defaultContent
+    return spec.choices.firstOrNull().orEmpty()
+}
+
+@Composable
+private fun SettingEditorHeader(
+    spec: RuntimeSettingSpec,
+    state: SettingsUiState,
+    inherited: Boolean,
+) {
+    HighlightedText(
+        text = spec.title.ifBlank { spec.nativeKey },
+        query = state.query,
+        style = MaterialTheme.typography.titleMedium,
+        color = BachataPalette.Primary,
+    )
+    Row {
+        HighlightedText(
+            text = spec.category,
+            query = state.query,
+            style = MaterialTheme.typography.labelSmall,
+            color = BachataPalette.Secondary,
+        )
+        Text(" · ", style = MaterialTheme.typography.labelSmall, color = BachataPalette.Secondary)
+        HighlightedText(
+            text = spec.nativeKey,
+            query = state.query,
+            style = MaterialTheme.typography.labelSmall,
+            color = BachataPalette.Secondary,
+        )
+        if (inherited) {
+            Text(" · inherited", style = MaterialTheme.typography.labelSmall, color = BachataPalette.Secondary)
+        }
+    }
+    if (spec.help.isNotBlank()) {
+        HighlightedText(
+            text = spec.help,
+            query = state.query,
+            style = MaterialTheme.typography.bodySmall,
+            color = BachataPalette.Secondary,
+        )
+    }
+    spec.readOnlyReason?.let {
+        Text("Managed: $it", color = Color(0xFFFFDDB5), style = MaterialTheme.typography.bodySmall)
+    }
+}
+
 @Composable
 private fun SettingEditor(
     spec: RuntimeSettingSpec,
@@ -727,105 +762,80 @@ private fun SettingEditor(
     onBoolean: (RuntimeSettingSpec, JsonPrimitive) -> Unit,
     onReset: (RuntimeSettingSpec) -> Unit,
 ) {
-    val current = state.profile.values[spec.id] ?: spec.defaultValue
+    val stored = state.profile.values[spec.id]
+    val current = stored ?: spec.defaultValue
     val inherited = state.scope is ProfileScope.Game && spec.id !in state.profile.values
+    val isChoiceSetting = spec.kind == SettingKind.ENUM || spec.choices.isNotEmpty()
     var text by remember(spec.id, current) {
-        mutableStateOf(if (current is JsonArray) current.joinToString(",") { (it as JsonPrimitive).content } else (current as? JsonPrimitive)?.content.orEmpty())
+        mutableStateOf(
+            if (current is JsonArray) {
+                current.joinToString(",") { (it as JsonPrimitive).content }
+            } else {
+                (current as? JsonPrimitive)?.content.orEmpty()
+            },
+        )
     }
     BachataPanel(
         modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth(),
         color = if (inherited) BachataPalette.RaisedSurface else BachataPalette.Surface,
     ) {
-        if (spec.kind == SettingKind.BOOLEAN) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    HighlightedText(
-                        text = spec.title.ifBlank { spec.nativeKey },
-                        query = state.query,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = BachataPalette.Primary
-                    )
-                    Row {
-                        HighlightedText(
-                            text = spec.category,
-                            query = state.query,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = BachataPalette.Secondary
-                        )
-                        Text(" · ", style = MaterialTheme.typography.labelSmall, color = BachataPalette.Secondary)
-                        HighlightedText(
-                            text = spec.nativeKey,
-                            query = state.query,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = BachataPalette.Secondary
-                        )
-                        if (inherited) {
-                            Text(" · inherited", style = MaterialTheme.typography.labelSmall, color = BachataPalette.Secondary)
+        when {
+            spec.kind == SettingKind.BOOLEAN -> {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        SettingEditorHeader(spec, state, inherited)
+                    }
+                    val checked = (current as? JsonPrimitive)?.booleanOrNull ?: false
+                    Switch(checked, { onBoolean(spec, JsonPrimitive(it)) }, enabled = spec.readOnlyReason == null)
+                }
+            }
+            isChoiceSetting -> {
+                val selected = resolveEnumChoice(spec, stored ?: current)
+                Column(
+                    Modifier.fillMaxWidth().padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    SettingEditorHeader(spec, state, inherited)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        items(spec.choices) { choice ->
+                            CategoryTab(
+                                label = choice,
+                                selected = selected == choice,
+                                focused = false,
+                                onClick = {
+                                    if (spec.readOnlyReason == null) onValue(spec, choice)
+                                },
+                            )
                         }
                     }
-                    if (spec.help.isNotBlank()) {
-                        HighlightedText(
-                            text = spec.help,
-                            query = state.query,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = BachataPalette.Secondary
-                        )
-                    }
-                    spec.readOnlyReason?.let { Text("Managed: $it", color = Color(0xFFFFDDB5), style = MaterialTheme.typography.bodySmall) }
-                }
-                val checked = (current as? JsonPrimitive)?.booleanOrNull ?: false
-                Switch(checked, { onBoolean(spec, JsonPrimitive(it)) }, enabled = spec.readOnlyReason == null)
-            }
-        } else {
-            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                HighlightedText(
-                    text = spec.title.ifBlank { spec.nativeKey },
-                    query = state.query,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = BachataPalette.Primary
-                )
-                Row {
-                    HighlightedText(
-                        text = spec.category,
-                        query = state.query,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = BachataPalette.Secondary
-                    )
-                    Text(" · ", style = MaterialTheme.typography.labelSmall, color = BachataPalette.Secondary)
-                    HighlightedText(
-                        text = spec.nativeKey,
-                        query = state.query,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = BachataPalette.Secondary
-                    )
-                    if (inherited) {
-                        Text(" · inherited", style = MaterialTheme.typography.labelSmall, color = BachataPalette.Secondary)
-                    }
-                }
-                if (spec.help.isNotBlank()) {
-                    HighlightedText(
-                        text = spec.help,
-                        query = state.query,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = BachataPalette.Secondary
-                    )
-                }
-                spec.readOnlyReason?.let { Text("Managed: $it", color = Color(0xFFFFDDB5), style = MaterialTheme.typography.bodySmall) }
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = spec.readOnlyReason == null,
-                    supportingText = if (spec.choices.isEmpty()) null else ({ Text("Choices: ${spec.choices.joinToString()}") }),
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    BachataPrimaryButton(onClick = { onValue(spec, text) }, enabled = spec.readOnlyReason == null) { Text("Apply") }
                     TextButton(onClick = { onReset(spec) }, enabled = spec.readOnlyReason == null) {
                         Text(if (state.scope is ProfileScope.Game) "Inherit" else "Default")
+                    }
+                }
+            }
+            else -> {
+                Column(
+                    Modifier.fillMaxWidth().padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    SettingEditorHeader(spec, state, inherited)
+                    OutlinedTextField(
+                        value = text,
+                        onValueChange = { text = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = spec.readOnlyReason == null,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        BachataPrimaryButton(onClick = { onValue(spec, text) }, enabled = spec.readOnlyReason == null) {
+                            Text("Apply")
+                        }
+                        TextButton(onClick = { onReset(spec) }, enabled = spec.readOnlyReason == null) {
+                            Text(if (state.scope is ProfileScope.Game) "Inherit" else "Default")
+                        }
                     }
                 }
             }

@@ -161,7 +161,21 @@ class SettingsViewModel @Inject constructor(
             SettingKind.INTEGER -> JsonPrimitive(text.toLong())
             SettingKind.DECIMAL -> JsonPrimitive(text.toDouble())
             SettingKind.LIST -> JsonArray(text.split(',').map(String::trim).filter(String::isNotEmpty).map(::JsonPrimitive))
-            SettingKind.ENUM -> JsonPrimitive(text.also { require(it in spec.choices) { "Invalid choice for ${spec.title}" } })
+            SettingKind.ENUM -> {
+                val choice = when {
+                    text in spec.choices -> text
+                    else -> {
+                        // Unknown JSON/user value → catalog default, else first choice.
+                        val defaultChoice = (spec.defaultValue as? JsonPrimitive)?.content
+                        when {
+                            defaultChoice != null && defaultChoice in spec.choices -> defaultChoice
+                            spec.choices.isNotEmpty() -> spec.choices.first()
+                            else -> throw IllegalArgumentException("Invalid choice for ${spec.title}")
+                        }
+                    }
+                }
+                JsonPrimitive(choice)
+            }
             SettingKind.STRING, SettingKind.PATH -> JsonPrimitive(text)
         }
         val numeric = (value as? JsonPrimitive)?.content?.toDoubleOrNull()
