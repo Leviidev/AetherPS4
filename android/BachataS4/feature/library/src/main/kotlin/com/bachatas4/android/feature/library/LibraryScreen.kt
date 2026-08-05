@@ -70,8 +70,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.draw.drawWithContent
@@ -88,8 +86,6 @@ import com.bachatas4.android.data.ImportProgress
 import com.bachatas4.android.data.UiOrientation
 import com.bachatas4.android.data.UiOrientationPreference
 import com.bachatas4.android.designsystem.BachataActionBar
-import com.bachatas4.android.designsystem.BachataPanel
-import com.bachatas4.android.designsystem.BachataPrimaryButton
 import com.bachatas4.android.designsystem.theme.BachataPalette
 import com.bachatas4.android.runtime.input.GamepadInputManager
 import dagger.hilt.EntryPoint
@@ -400,9 +396,15 @@ fun LibraryContent(
     ) { contentPadding ->
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val localMaxHeight = maxHeight
-            val cols = ((maxWidth - 32.dp + 12.dp) / (148.dp + 12.dp)).toInt().coerceAtLeast(1)
-            LaunchedEffect(cols) {
-                onSetNumColumns(cols)
+            val isLandscape = maxWidth > maxHeight
+            val cols = if (isLandscape) {
+                state.games.size.coerceAtLeast(1)
+            } else {
+                ((maxWidth - 32.dp + 12.dp) / (148.dp + 12.dp)).toInt().coerceAtLeast(1)
+            }
+            LaunchedEffect(cols, isLandscape) {
+                // Landscape carousel is single-row horizontal; vertical d-pad should still step by 1.
+                onSetNumColumns(if (isLandscape) 1 else cols)
             }
 
             if (selectedCoverBitmap != null) {
@@ -413,277 +415,272 @@ fun LibraryContent(
                         .fillMaxSize()
                         .drawWithContent {
                             drawContent()
-                            drawRect(
-                                brush = Brush.verticalGradient(
-                                    colors = listOf(
-                                        Color.Transparent,
-                                        BachataPalette.Canvas
+                            if (isLandscape) {
+                                drawRect(
+                                    brush = Brush.verticalGradient(
+                                        colors = listOf(
+                                            Color.Black.copy(alpha = 0.35f),
+                                            BachataPalette.Canvas.copy(alpha = 0.55f),
+                                            BachataPalette.Canvas,
+                                        ),
                                     ),
-                                    startY = size.height * 0.30f,
-                                    endY = size.height * 0.65f
                                 )
-                            )
-                            drawRect(
-                                color = BachataPalette.Canvas,
-                                topLeft = Offset(0f, size.height * 0.65f),
-                                size = Size(size.width, size.height * 0.35f)
-                            )
+                            } else {
+                                drawRect(
+                                    brush = Brush.verticalGradient(
+                                        colors = listOf(
+                                            Color.Transparent,
+                                            BachataPalette.Canvas
+                                        ),
+                                        startY = size.height * 0.30f,
+                                        endY = size.height * 0.65f
+                                    )
+                                )
+                                drawRect(
+                                    color = BachataPalette.Canvas,
+                                    topLeft = Offset(0f, size.height * 0.65f),
+                                    size = Size(size.width, size.height * 0.35f)
+                                )
+                            }
                         },
-                    alpha = 0.22f,
+                    alpha = if (isLandscape) 0.38f else 0.22f,
                     contentScale = ContentScale.Crop,
                 )
             }
 
+            val header: @Composable () -> Unit = {
+                LibraryScreenHeader(
+                    uiOrientation = uiOrientation,
+                    onToggleOrientation = {
+                        val next = UiOrientationPreference.toggle(uiOrientation)
+                        UiOrientationPreference.write(context, next)
+                        context.findActivity()?.requestedOrientation =
+                            UiOrientationPreference.toActivityOrientation(next)
+                        uiOrientation = next
+                    },
+                    onOpenSettings = onOpenSettings,
+                )
+            }
 
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 148.dp),
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(contentPadding),
-                contentPadding = PaddingValues(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        androidx.compose.ui.viewinterop.AndroidView(
-                            modifier = Modifier.size(32.dp),
-                            factory = { viewContext ->
-                                android.widget.ImageView(viewContext).apply {
-                                    setImageResource(viewContext.applicationInfo.icon)
-                                    contentDescription = "Bachata S4 logo"
+            if (isLandscape) {
+                LibraryLandscapeCarousel(
+                    games = state.games,
+                    selectedGameId = state.selectedGameId,
+                    isImporting = isImporting,
+                    contentPadding = contentPadding,
+                    onSelectGame = onSelectGame,
+                    onShowDetails = { id -> onShowDetails(id) },
+                    onImport = onImport,
+                    header = header,
+                    importStatus = {
+                        Box(modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp)) {
+                            ImportProgressBanner(importProgress = importProgress)
+                        }
+                    },
+                )
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 148.dp),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(contentPadding),
+                    contentPadding = PaddingValues(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        header()
+                    }
+
+                    when (val progress = importProgress) {
+                        is ImportProgress.Selected,
+                        is ImportProgress.Validating,
+                        -> {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                ImportStatusCard(
+                                    title = "Validating package…",
+                                    subtitle = "Checking source access and package type",
+                                    indeterminate = true,
+                                )
+                            }
+                        }
+                        is ImportProgress.ReadingMetadata -> {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                ImportStatusCard(
+                                    title = "Reading metadata…",
+                                    subtitle = progress.displayName,
+                                    indeterminate = true,
+                                )
+                            }
+                        }
+                        is ImportProgress.CheckingStorage -> {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                ImportStatusCard(
+                                    title = "Checking storage…",
+                                    subtitle = "Need ${formatBytes(progress.requiredBytes)} · " +
+                                        "Free ${formatBytes(progress.freeBytes)}",
+                                    indeterminate = true,
+                                )
+                            }
+                        }
+                        is ImportProgress.NeedCopyConfirm -> {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                val enough = progress.freeBytes >= progress.requiredBytes
+                                ImportStatusCard(
+                                    title = "Confirm storage for ${progress.titleHint ?: "PKG"}",
+                                    subtitle = "Needed ${formatBytes(progress.requiredBytes)} · " +
+                                        "Free ${formatBytes(progress.freeBytes)}" +
+                                        if (enough) "" else " · not enough space",
+                                    detail = "Package ${formatBytes(progress.packageBytes)} + " +
+                                        "extract ${formatBytes(progress.extractBytes)}",
+                                    indeterminate = true,
+                                )
+                            }
+                        }
+                        is ImportProgress.Copying -> {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                val fraction = if (progress.totalBytes > 0) {
+                                    (progress.bytesCopied.toFloat() / progress.totalBytes.toFloat())
+                                        .coerceIn(0f, 1f)
+                                } else {
+                                    0f
+                                }
+                                val percent = (fraction * 100f).toInt()
+                                val isPkgCache = progress.currentFile == "Local PKG cache"
+                                ImportStatusCard(
+                                    title = if (isPkgCache) {
+                                        "Copying ${progress.gameTitle} to device"
+                                    } else {
+                                        "Importing ${progress.gameTitle}"
+                                    },
+                                    subtitle = if (progress.totalBytes > 0) {
+                                        "${formatBytes(progress.bytesCopied)} / ${formatBytes(progress.totalBytes)} · $percent%"
+                                    } else {
+                                        formatBytes(progress.bytesCopied)
+                                    },
+                                    detail = progress.currentFile,
+                                    progress = fraction,
+                                    indeterminate = progress.totalBytes <= 0,
+                                )
+                            }
+                        }
+                        is ImportProgress.Extracting -> {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                val fraction = if (progress.totalBytes > 0) {
+                                    (progress.bytesCopied.toFloat() / progress.totalBytes.toFloat())
+                                        .coerceIn(0f, 1f)
+                                } else {
+                                    0f
+                                }
+                                val percent = (fraction * 100f).toInt()
+                                ImportStatusCard(
+                                    title = "Extracting ${progress.gameTitle}",
+                                    subtitle = if (progress.totalBytes > 0) {
+                                        "${formatBytes(progress.bytesCopied)} / ${formatBytes(progress.totalBytes)} · $percent%"
+                                    } else {
+                                        formatBytes(progress.bytesCopied)
+                                    },
+                                    detail = progress.currentFile,
+                                    progress = fraction,
+                                    indeterminate = progress.totalBytes <= 0,
+                                )
+                            }
+                        }
+                        is ImportProgress.Verifying -> {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                ImportStatusCard(
+                                    title = "Verifying ${progress.title}…",
+                                    subtitle = "Checking required game files",
+                                    indeterminate = true,
+                                )
+                            }
+                        }
+                        is ImportProgress.Registering -> {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                ImportStatusCard(
+                                    title = "Registering ${progress.title}…",
+                                    subtitle = "Writing game library entry",
+                                    indeterminate = true,
+                                )
+                            }
+                        }
+                        is ImportProgress.NeedPasscode -> {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                ImportStatusCard(
+                                    title = "Passcode required",
+                                    subtitle = progress.titleHint ?: progress.contentId,
+                                    indeterminate = true,
+                                )
+                            }
+                        }
+                        is ImportProgress.Installed -> {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                Text(
+                                    "${progress.title} installed",
+                                    color = BachataPalette.Accent,
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                            }
+                        }
+                        is ImportProgress.Failed -> {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = Color(0xFF3A1E21).copy(alpha = 0.5f),
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFB4AB).copy(alpha = 0.3f)),
+                                ) {
+                                    Text(
+                                        "Install failed (${progress.code}): ${progress.message}",
+                                        modifier = Modifier.padding(16.dp),
+                                        color = Color(0xFFFFB4AB),
+                                    )
                                 }
                             }
-                        )
-                        Text(
-                            text = "Library",
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = BachataPalette.Primary,
-                        )
-                        TextButton(
-                            onClick = {
-                                val next = UiOrientationPreference.toggle(uiOrientation)
-                                UiOrientationPreference.write(context, next)
-                                context.findActivity()?.requestedOrientation =
-                                    UiOrientationPreference.toActivityOrientation(next)
-                                uiOrientation = next
-                            },
-                        ) {
-                            Text(
-                                text = if (uiOrientation == UiOrientation.Portrait) "▯" else "▭",
-                                color = BachataPalette.Primary,
-                                style = MaterialTheme.typography.titleLarge,
-                                modifier = Modifier.semantics {
-                                    contentDescription = if (uiOrientation == UiOrientation.Portrait) {
-                                        "Switch to landscape"
-                                    } else {
-                                        "Switch to portrait"
-                                    }
-                                },
-                            )
                         }
-                        TextButton(onClick = onOpenSettings) {
-                            Text("⚙", color = BachataPalette.Primary, style = MaterialTheme.typography.titleLarge)
-                        }
+                        is ImportProgress.Idle -> { /* nothing */ }
                     }
-                }
 
-                when (val progress = importProgress) {
-                    is ImportProgress.Selected,
-                    is ImportProgress.Validating,
-                    -> {
+                    if (state.games.isNotEmpty()) {
                         item(span = { GridItemSpan(maxLineSpan) }) {
-                            ImportStatusCard(
-                                title = "Validating package…",
-                                subtitle = "Checking source access and package type",
-                                indeterminate = true,
-                            )
-                        }
-                    }
-                    is ImportProgress.ReadingMetadata -> {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            ImportStatusCard(
-                                title = "Reading metadata…",
-                                subtitle = progress.displayName,
-                                indeterminate = true,
-                            )
-                        }
-                    }
-                    is ImportProgress.CheckingStorage -> {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            ImportStatusCard(
-                                title = "Checking storage…",
-                                subtitle = "Need ${formatBytes(progress.requiredBytes)} · " +
-                                    "Free ${formatBytes(progress.freeBytes)}",
-                                indeterminate = true,
-                            )
-                        }
-                    }
-                    is ImportProgress.NeedCopyConfirm -> {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            val enough = progress.freeBytes >= progress.requiredBytes
-                            ImportStatusCard(
-                                title = "Confirm storage for ${progress.titleHint ?: "PKG"}",
-                                subtitle = "Needed ${formatBytes(progress.requiredBytes)} · " +
-                                    "Free ${formatBytes(progress.freeBytes)}" +
-                                    if (enough) "" else " · not enough space",
-                                detail = "Package ${formatBytes(progress.packageBytes)} + " +
-                                    "extract ${formatBytes(progress.extractBytes)}",
-                                indeterminate = true,
-                            )
-                        }
-                    }
-                    is ImportProgress.Copying -> {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            val fraction = if (progress.totalBytes > 0) {
-                                (progress.bytesCopied.toFloat() / progress.totalBytes.toFloat())
-                                    .coerceIn(0f, 1f)
-                            } else {
-                                0f
-                            }
-                            val percent = (fraction * 100f).toInt()
-                            val isPkgCache = progress.currentFile == "Local PKG cache"
-                            ImportStatusCard(
-                                title = if (isPkgCache) {
-                                    "Copying ${progress.gameTitle} to device"
-                                } else {
-                                    "Importing ${progress.gameTitle}"
-                                },
-                                subtitle = if (progress.totalBytes > 0) {
-                                    "${formatBytes(progress.bytesCopied)} / ${formatBytes(progress.totalBytes)} · $percent%"
-                                } else {
-                                    formatBytes(progress.bytesCopied)
-                                },
-                                detail = progress.currentFile,
-                                progress = fraction,
-                                indeterminate = progress.totalBytes <= 0,
-                            )
-                        }
-                    }
-                    is ImportProgress.Extracting -> {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            val fraction = if (progress.totalBytes > 0) {
-                                (progress.bytesCopied.toFloat() / progress.totalBytes.toFloat())
-                                    .coerceIn(0f, 1f)
-                            } else {
-                                0f
-                            }
-                            val percent = (fraction * 100f).toInt()
-                            ImportStatusCard(
-                                title = "Extracting ${progress.gameTitle}",
-                                subtitle = if (progress.totalBytes > 0) {
-                                    "${formatBytes(progress.bytesCopied)} / ${formatBytes(progress.totalBytes)} · $percent%"
-                                } else {
-                                    formatBytes(progress.bytesCopied)
-                                },
-                                detail = progress.currentFile,
-                                progress = fraction,
-                                indeterminate = progress.totalBytes <= 0,
-                            )
-                        }
-                    }
-                    is ImportProgress.Verifying -> {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            ImportStatusCard(
-                                title = "Verifying ${progress.title}…",
-                                subtitle = "Checking required game files",
-                                indeterminate = true,
-                            )
-                        }
-                    }
-                    is ImportProgress.Registering -> {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            ImportStatusCard(
-                                title = "Registering ${progress.title}…",
-                                subtitle = "Writing game library entry",
-                                indeterminate = true,
-                            )
-                        }
-                    }
-                    is ImportProgress.NeedPasscode -> {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            ImportStatusCard(
-                                title = "Passcode required",
-                                subtitle = progress.titleHint ?: progress.contentId,
-                                indeterminate = true,
-                            )
-                        }
-                    }
-                    is ImportProgress.Installed -> {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            Text(
-                                "${progress.title} installed",
-                                color = BachataPalette.Accent,
-                                style = MaterialTheme.typography.titleMedium,
-                            )
-                        }
-                    }
-                    is ImportProgress.Failed -> {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            Surface(
+                            Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                color = Color(0xFF3A1E21).copy(alpha = 0.5f),
-                                shape = RoundedCornerShape(12.dp),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFB4AB).copy(alpha = 0.3f)),
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    "Install failed (${progress.code}): ${progress.message}",
-                                    modifier = Modifier.padding(16.dp),
-                                    color = Color(0xFFFFB4AB),
+                                    "All Games",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = BachataPalette.Primary,
                                 )
                             }
                         }
                     }
-                    is ImportProgress.Idle -> { /* nothing */ }
-                }
 
-                if (state.games.isNotEmpty()) {
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                "All Games",
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.headlineSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = BachataPalette.Primary,
-                            )
-                        }
+                    items(state.games, key = { it.id }) { game ->
+                        val isSelected = game.id == selected?.id
+                        LibraryGameCard(
+                            game = game,
+                            selected = isSelected,
+                            onClick = {
+                                onSelectGame(game.id)
+                                onShowDetails(game.id)
+                            }
+                        )
                     }
-                }
 
-                items(state.games, key = { it.id }) { game ->
-                    val isSelected = game.id == selected?.id
-                    LibraryGameCard(
-                        game = game,
-                        selected = isSelected,
-                        onClick = {
-                            onSelectGame(game.id)
-                            onShowDetails(game.id)
-                        }
-                    )
-                }
-
-                item(key = "import_card") {
-                    ImportGameCard(
-                        onClick = {
-                            if (isImporting) return@ImportGameCard
-                            onSelectGame("__import_card__")
-                            onImport()
-                        },
-                        selected = state.selectedGameId == "__import_card__",
-                        enabled = !isImporting,
-                    )
+                    item(key = "import_card") {
+                        ImportGameCard(
+                            onClick = {
+                                if (isImporting) return@ImportGameCard
+                                onSelectGame("__import_card__")
+                                onImport()
+                            },
+                            selected = state.selectedGameId == "__import_card__",
+                            enabled = !isImporting,
+                        )
+                    }
                 }
             }
 
@@ -758,6 +755,154 @@ fun LibraryContent(
                 }
             },
         )
+    }
+}
+
+@Composable
+private fun LibraryScreenHeader(
+    uiOrientation: UiOrientation,
+    onToggleOrientation: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        androidx.compose.ui.viewinterop.AndroidView(
+            modifier = Modifier.size(32.dp),
+            factory = { viewContext ->
+                android.widget.ImageView(viewContext).apply {
+                    setImageResource(viewContext.applicationInfo.icon)
+                    contentDescription = "Bachata S4 logo"
+                }
+            },
+        )
+        Text(
+            text = "Library",
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            color = BachataPalette.Primary,
+        )
+        OrientationToggleButton(
+            orientation = uiOrientation,
+            onClick = onToggleOrientation,
+        )
+        TextButton(onClick = onOpenSettings) {
+            Text("⚙", color = BachataPalette.Primary, style = MaterialTheme.typography.titleLarge)
+        }
+    }
+}
+
+@Composable
+private fun ImportProgressBanner(importProgress: ImportProgress) {
+    when (val progress = importProgress) {
+        is ImportProgress.Selected,
+        is ImportProgress.Validating,
+        -> ImportStatusCard(
+            title = "Validating package…",
+            subtitle = "Checking source access and package type",
+            indeterminate = true,
+        )
+        is ImportProgress.ReadingMetadata -> ImportStatusCard(
+            title = "Reading metadata…",
+            subtitle = progress.displayName,
+            indeterminate = true,
+        )
+        is ImportProgress.CheckingStorage -> ImportStatusCard(
+            title = "Checking storage…",
+            subtitle = "Need ${formatBytes(progress.requiredBytes)} · Free ${formatBytes(progress.freeBytes)}",
+            indeterminate = true,
+        )
+        is ImportProgress.NeedCopyConfirm -> {
+            val enough = progress.freeBytes >= progress.requiredBytes
+            ImportStatusCard(
+                title = "Confirm storage for ${progress.titleHint ?: "PKG"}",
+                subtitle = "Needed ${formatBytes(progress.requiredBytes)} · Free ${formatBytes(progress.freeBytes)}" +
+                    if (enough) "" else " · not enough space",
+                detail = "Package ${formatBytes(progress.packageBytes)} + extract ${formatBytes(progress.extractBytes)}",
+                indeterminate = true,
+            )
+        }
+        is ImportProgress.Copying -> {
+            val fraction = if (progress.totalBytes > 0) {
+                (progress.bytesCopied.toFloat() / progress.totalBytes.toFloat()).coerceIn(0f, 1f)
+            } else {
+                0f
+            }
+            val percent = (fraction * 100f).toInt()
+            val isPkgCache = progress.currentFile == "Local PKG cache"
+            ImportStatusCard(
+                title = if (isPkgCache) {
+                    "Copying ${progress.gameTitle} to device"
+                } else {
+                    "Importing ${progress.gameTitle}"
+                },
+                subtitle = if (progress.totalBytes > 0) {
+                    "${formatBytes(progress.bytesCopied)} / ${formatBytes(progress.totalBytes)} · $percent%"
+                } else {
+                    formatBytes(progress.bytesCopied)
+                },
+                detail = progress.currentFile,
+                progress = fraction,
+                indeterminate = progress.totalBytes <= 0,
+            )
+        }
+        is ImportProgress.Extracting -> {
+            val fraction = if (progress.totalBytes > 0) {
+                (progress.bytesCopied.toFloat() / progress.totalBytes.toFloat()).coerceIn(0f, 1f)
+            } else {
+                0f
+            }
+            val percent = (fraction * 100f).toInt()
+            ImportStatusCard(
+                title = "Extracting ${progress.gameTitle}",
+                subtitle = if (progress.totalBytes > 0) {
+                    "${formatBytes(progress.bytesCopied)} / ${formatBytes(progress.totalBytes)} · $percent%"
+                } else {
+                    formatBytes(progress.bytesCopied)
+                },
+                detail = progress.currentFile,
+                progress = fraction,
+                indeterminate = progress.totalBytes <= 0,
+            )
+        }
+        is ImportProgress.Verifying -> ImportStatusCard(
+            title = "Verifying ${progress.title}…",
+            subtitle = "Checking required game files",
+            indeterminate = true,
+        )
+        is ImportProgress.Registering -> ImportStatusCard(
+            title = "Registering ${progress.title}…",
+            subtitle = "Writing game library entry",
+            indeterminate = true,
+        )
+        is ImportProgress.NeedPasscode -> ImportStatusCard(
+            title = "Passcode required",
+            subtitle = progress.titleHint ?: progress.contentId,
+            indeterminate = true,
+        )
+        is ImportProgress.Installed -> Text(
+            "${progress.title} installed",
+            color = BachataPalette.Accent,
+            style = MaterialTheme.typography.titleMedium,
+        )
+        is ImportProgress.Failed -> Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = Color(0xFF3A1E21).copy(alpha = 0.5f),
+            shape = RoundedCornerShape(12.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFB4AB).copy(alpha = 0.3f)),
+        ) {
+            Text(
+                "Install failed (${progress.code}): ${progress.message}",
+                modifier = Modifier.padding(16.dp),
+                color = Color(0xFFFFB4AB),
+            )
+        }
+        is ImportProgress.Idle -> Unit
     }
 }
 
@@ -1136,7 +1281,7 @@ private fun GlassBottomSheet(
 }
 
 @Composable
-private fun GameCover(
+internal fun GameCover(
     relativePath: String,
     modifier: Modifier = Modifier,
 ) {
