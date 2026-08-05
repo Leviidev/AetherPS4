@@ -236,6 +236,9 @@ class ContentImporterTest {
         assertEquals("boot", File(temporaryFolder.root, "games/CUSA00007/eboot.bin").readText())
         assertEquals("sfo", File(temporaryFolder.root, "games/CUSA00007/sce_sys/param.sfo").readText())
         assertFalse(staging.exists())
+        val manifest = InstallManifestIo.read(File(temporaryFolder.root, "games/CUSA00007"))
+        assertEquals(InstallManifestIo.STATUS_INSTALLED, manifest!!.status)
+        assertEquals("pkg", manifest.mode)
     }
 
     @Test

@@ -4,6 +4,7 @@ import android.content.Context
 import com.bachatas4.android.database.GameDao
 import com.bachatas4.android.database.GameEntity
 import com.bachatas4.android.model.Game
+import java.io.File
 import javax.inject.Inject
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
@@ -38,49 +39,89 @@ class GameRepository @Inject constructor(
     }
 
     /**
-     * Scan the app-owned games directory for folders that are not in the database,
-     * and automatically re-register them using their ParamSfo metadata.
-     * Also drops leftover `.import-*` staging dirs when no import is active.
+     * Reconcile on-disk games with the database using the same verify+manifest path
+     * as PKG/folder install. Incomplete trees are never registered.
      */
-    suspend fun syncOrphanedFolders() {
+    suspend fun syncLibrary() {
         val gamesRoot = context.filesDir.resolve("games")
         if (!gamesRoot.isDirectory) return
 
-        val dbGames = gameDao.getAll().map { it.id }.toSet()
-        val folders = gamesRoot.listFiles()?.filter { it.isDirectory } ?: return
-
-        // Concurrent/crashed imports can leave staging trees; free space when idle.
-        if (!ImportManager.isBusy()) {
-            folders
-                .filter { it.name.startsWith(".import-") }
-                .forEach { staging -> runCatching { staging.deleteRecursively() } }
+        val dbGames = gameDao.getAll()
+        val dbIds = dbGames.map { it.id }.toSet()
+        val plan = LibrarySync.planSync(
+            gamesRoot = gamesRoot,
+            dbIds = dbIds,
+            importBusy = ImportManager.isBusy(),
+            filesDir = context.filesDir,
+        )
+        LibrarySync.applyHeals(plan)
+        for (insert in plan.inserts) {
+            // Re-check after heal so canLaunch / manifest are present
+            if (!GameInstallVerifier.canLaunch(context.filesDir, insert.relativePath) &&
+                GameInstallVerifier.verifyTreeForRegistration(
+                    File(context.filesDir, insert.relativePath),
+                    insert.id,
+                ) is GameInstallVerifier.VerifyResult.Ok
+            ) {
+                // Heal should have written manifest; re-read canLaunch after applyHeals
+            }
+            if (GameInstallVerifier.canLaunch(context.filesDir, insert.relativePath) ||
+                GameInstallVerifier.requiredFilesPresent(File(context.filesDir, insert.relativePath))
+            ) {
+                // Ensure manifest before insert
+                val dir = File(context.filesDir, insert.relativePath)
+                if (InstallManifestIo.read(dir) == null) {
+                    val verify = GameInstallVerifier.verifyTreeForRegistration(dir, insert.id)
+                    if (verify is GameInstallVerifier.VerifyResult.Ok) {
+                        InstallManifestIo.write(
+                            dir,
+                            InstallManifest(
+                                status = InstallManifestIo.STATUS_INSTALLED,
+                                gameId = insert.id,
+                                contentId = null,
+                                mode = ImportManager.MODE_FOLDER,
+                                sourceUri = insert.sourceUri,
+                                installedAtMs = System.currentTimeMillis(),
+                                requiredFiles = GameInstallVerifier.REQUIRED_FILES,
+                                bytesTotal = verify.bytesTotal,
+                            ),
+                        )
+                    } else {
+                        continue
+                    }
+                }
+                if (insert.id !in dbIds) {
+                    gameDao.insert(
+                        GameEntity(
+                            id = insert.id,
+                            title = insert.title,
+                            relativePath = insert.relativePath,
+                            sourceUri = insert.sourceUri,
+                            importedAtMs = System.currentTimeMillis(),
+                            subtitle = insert.subtitle,
+                            detail = insert.detail,
+                            lastLaunchedAtMs = 0L,
+                        ),
+                    )
+                }
+            }
         }
-
-        folders.forEach { folder ->
-            val id = folder.name
-            if (id.startsWith(".")) return@forEach
-            if (id !in dbGames) {
-                val sfoFile = GameIconPaths.paramSfo(context.filesDir, "games/$id")
-                val sfo = if (sfoFile.isFile) {
-                    runCatching { ParamSfoReader.parse(sfoFile.readBytes()) }.getOrNull()
-                } else null
-
-                val resolved = GameMetadataResolver.resolve(folderName = id, sfo = sfo)
-                gameDao.insert(
-                    GameEntity(
-                        id = resolved.id,
-                        title = resolved.title,
-                        relativePath = "games/$id",
-                        sourceUri = "",
-                        importedAtMs = System.currentTimeMillis(),
-                        subtitle = resolved.subtitle,
-                        detail = resolved.detail,
-                        lastLaunchedAtMs = 0L,
-                    ),
-                )
+        for (id in plan.dbIdsToDrop) {
+            // Only drop when folder missing or not launchable and not complete
+            val dir = File(gamesRoot, id)
+            if (!dir.isDirectory || !GameInstallVerifier.canLaunch(context.filesDir, "games/$id")) {
+                if (!dir.isDirectory ||
+                    GameInstallVerifier.verifyTreeForRegistration(dir, id)
+                        is GameInstallVerifier.VerifyResult.Fail
+                ) {
+                    runCatching { gameDao.deleteById(id) }
+                }
             }
         }
     }
+
+    /** @deprecated Use [syncLibrary]. Kept for call-site compatibility. */
+    suspend fun syncOrphanedFolders() = syncLibrary()
 
     /**
      * Re-read TITLE from on-disk param.sfo for games that were imported under folder names.

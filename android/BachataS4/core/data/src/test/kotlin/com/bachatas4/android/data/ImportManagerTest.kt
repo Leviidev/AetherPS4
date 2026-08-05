@@ -13,12 +13,55 @@ class ImportManagerTest {
     }
 
     @Test
-    fun tryBeginImportClaimsSlotOnce() {
-        assertTrue(ImportManager.tryBeginImport())
-        assertEquals(ImportProgress.Preparing, ImportManager.progress.value)
+    fun tryBeginImportClaimsSlotWithSelected() {
+        assertTrue(ImportManager.tryBeginImport("content://x", ImportManager.MODE_PKG))
+        assertTrue(ImportManager.progress.value is ImportProgress.Selected)
         assertTrue(ImportManager.isBusy())
         assertFalse(ImportManager.tryBeginImport())
-        assertEquals(ImportProgress.Preparing, ImportManager.progress.value)
+    }
+
+    @Test
+    fun validatingThroughRegisteringAreBusy() {
+        val busyStates = listOf(
+            ImportProgress.Selected("content://x", ImportManager.MODE_PKG),
+            ImportProgress.Validating("content://x", ImportManager.MODE_PKG),
+            ImportProgress.ReadingMetadata("pkg", null),
+            ImportProgress.CheckingStorage("id", 1L, 2L),
+            ImportProgress.Extracting(0L, 100L, "f", "t"),
+            ImportProgress.Copying(0L, 100L, "f", "t"),
+            ImportProgress.Verifying("t"),
+            ImportProgress.Registering("t"),
+            ImportProgress.NeedPasscode("cid", "hint"),
+            ImportProgress.NeedCopyConfirm("cid", "hint", 1, 1, 2, 3),
+        )
+        for (state in busyStates) {
+            ImportManager.update(state)
+            assertTrue("expected busy: $state", ImportManager.isBusy(state))
+            assertFalse(ImportManager.tryBeginImport())
+            ImportManager.reset()
+        }
+    }
+
+    @Test
+    fun installedAndFailedAreNotBusy() {
+        ImportManager.update(ImportProgress.Installed("id", "Title"))
+        assertFalse(ImportManager.isBusy())
+        assertTrue(ImportManager.tryBeginImport())
+        ImportManager.update(
+            ImportProgress.Failed(InstallErrorCode.MALFORMED_PACKAGE, "bad header"),
+        )
+        assertFalse(ImportManager.isBusy())
+        assertTrue(ImportManager.tryBeginImport())
+    }
+
+    @Test
+    fun failedCarriesTypedCode() {
+        ImportManager.update(
+            ImportProgress.Failed(InstallErrorCode.INSUFFICIENT_STORAGE, "need 10 GiB"),
+        )
+        val failed = ImportManager.progress.value as ImportProgress.Failed
+        assertEquals(InstallErrorCode.INSUFFICIENT_STORAGE, failed.code)
+        assertEquals("need 10 GiB", failed.message)
     }
 
     @Test
@@ -36,61 +79,5 @@ class ImportManagerTest {
         ImportManager.reset()
         assertFalse(ImportManager.isBusy())
         assertTrue(ImportManager.tryBeginImport())
-    }
-
-    @Test
-    fun successAndFailedAreNotBusy() {
-        ImportManager.update(ImportProgress.Success("id", "Title"))
-        assertFalse(ImportManager.isBusy())
-        assertTrue(ImportManager.tryBeginImport())
-
-        ImportManager.update(ImportProgress.Failed("boom"))
-        assertFalse(ImportManager.isBusy())
-        assertTrue(ImportManager.tryBeginImport())
-    }
-
-    @Test
-    fun scanningIsBusy() {
-        ImportManager.update(ImportProgress.Scanning("folder"))
-        assertTrue(ImportManager.isBusy())
-        assertFalse(ImportManager.tryBeginImport())
-    }
-
-    @Test
-    fun extractingAndFinalizingAreBusy() {
-        ImportManager.update(
-            ImportProgress.Extracting(0L, 100L, "eboot.bin", "Game"),
-        )
-        assertTrue(ImportManager.isBusy())
-        assertFalse(ImportManager.tryBeginImport())
-
-        ImportManager.update(ImportProgress.Finalizing("Game"))
-        assertTrue(ImportManager.isBusy())
-        assertFalse(ImportManager.tryBeginImport())
-    }
-
-    @Test
-    fun needPasscodeIsBusyAndBlocksNewImport() {
-        ImportManager.update(
-            ImportProgress.NeedPasscode("EP0001-CUSA00000_00-TEST000000000000", "Hint"),
-        )
-        assertTrue(ImportManager.isBusy())
-        assertFalse(ImportManager.tryBeginImport())
-    }
-
-    @Test
-    fun needCopyConfirmIsBusyAndBlocksNewImport() {
-        ImportManager.update(
-            ImportProgress.NeedCopyConfirm(
-                contentId = "EP0001-CUSA00000_00-TEST000000000000",
-                titleHint = "Hint",
-                packageBytes = 7_000_000_000L,
-                extractBytes = 6_500_000_000L,
-                requiredBytes = 14_000_000_000L,
-                freeBytes = 30_000_000_000L,
-            ),
-        )
-        assertTrue(ImportManager.isBusy())
-        assertFalse(ImportManager.tryBeginImport())
     }
 }

@@ -1,5 +1,6 @@
 package com.bachatas4.android
 
+import com.bachatas4.android.data.GameInstallVerifier
 import java.io.File
 import java.io.IOException
 
@@ -31,8 +32,8 @@ object DirectGameLaunchRequest {
         if (!gameRoot.toPath().startsWith(gamesRoot.toPath())) {
             return Resolution.Rejected("Imported game path escapes app storage")
         }
-        if (!File(gameRoot, "eboot.bin").isFile) {
-            return Resolution.Rejected("Imported game $gameId is missing eboot.bin")
+        if (!GameInstallVerifier.canLaunch(filesDir, "games/$gameId")) {
+            return Resolution.Rejected("Imported game $gameId is not fully installed")
         }
         return Resolution.Ready(gameId)
     }

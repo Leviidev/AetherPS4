@@ -6,10 +6,20 @@ import kotlinx.coroutines.flow.StateFlow
 sealed interface ImportProgress {
     data object Idle : ImportProgress
 
-    /** Tree scan / permission setup before copy starts. */
-    data object Preparing : ImportProgress
+    data class Selected(val sourceUri: String, val mode: String) : ImportProgress
 
-    data class Scanning(val folderName: String) : ImportProgress
+    data class Validating(val sourceUri: String, val mode: String) : ImportProgress
+
+    data class ReadingMetadata(
+        val displayName: String,
+        val contentId: String?,
+    ) : ImportProgress
+
+    data class CheckingStorage(
+        val contentId: String,
+        val requiredBytes: Long,
+        val freeBytes: Long,
+    ) : ImportProgress
 
     data class Extracting(
         val bytesCopied: Long,
@@ -25,7 +35,9 @@ sealed interface ImportProgress {
         val gameTitle: String,
     ) : ImportProgress
 
-    data class Finalizing(val title: String) : ImportProgress
+    data class Verifying(val title: String) : ImportProgress
+
+    data class Registering(val title: String) : ImportProgress
 
     data class NeedPasscode(val contentId: String, val titleHint: String?) : ImportProgress
 
@@ -42,9 +54,9 @@ sealed interface ImportProgress {
         val freeBytes: Long,
     ) : ImportProgress
 
-    data class Success(val gameId: String, val title: String) : ImportProgress
+    data class Installed(val gameId: String, val title: String) : ImportProgress
 
-    data class Failed(val message: String) : ImportProgress
+    data class Failed(val code: InstallErrorCode, val message: String) : ImportProgress
 }
 
 object ImportManager {
@@ -63,23 +75,25 @@ object ImportManager {
     val progress: StateFlow<ImportProgress> = _progress
 
     fun isBusy(state: ImportProgress = _progress.value): Boolean =
-        state is ImportProgress.Preparing ||
-            state is ImportProgress.Scanning ||
-            state is ImportProgress.Extracting ||
-            state is ImportProgress.Copying ||
-            state is ImportProgress.Finalizing ||
-            state is ImportProgress.NeedPasscode ||
-            state is ImportProgress.NeedCopyConfirm
+        when (state) {
+            is ImportProgress.Idle,
+            is ImportProgress.Installed,
+            is ImportProgress.Failed,
+            -> false
+            else -> true
+        }
 
     /**
-     * Atomically claim the single import slot and enter [ImportProgress.Preparing].
+     * Atomically claim the single import slot and enter [ImportProgress.Selected].
      * Returns false when an import is already in progress.
      */
-    fun tryBeginImport(): Boolean {
+    fun tryBeginImport(sourceUri: String = "", mode: String = ""): Boolean {
         while (true) {
             val current = _progress.value
             if (isBusy(current)) return false
-            if (_progress.compareAndSet(current, ImportProgress.Preparing)) return true
+            if (_progress.compareAndSet(current, ImportProgress.Selected(sourceUri, mode))) {
+                return true
+            }
         }
     }
 

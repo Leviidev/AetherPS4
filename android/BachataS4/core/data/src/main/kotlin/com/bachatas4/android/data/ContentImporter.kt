@@ -113,7 +113,14 @@ class ContentImporter(
             validateBytes(request, bytesCopied)
             val sha256 = digest.digest().joinToString("") { "%02x".format(it) }
             validateDigest(request, sha256)
-            moveAtomically(staging, destination)
+            writeInstallManifestAndPromote(
+                staging = staging,
+                destination = destination,
+                request = request,
+                mode = ImportManager.MODE_FOLDER,
+                contentId = null,
+                requireFullTree = true,
+            )
             completed = true
             ContentImportResult(
                 Game(
@@ -146,6 +153,8 @@ class ContentImporter(
     suspend fun finalizeStagingTree(
         request: ContentImportRequest,
         stagingDir: File,
+        mode: String = ImportManager.MODE_PKG,
+        contentId: String? = null,
     ): ContentImportResult = withContext(Dispatchers.IO) {
         validateGameId(request.id)
         val gamesDir = File(filesDir, "games").canonicalFile
@@ -160,22 +169,14 @@ class ContentImporter(
         if (!staging.isDirectory) {
             throw ContentImportException(RuntimeErrorCode.CONTENT_INVALID, "Staging directory missing")
         }
-        val paramSfo = File(staging, "sce_sys/param.sfo")
-        if (!paramSfo.isFile) {
-            throw ContentImportException(
-                RuntimeErrorCode.CONTENT_INVALID,
-                "invalid game layout: missing sce_sys/param.sfo",
-            )
-        }
-        val eboot = File(staging, "eboot.bin")
-        if (!eboot.isFile) {
-            throw ContentImportException(
-                RuntimeErrorCode.CONTENT_INVALID,
-                "invalid game layout: missing eboot.bin",
-            )
-        }
-        val bytesCopied = walkFileSize(staging)
-        moveAtomically(staging, destination)
+        val bytesCopied = writeInstallManifestAndPromote(
+            staging = staging,
+            destination = destination,
+            request = request,
+            mode = mode,
+            contentId = contentId,
+            requireFullTree = true,
+        )
         ContentImportResult(
             game = Game(
                 id = request.id,
@@ -187,6 +188,52 @@ class ContentImporter(
             bytesCopied = bytesCopied,
             sha256 = "pkg-extract",
         )
+    }
+
+    /**
+     * Verify staging, write install.manifest, then atomic-rename to destination.
+     * @return total bytes in tree
+     */
+    private fun writeInstallManifestAndPromote(
+        staging: File,
+        destination: File,
+        request: ContentImportRequest,
+        mode: String,
+        contentId: String?,
+        requireFullTree: Boolean,
+    ): Long {
+        val bytesTotal = if (requireFullTree) {
+            when (val verify = GameInstallVerifier.verifyTreeForRegistration(staging, request.id)) {
+                is GameInstallVerifier.VerifyResult.Fail ->
+                    throw ContentImportException(RuntimeErrorCode.CONTENT_INVALID, verify.message)
+                is GameInstallVerifier.VerifyResult.Ok -> verify.bytesTotal
+            }
+        } else {
+            val eboot = File(staging, "eboot.bin")
+            if (!eboot.isFile || eboot.length() <= 0L) {
+                throw ContentImportException(RuntimeErrorCode.CONTENT_INVALID, "missing eboot.bin")
+            }
+            walkFileSize(staging)
+        }
+        InstallManifestIo.write(
+            staging,
+            InstallManifest(
+                status = InstallManifestIo.STATUS_INSTALLED,
+                gameId = request.id,
+                contentId = contentId,
+                mode = mode,
+                sourceUri = request.sourceUri,
+                installedAtMs = System.currentTimeMillis(),
+                requiredFiles = if (requireFullTree) {
+                    GameInstallVerifier.REQUIRED_FILES
+                } else {
+                    listOf("eboot.bin")
+                },
+                bytesTotal = bytesTotal,
+            ),
+        )
+        moveAtomically(staging, destination)
+        return bytesTotal
     }
 
     private fun walkFileSize(root: File): Long {
@@ -224,7 +271,14 @@ class ContentImporter(
                 val sha256 = digest.digest().joinToString("") { "%02x".format(it) }
                 validateBytes(request, bytesCopied)
                 validateDigest(request, sha256)
-                moveAtomically(staging, destination)
+                writeInstallManifestAndPromote(
+                    staging = staging,
+                    destination = destination,
+                    request = request,
+                    mode = ImportManager.MODE_FOLDER,
+                    contentId = null,
+                    requireFullTree = false,
+                )
                 completed = true
                 ContentImportResult(
                     game = Game(

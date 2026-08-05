@@ -108,16 +108,21 @@ fun LibraryScreen(
     val importProgress by ImportManager.progress.collectAsState()
     var gameToDelete by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(dependencies) {
-        runCatching { dependencies.gameRepository().syncOrphanedFolders() }
+        val filesDir = context.filesDir
+        runCatching {
+            com.bachatas4.android.data.InstallCleanup(filesDir)
+                .cleanupStaleArtifacts(ImportManager.isBusy())
+        }
+        runCatching { dependencies.gameRepository().syncLibrary() }
         runCatching { dependencies.gameRepository().backfillTitlesFromSfo() }
         dependencies.gameRepository().observeGames().collectLatest(viewModel::setGames)
     }
-    // Success / Failed free the import slot for a new pick; clear Success banner after a short delay.
+    // Installed / Failed free the import slot for a new pick; clear banner after a short delay.
     LaunchedEffect(importProgress) {
         when (importProgress) {
-            is ImportProgress.Success -> {
+            is ImportProgress.Installed -> {
                 delay(4_000)
-                if (ImportManager.progress.value is ImportProgress.Success) {
+                if (ImportManager.progress.value is ImportProgress.Installed) {
                     ImportManager.reset()
                 }
             }
@@ -460,20 +465,32 @@ fun LibraryContent(
                 }
 
                 when (val progress = importProgress) {
-                    is ImportProgress.Preparing -> {
+                    is ImportProgress.Selected,
+                    is ImportProgress.Validating,
+                    -> {
                         item(span = { GridItemSpan(maxLineSpan) }) {
                             ImportStatusCard(
-                                title = "Preparing import…",
-                                subtitle = "Scanning game folder. Large titles can take a while.",
+                                title = "Validating package…",
+                                subtitle = "Checking source access and package type",
                                 indeterminate = true,
                             )
                         }
                     }
-                    is ImportProgress.Scanning -> {
+                    is ImportProgress.ReadingMetadata -> {
                         item(span = { GridItemSpan(maxLineSpan) }) {
                             ImportStatusCard(
-                                title = "Identifying ${progress.folderName}…",
-                                subtitle = "Reading game metadata",
+                                title = "Reading metadata…",
+                                subtitle = progress.displayName,
+                                indeterminate = true,
+                            )
+                        }
+                    }
+                    is ImportProgress.CheckingStorage -> {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            ImportStatusCard(
+                                title = "Checking storage…",
+                                subtitle = "Need ${formatBytes(progress.requiredBytes)} · " +
+                                    "Free ${formatBytes(progress.freeBytes)}",
                                 indeterminate = true,
                             )
                         }
@@ -541,7 +558,16 @@ fun LibraryContent(
                             )
                         }
                     }
-                    is ImportProgress.Finalizing -> {
+                    is ImportProgress.Verifying -> {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            ImportStatusCard(
+                                title = "Verifying ${progress.title}…",
+                                subtitle = "Checking required game files",
+                                indeterminate = true,
+                            )
+                        }
+                    }
+                    is ImportProgress.Registering -> {
                         item(span = { GridItemSpan(maxLineSpan) }) {
                             ImportStatusCard(
                                 title = "Registering ${progress.title}…",
@@ -559,10 +585,10 @@ fun LibraryContent(
                             )
                         }
                     }
-                    is ImportProgress.Success -> {
+                    is ImportProgress.Installed -> {
                         item(span = { GridItemSpan(maxLineSpan) }) {
                             Text(
-                                "${progress.title} imported",
+                                "${progress.title} installed",
                                 color = BachataPalette.Accent,
                                 style = MaterialTheme.typography.titleMedium,
                             )
@@ -577,7 +603,7 @@ fun LibraryContent(
                                 border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFB4AB).copy(alpha = 0.3f)),
                             ) {
                                 Text(
-                                    "Import failed: ${progress.message}",
+                                    "Install failed (${progress.code}): ${progress.message}",
                                     modifier = Modifier.padding(16.dp),
                                     color = Color(0xFFFFB4AB),
                                 )

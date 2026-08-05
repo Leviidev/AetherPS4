@@ -1,5 +1,7 @@
 package com.bachatas4.android
 
+import com.bachatas4.android.data.InstallManifest
+import com.bachatas4.android.data.InstallManifestIo
 import java.io.File
 import java.nio.file.Files
 import org.junit.Assert.assertEquals
@@ -15,12 +17,36 @@ class DirectGameLaunchRequestTest {
     @Test
     fun resolvesInstalledTitleId() {
         val filesDir = temporaryFolder.newFolder("files")
-        File(filesDir, "games/CUSA07023").mkdirs()
-        File(filesDir, "games/CUSA07023/eboot.bin").createNewFile()
+        val game = File(filesDir, "games/CUSA07023").apply { mkdirs() }
+        File(game, "eboot.bin").writeBytes(byteArrayOf(1))
+        InstallManifestIo.write(
+            game,
+            InstallManifest(
+                status = InstallManifestIo.STATUS_INSTALLED,
+                gameId = "CUSA07023",
+                contentId = null,
+                mode = "pkg",
+                sourceUri = "",
+                installedAtMs = 1L,
+                requiredFiles = listOf("eboot.bin"),
+                bytesTotal = 1L,
+            ),
+        )
 
         assertEquals(
             DirectGameLaunchRequest.Resolution.Ready("CUSA07023"),
             DirectGameLaunchRequest.resolve(filesDir, "CUSA07023"),
+        )
+    }
+
+    @Test
+    fun resolveRejectsWhenInstallManifestMissing() {
+        val filesDir = temporaryFolder.newFolder("files")
+        val game = File(filesDir, "games/CUSA00000").apply { mkdirs() }
+        File(game, "eboot.bin").writeBytes(byteArrayOf(1))
+        assertTrue(
+            DirectGameLaunchRequest.resolve(filesDir, "CUSA00000") is
+                DirectGameLaunchRequest.Resolution.Rejected,
         )
     }
 

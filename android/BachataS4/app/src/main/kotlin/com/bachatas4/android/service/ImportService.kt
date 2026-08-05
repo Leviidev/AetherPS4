@@ -13,15 +13,23 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.documentfile.provider.DocumentFile
 import com.bachatas4.android.MainActivity
+import com.bachatas4.android.data.ContentImportException
 import com.bachatas4.android.data.ContentImportRequest
 import com.bachatas4.android.data.ContentImporter
 import com.bachatas4.android.data.ContentTreeEntry
+import com.bachatas4.android.data.GameInstallVerifier
 import com.bachatas4.android.data.GameMetadataResolver
 import com.bachatas4.android.data.GameRepository
 import com.bachatas4.android.data.ImportManager
 import com.bachatas4.android.data.ImportProgress
+import com.bachatas4.android.data.InstallCleanup
+import com.bachatas4.android.data.InstallErrorCode
+import com.bachatas4.android.data.InstallJob
+import com.bachatas4.android.data.InstallJobStore
+import com.bachatas4.android.data.InstallValidator
 import com.bachatas4.android.data.ParamSfoReader
 import com.bachatas4.android.data.PkgKeyStore
+import com.bachatas4.android.model.RuntimeErrorCode
 import com.bachatas4.android.runtime.pkg.PkgExtractor
 import com.bachatas4.android.runtime.pkg.PkgProbeResult
 import com.bachatas4.android.runtime.pkg.PkgStatus
@@ -93,7 +101,9 @@ class ImportService : Service() {
             ImportManager.ACTION_IMPORT -> {
                 val uriString = intent.getStringExtra(ImportManager.EXTRA_URI) ?: run {
                     Log.e(TAG, "import missing source URI")
-                    ImportManager.update(ImportProgress.Failed("Missing source URI"))
+                    ImportManager.update(
+                        ImportProgress.Failed(InstallErrorCode.SOURCE_INACCESSIBLE, "Missing source URI"),
+                    )
                     stopSelf()
                     return START_NOT_STICKY
                 }
@@ -103,9 +113,9 @@ class ImportService : Service() {
                     Log.w(TAG, "import already running — ignore new request")
                     return START_NOT_STICKY
                 }
-                if (!ImportManager.tryBeginImport()) {
+                if (!ImportManager.tryBeginImport(uriString, mode)) {
                     ImportManager.reset()
-                    if (!ImportManager.tryBeginImport()) {
+                    if (!ImportManager.tryBeginImport(uriString, mode)) {
                         Log.w(TAG, "import slot busy — abort")
                         return START_NOT_STICKY
                     }
@@ -136,12 +146,37 @@ class ImportService : Service() {
 
     private suspend fun runFolderImport(uriString: String) {
         Log.i(TAG, "folder import prepare uri=$uriString")
-        updateNotification("Preparing import…", indeterminate = true)
+        updateNotification("Validating folder…", indeterminate = true)
+        val jobId = UUID.randomUUID().toString()
+        val jobStore = InstallJobStore(filesDir)
+        var job = InstallJob(
+            jobId = jobId,
+            state = InstallJob.STATE_SELECTED,
+            mode = ImportManager.MODE_FOLDER,
+            sourceUri = uriString,
+            createdAtMs = System.currentTimeMillis(),
+            updatedAtMs = System.currentTimeMillis(),
+        )
+        jobStore.create(job)
         try {
+            ImportManager.update(ImportProgress.Validating(uriString, ImportManager.MODE_FOLDER))
+            job = job.copy(state = InstallJob.STATE_VALIDATING, updatedAtMs = System.currentTimeMillis())
+            jobStore.update(job)
+
+            InstallValidator.checkWritableGamesDir(filesDir)?.let { code ->
+                failInstall(code, "Games directory is not writable")
+            }
+
             val uri = Uri.parse(uriString)
-            runCatching {
+            val persistable = runCatching {
                 contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }.onFailure { Log.w(TAG, "folder persistable permission: ${it.message}") }
+                true
+            }.getOrElse {
+                Log.w(TAG, "folder persistable permission: ${it.message}")
+                false
+            }
+            job = job.copy(uriPersistable = persistable, updatedAtMs = System.currentTimeMillis())
+            jobStore.update(job)
 
             Log.i(TAG, "folder tree scan start")
             val (folderName, entries) = withContext(Dispatchers.IO) {
@@ -152,8 +187,21 @@ class ImportService : Service() {
             }
             Log.i(TAG, "folder tree scan done name=$folderName files=${entries.size}")
 
-            ImportManager.update(ImportProgress.Scanning(folderName))
-            updateNotification("Identifying $folderName…", indeterminate = true)
+            if (entries.none { it.relativePath == "eboot.bin" }) {
+                failInstall(InstallErrorCode.VERIFY_FAILED, "Selected folder has no eboot.bin")
+            }
+            if (entries.none { it.relativePath == "sce_sys/param.sfo" }) {
+                failInstall(InstallErrorCode.VERIFY_FAILED, "Selected folder has no sce_sys/param.sfo")
+            }
+
+            ImportManager.update(ImportProgress.ReadingMetadata(folderName, null))
+            job = job.copy(
+                state = InstallJob.STATE_READING_METADATA,
+                displayName = folderName,
+                updatedAtMs = System.currentTimeMillis(),
+            )
+            jobStore.update(job)
+            updateNotification("Reading metadata…", indeterminate = true)
 
             val sfoEntry = entries.firstOrNull { it.relativePath == "sce_sys/param.sfo" }
             val sfoBytes = sfoEntry?.let { entry ->
@@ -166,7 +214,27 @@ class ImportService : Service() {
             }
             val sfo = sfoBytes?.let { ParamSfoReader.parse(it) }
             val resolved = GameMetadataResolver.resolve(folderName = folderName, sfo = sfo)
+            if (resolved.id.isBlank()) {
+                failInstall(InstallErrorCode.NO_TITLE_ID, "Could not determine game title id")
+            }
             Log.i(TAG, "folder copy start id=${resolved.id} title=${resolved.title} files=${entries.size}")
+
+            val dest = File(filesDir, "games/${resolved.id}")
+            if (dest.exists()) {
+                if (GameInstallVerifier.canLaunch(filesDir, "games/${resolved.id}")) {
+                    failInstall(InstallErrorCode.ALREADY_INSTALLED, "Game already installed")
+                }
+                // Incomplete leftover — remove so reinstall can proceed
+                dest.deleteRecursively()
+            }
+
+            job = job.copy(
+                state = InstallJob.STATE_COPYING,
+                titleId = resolved.id,
+                stagingDir = "games/.import-$jobId",
+                updatedAtMs = System.currentTimeMillis(),
+            )
+            jobStore.update(job)
 
             val result = contentImporter.importGameTree(
                 ContentImportRequest(
@@ -201,14 +269,20 @@ class ImportService : Service() {
                 },
             )
 
+            ImportManager.update(ImportProgress.Verifying(resolved.title))
+            ImportManager.update(ImportProgress.Registering(resolved.title))
+            job = job.copy(state = InstallJob.STATE_REGISTERING, updatedAtMs = System.currentTimeMillis())
+            jobStore.update(job)
+
             gameRepository.addImportedGame(result, uriString, System.currentTimeMillis())
-            ImportManager.update(ImportProgress.Success(resolved.id, resolved.title))
+            jobStore.delete(jobId)
+            ImportManager.update(ImportProgress.Installed(resolved.id, resolved.title))
             Log.i(TAG, "folder import success id=${resolved.id}")
-            notifyDone("${resolved.title} imported")
+            notifyDone("${resolved.title} installed")
         } catch (failure: Throwable) {
+            InstallCleanup(filesDir, jobStore).cleanupJob(jobId)
             handleFailure(failure)
         } finally {
-            if (ImportManager.isBusy()) ImportManager.reset()
             Log.i(TAG, "folder import finished (stopSelf)")
             stopSelf()
         }
@@ -216,25 +290,56 @@ class ImportService : Service() {
 
     private suspend fun runPkgImport(uriString: String) {
         Log.i(TAG, "pkg import prepare uri=$uriString")
-        updateNotification("Preparing import…", indeterminate = true)
+        updateNotification("Validating package…", indeterminate = true)
+        val jobId = UUID.randomUUID().toString()
+        val jobStore = InstallJobStore(filesDir)
+        var job = InstallJob(
+            jobId = jobId,
+            state = InstallJob.STATE_SELECTED,
+            mode = ImportManager.MODE_PKG,
+            sourceUri = uriString,
+            createdAtMs = System.currentTimeMillis(),
+            updatedAtMs = System.currentTimeMillis(),
+        )
+        jobStore.create(job)
         var staging: File? = null
         var cacheFile: File? = null
         var completed = false
         try {
+            ImportManager.update(ImportProgress.Validating(uriString, ImportManager.MODE_PKG))
+            job = job.copy(state = InstallJob.STATE_VALIDATING, updatedAtMs = System.currentTimeMillis())
+            jobStore.update(job)
+
+            InstallValidator.checkWritableGamesDir(filesDir)?.let { code ->
+                failInstall(code, "Games directory is not writable")
+            }
+
             val uri = Uri.parse(uriString)
-            runCatching {
+            val persistable = runCatching {
                 contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }.onFailure { Log.w(TAG, "pkg persistable permission: ${it.message}") }
+                true
+            }.getOrElse {
+                Log.w(TAG, "pkg persistable permission: ${it.message}")
+                false
+            }
+            job = job.copy(uriPersistable = persistable, updatedAtMs = System.currentTimeMillis())
+            jobStore.update(job)
 
             // Probe via SAF fd (header-only; sequential extract will use a local cache).
             val probe: PkgProbeResult
-            withContext(Dispatchers.IO) {
-                contentResolver.openFileDescriptor(uri, "r")
-                    ?: error("Cannot open PKG")
-            }.use { descriptor ->
-                Log.i(TAG, "pkg openFileDescriptor ok sizeHint=${descriptor.statSize}")
-                Log.i(TAG, "pkg nativeProbe start fd=${descriptor.fd}")
-                probe = withContext(Dispatchers.IO) { PkgExtractor.nativeProbe(descriptor.fd) }
+            try {
+                withContext(Dispatchers.IO) {
+                    contentResolver.openFileDescriptor(uri, "r")
+                        ?: error("Cannot open PKG")
+                }.use { descriptor ->
+                    Log.i(TAG, "pkg openFileDescriptor ok sizeHint=${descriptor.statSize}")
+                    Log.i(TAG, "pkg nativeProbe start fd=${descriptor.fd}")
+                    probe = withContext(Dispatchers.IO) { PkgExtractor.nativeProbe(descriptor.fd) }
+                }
+            } catch (e: SecurityException) {
+                failInstall(InstallErrorCode.PERMISSION_LOST, e.message ?: "Permission lost")
+            } catch (e: Exception) {
+                failInstall(InstallErrorCode.SOURCE_INACCESSIBLE, e.message ?: "Cannot open PKG")
             }
             Log.i(
                 TAG,
@@ -244,11 +349,24 @@ class ImportService : Service() {
             )
             val displayName = probe.titleHint?.ifBlank { null }
                 ?: probe.contentId.ifBlank { "PKG" }
-            ImportManager.update(ImportProgress.Scanning(displayName))
-            updateNotification("Identifying $displayName…", indeterminate = true)
+            ImportManager.update(ImportProgress.ReadingMetadata(displayName, probe.contentId))
+            job = job.copy(
+                state = InstallJob.STATE_READING_METADATA,
+                displayName = displayName,
+                contentId = probe.contentId,
+                updatedAtMs = System.currentTimeMillis(),
+            )
+            jobStore.update(job)
+            updateNotification("Reading metadata…", indeterminate = true)
 
             if (probe.status == PkgStatus.ERROR) {
-                error(probe.message ?: "Invalid package")
+                failInstall(
+                    InstallValidator.mapProbeError(probe.message),
+                    probe.message ?: "Invalid package",
+                )
+            }
+            if (probe.contentId.isBlank() && probe.titleHint.isNullOrBlank()) {
+                failInstall(InstallErrorCode.NO_TITLE_ID, "Package has no title identifier")
             }
 
             val gamesDir = File(filesDir, "games").canonicalFile
@@ -266,6 +384,26 @@ class ImportService : Service() {
             )
 
             ImportManager.update(
+                ImportProgress.CheckingStorage(probe.contentId, required, free),
+            )
+            job = job.copy(
+                state = InstallJob.STATE_CHECKING_STORAGE,
+                packageBytes = packageBytes,
+                extractBytes = extractBytes,
+                requiredBytes = required,
+                updatedAtMs = System.currentTimeMillis(),
+            )
+            jobStore.update(job)
+
+            InstallValidator.checkStorage(required, free)?.let { code ->
+                failInstall(
+                    code,
+                    "Import needs about ${formatBytes(required)} free " +
+                        "but only ${formatBytes(free)} is available",
+                )
+            }
+
+            ImportManager.update(
                 ImportProgress.NeedCopyConfirm(
                     contentId = probe.contentId,
                     titleHint = probe.titleHint,
@@ -275,6 +413,11 @@ class ImportService : Service() {
                     freeBytes = free,
                 ),
             )
+            job = job.copy(
+                state = InstallJob.STATE_NEED_COPY_CONFIRM,
+                updatedAtMs = System.currentTimeMillis(),
+            )
+            jobStore.update(job)
             updateNotification("Confirm storage for PKG import", indeterminate = true)
             val confirmWaiter = CompletableDeferred<Boolean>()
             copyConfirmWaiter = confirmWaiter
@@ -287,8 +430,9 @@ class ImportService : Service() {
 
             // Soft re-check after confirm (space can change while dialog is open).
             val freeNow = filesDir.usableSpace
-            if (required > 0 && required > freeNow) {
-                error(
+            InstallValidator.checkStorage(required, freeNow)?.let { code ->
+                failInstall(
+                    code,
                     "Import needs about ${formatBytes(required)} free " +
                         "(package ${formatBytes(packageBytes)} + extract ${formatBytes(extractBytes)}) " +
                         "but only ${formatBytes(freeNow)} is available",
@@ -297,12 +441,19 @@ class ImportService : Service() {
 
             val cacheDir = File(filesDir, "pkg-cache").canonicalFile
             cacheDir.mkdirs()
-            cacheFile = File(cacheDir, "${UUID.randomUUID()}.pkg").canonicalFile
+            cacheFile = File(cacheDir, "$jobId.pkg").canonicalFile
+            job = job.copy(
+                cachePath = "pkg-cache/$jobId.pkg",
+                stagingDir = "games/.import-$jobId",
+                state = InstallJob.STATE_EXTRACTING,
+                updatedAtMs = System.currentTimeMillis(),
+            )
+            jobStore.update(job)
             Log.i(TAG, "pkg cache copy start dest=${cacheFile!!.absolutePath} size=$packageBytes")
             copyPkgToLocalCache(uri, cacheFile!!, displayName, packageBytes)
             Log.i(TAG, "pkg cache copy done size=${cacheFile!!.length()}")
 
-            staging = File(gamesDir, ".import-${UUID.randomUUID()}").canonicalFile
+            staging = File(gamesDir, ".import-$jobId").canonicalFile
             staging!!.mkdirs()
             Log.i(TAG, "pkg staging=${staging!!.absolutePath}")
 
@@ -366,8 +517,10 @@ class ImportService : Service() {
                     usedPasscode = userCode
                 }
 
-                ImportManager.update(ImportProgress.Finalizing(displayName))
-                updateNotification("Registering game…", indeterminate = true)
+                ImportManager.update(ImportProgress.Verifying(displayName))
+                job = job.copy(state = InstallJob.STATE_VERIFYING, updatedAtMs = System.currentTimeMillis())
+                jobStore.update(job)
+                updateNotification("Verifying install…", indeterminate = true)
                 Log.i(TAG, "pkg finalize start")
 
                 val sfoFile = File(staging, "sce_sys/param.sfo")
@@ -382,6 +535,23 @@ class ImportService : Service() {
                 )
                 Log.i(TAG, "pkg metadata id=${resolved.id} title=${resolved.title}")
 
+                val dest = File(gamesDir, resolved.id)
+                if (dest.exists()) {
+                    if (GameInstallVerifier.canLaunch(filesDir, "games/${resolved.id}")) {
+                        failInstall(InstallErrorCode.ALREADY_INSTALLED, "Game already installed")
+                    }
+                    dest.deleteRecursively()
+                }
+
+                ImportManager.update(ImportProgress.Registering(resolved.title))
+                job = job.copy(
+                    state = InstallJob.STATE_REGISTERING,
+                    titleId = resolved.id,
+                    updatedAtMs = System.currentTimeMillis(),
+                )
+                jobStore.update(job)
+                updateNotification("Registering game…", indeterminate = true)
+
                 val result = contentImporter.finalizeStagingTree(
                     ContentImportRequest(
                         id = resolved.id,
@@ -391,6 +561,8 @@ class ImportService : Service() {
                         detail = resolved.detail,
                     ),
                     staging!!,
+                    mode = ImportManager.MODE_PKG,
+                    contentId = probe.contentId,
                 )
                 // finalize moves staging; clear local ref so finally does not delete destination
                 staging = null
@@ -405,11 +577,15 @@ class ImportService : Service() {
                 }
 
                 gameRepository.addImportedGame(result, uriString, System.currentTimeMillis())
-                ImportManager.update(ImportProgress.Success(resolved.id, resolved.title))
+                jobStore.delete(jobId)
+                ImportManager.update(ImportProgress.Installed(resolved.id, resolved.title))
                 Log.i(TAG, "pkg import success id=${resolved.id} bytes=${result.bytesCopied}")
-                notifyDone("${resolved.title} imported")
+                notifyDone("${resolved.title} installed")
             }
         } catch (failure: Throwable) {
+            if (!completed) {
+                InstallCleanup(filesDir, jobStore).cleanupJob(jobId)
+            }
             handleFailure(failure)
         } finally {
             if (!completed) {
@@ -535,18 +711,40 @@ class ImportService : Service() {
         return result
     }
 
-    private fun handleFailure(failure: Throwable) {
-        if (failure is CancellationException) {
-            Log.i(TAG, "import cancelled")
-            ImportManager.reset()
-            getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
-        } else {
-            val message = failure.message ?: failure.javaClass.simpleName
-            Log.e(TAG, "import failed: $message", failure)
-            ImportManager.update(ImportProgress.Failed(message))
-            notifyDone("Import failed: $message", ongoing = false)
-        }
+    private fun failInstall(code: InstallErrorCode, message: String): Nothing {
+        throw InstallException(code, message)
     }
+
+    private fun handleFailure(failure: Throwable) {
+        if (failure is CancellationException ||
+            (failure is InstallException && failure.code == InstallErrorCode.CANCELLED)
+        ) {
+            Log.i(TAG, "import cancelled")
+            ImportManager.update(ImportProgress.Failed(InstallErrorCode.CANCELLED, "cancelled"))
+            getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
+            return
+        }
+        val (code, message) = when (failure) {
+            is InstallException -> failure.code to failure.message.orEmpty()
+            is ContentImportException -> {
+                val mapped = when (failure.code) {
+                    RuntimeErrorCode.INSUFFICIENT_STORAGE -> InstallErrorCode.INSUFFICIENT_STORAGE
+                    RuntimeErrorCode.CONTENT_PERMISSION_LOST -> InstallErrorCode.PERMISSION_LOST
+                    else -> InstallErrorCode.VERIFY_FAILED
+                }
+                mapped to (failure.message ?: failure.code.name)
+            }
+            else -> InstallErrorCode.UNKNOWN to (failure.message ?: failure.javaClass.simpleName)
+        }
+        Log.e(TAG, "install failed: $code $message", failure)
+        ImportManager.update(ImportProgress.Failed(code, message))
+        notifyDone("Install failed: $message", ongoing = false)
+    }
+
+    private class InstallException(
+        val code: InstallErrorCode,
+        message: String,
+    ) : Exception(message)
 
     private fun notifyDone(text: String, ongoing: Boolean = false) {
         getSystemService(NotificationManager::class.java).notify(
