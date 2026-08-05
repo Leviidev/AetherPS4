@@ -10,6 +10,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.bachatas4.android.data.UiOrientationPreference
 
 @Composable
 fun SessionWindowModeEffect() {
@@ -26,7 +27,8 @@ fun SessionWindowModeEffect() {
             }
         }
         onDispose {
-            activity?.requestedOrientation = SessionWindowMode.Portrait.orientation
+            val restored = UiOrientationPreference.read(context)
+            activity?.requestedOrientation = UiOrientationPreference.toActivityOrientation(restored)
             controller?.show(WindowInsetsCompat.Type.systemBars())
         }
     }
