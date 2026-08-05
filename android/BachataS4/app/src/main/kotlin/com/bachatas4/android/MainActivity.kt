@@ -15,6 +15,7 @@ import androidx.lifecycle.lifecycleScope
 import android.view.KeyEvent
 import android.view.MotionEvent
 import com.bachatas4.android.data.LegacyRuntimeSettingsMigration
+import com.bachatas4.android.data.UiOrientationPreference
 import com.bachatas4.android.runtime.input.GamepadInputManager
 import androidx.activity.enableEdgeToEdge
 import javax.inject.Inject
@@ -34,6 +35,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        val uiOrientation = UiOrientationPreference.read(this)
+        requestedOrientation = UiOrientationPreference.toActivityOrientation(uiOrientation)
         lifecycleScope.launch { legacyRuntimeSettingsMigration.migrate() }
         val runtimeRoot = java.io.File(filesDir, "runtime")
         val isRuntimeInstalled = runtimeRoot.listFiles()?.any { it.isDirectory && it.name.startsWith("box64-") } == true
