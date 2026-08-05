@@ -674,17 +674,35 @@ class ImportService : Service() {
         displayName: String,
     ): com.bachatas4.android.runtime.pkg.PkgExtractResult {
         var lastLogAt = 0L
+        var lastUiAt = 0L
+        // Leave "Copying…" immediately so large first-file extract is not mistaken for hang.
+        ImportManager.update(
+            ImportProgress.Extracting(
+                bytesCopied = 0L,
+                totalBytes = 0L,
+                currentFile = "Preparing extract…",
+                gameTitle = displayName,
+            ),
+        )
+        updateNotification("Extracting PKG…", indeterminate = true)
         Log.i(TAG, "nativeExtract enter fd=$fd out=${staging.absolutePath}")
         val result = PkgExtractor.nativeExtract(
             fd = fd,
             outPath = staging.absolutePath,
             passcode = passcode,
             listener = { bytesDone, totalHint, currentFile ->
+                val now = System.currentTimeMillis()
+                // UI throttle 200ms (always apply first tick when lastUiAt==0).
+                if (lastUiAt != 0L && now - lastUiAt < 200L) {
+                    return@nativeExtract
+                }
+                lastUiAt = now
+                val fileLabel = currentFile.ifBlank { "…" }
                 ImportManager.update(
                     ImportProgress.Extracting(
                         bytesCopied = bytesDone,
                         totalBytes = totalHint,
-                        currentFile = currentFile,
+                        currentFile = fileLabel,
                         gameTitle = displayName,
                     ),
                 )
@@ -695,15 +713,14 @@ class ImportService : Service() {
                     formatBytes(bytesDone)
                 }
                 updateNotification(
-                    "Extracting PKG · $sizeText · $currentFile",
+                    "Extracting PKG · $sizeText · $fileLabel",
                     maxProgress = max,
                     progress = progress,
                     indeterminate = max == 0,
                 )
-                val now = System.currentTimeMillis()
-                if (now - lastLogAt >= 5_000L) {
+                if (now - lastLogAt >= 2_000L) {
                     lastLogAt = now
-                    Log.i(TAG, "nativeExtract progress $sizeText file=$currentFile")
+                    Log.i(TAG, "nativeExtract progress $sizeText file=$fileLabel")
                 }
             },
         )

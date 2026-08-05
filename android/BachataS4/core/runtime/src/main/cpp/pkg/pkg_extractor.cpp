@@ -516,7 +516,9 @@ bool build_fs_table(int fd, ExtractState& st, std::string& err) {
     return true;
 }
 
-bool extract_file(int fd, ExtractState& st, const pfs_fs_table& table, std::string& err) {
+bool extract_file(int fd, ExtractState& st, const pfs_fs_table& table, std::string& err,
+                  void (*progress)(void* ctx, uint64_t done, uint64_t total, const char* file),
+                  void* progress_ctx, uint64_t done_base, uint64_t total_bytes) {
     if (table.type != PFS_FILE) return true;
     if (table.inode < 0 || static_cast<size_t>(table.inode) >= st.iNodeBuf.size()) {
         err = "Bad inode";
@@ -541,11 +543,14 @@ bool extract_file(int fd, ExtractState& st, const pfs_fs_table& table, std::stri
     }
 
     int size_decompressed = 0;
+    uint64_t written = 0;
     std::vector<char> compressedData;
     std::vector<char> decompressedData(0x10000);
     constexpr u64 pfsc_buf_size = 0x11000;
     std::vector<u8> pfsc(pfsc_buf_size);
     std::vector<u8> pfs_decrypted(pfsc_buf_size);
+    // Throttle JNI progress: every 32 blocks (~2 MiB) or last block.
+    constexpr int kProgressEveryBlocks = 32;
 
     for (int j = 0; j < nblocks; ++j) {
         if (g_cancel.load()) {
@@ -578,9 +583,17 @@ bool extract_file(int fd, ExtractState& st, const pfs_fs_table& table, std::stri
         size_decompressed += 0x10000;
         if (j < nblocks - 1) {
             out.write(decompressedData.data(), static_cast<std::streamsize>(decompressedData.size()));
+            written += static_cast<uint64_t>(decompressedData.size());
         } else {
             const u32 write_size = static_cast<u32>(decompressedData.size() - (size_decompressed - bsize));
             out.write(decompressedData.data(), static_cast<std::streamsize>(write_size));
+            written += write_size;
+        }
+        if (progress &&
+            (j == 0 || j == nblocks - 1 || ((j + 1) % kProgressEveryBlocks) == 0)) {
+            const uint64_t partial =
+                written > static_cast<uint64_t>(bsize) ? static_cast<uint64_t>(bsize) : written;
+            progress(progress_ctx, done_base + partial, total_bytes, table.name.c_str());
         }
     }
     return true;
@@ -749,6 +762,10 @@ int bachata_pkg_extract(int fd, const char* out_path, const char* passcode_or_nu
         }
     }
     LOGI("extract total_bytes=%llu", static_cast<unsigned long long>(total));
+    // Immediate UI update before first large file (avoids stale "Copying…" for minutes).
+    if (progress) {
+        progress(progress_ctx, 0, total, "");
+    }
     uint64_t done = 0;
     size_t file_index = 0;
     for (const auto& t : st.fsTable) {
@@ -761,7 +778,10 @@ int bachata_pkg_extract(int fd, const char* out_path, const char* passcode_or_nu
         if (file_index == 1 || (file_index % 25) == 0) {
             LOGI("extract file #%zu name=%s", file_index, t.name.c_str());
         }
-        if (!extract_file(fd, st, t, err)) {
+        if (progress) {
+            progress(progress_ctx, done, total, t.name.c_str());
+        }
+        if (!extract_file(fd, st, t, err, progress, progress_ctx, done, total)) {
             if (err == "CANCELLED") return 2;
             LOGE("extract %s: %s", t.name.c_str(), err.c_str());
             return 3;
