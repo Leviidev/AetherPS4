@@ -89,7 +89,7 @@ fun SessionScreen(
     var faded by remember { mutableStateOf(false) }
     var showFps by remember { mutableStateOf(true) }
     var showStopOverlay by remember { mutableStateOf(false) }
-    var showUnexpectedStop by remember { mutableStateOf(false) }
+    var showSessionStopReport by remember { mutableStateOf(false) }
     var notificationMessage by remember { mutableStateOf<String?>(null) }
     var notificationVisible by remember { mutableStateOf(false) }
 
@@ -115,12 +115,15 @@ fun SessionScreen(
 
     LaunchedEffect(state) {
         val current = state
-        val unexpected = when (current) {
-            is ManagedSessionState.Stopped -> current.isUnexpected
+        // Show the stop/report sheet for unexpected failures and for user-requested stops
+        // so players can still export logs after a manual exit.
+        val shouldOfferReport = when (current) {
+            is ManagedSessionState.Stopped ->
+                current.reportContext != null && (current.isUnexpected || current.userRequestedStop)
             is ManagedSessionState.Failed -> current.reportContext != null
             else -> false
         }
-        showUnexpectedStop = unexpected
+        showSessionStopReport = shouldOfferReport
         if (current != ManagedSessionState.Idle) {
             notificationMessage = current.label()
             notificationVisible = true
@@ -211,18 +214,18 @@ fun SessionScreen(
             }
         }
 
-        if (showUnexpectedStop) {
-            UnexpectedStopOverlay(
+        if (showSessionStopReport) {
+            SessionStopReportOverlay(
                 state = state,
                 onCreateReport = {
                     reportContextFromState(state)?.let { diagnosticViewModel.openReview(it) }
                 },
                 onRetry = {
-                    showUnexpectedStop = false
+                    showSessionStopReport = false
                     viewModel.launch(gameId)
                 },
                 onClose = {
-                    showUnexpectedStop = false
+                    showSessionStopReport = false
                     onExit()
                 },
             )
@@ -360,6 +363,8 @@ fun SessionScreen(
                         }
                         Button(
                             onClick = {
+                                // Stop guest process; SessionStopReportOverlay opens once
+                                // ManagedSession reports Stopped with userRequestedStop.
                                 context.startService(
                                     Intent(ManagedSession.ACTION_STOP).setClassName(context.packageName, ManagedSession.SERVICE_CLASS),
                                 )
@@ -371,24 +376,6 @@ fun SessionScreen(
                             )
                         ) {
                             Text("Stop")
-                        }
-                        Button(
-                            onClick = {
-                                if (state is ManagedSessionState.Running || state is ManagedSessionState.Preparing) {
-                                    context.startService(
-                                        Intent(ManagedSession.ACTION_STOP).setClassName(context.packageName, ManagedSession.SERVICE_CLASS),
-                                    )
-                                }
-                                showStopOverlay = false
-                                onExit()
-                            },
-                            colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                                containerColor = BachataPalette.RaisedSurface,
-                                contentColor = BachataPalette.Primary
-                            ),
-                            modifier = Modifier.padding(start = 12.dp)
-                        ) {
-                            Text("Exit")
                         }
                     }
                 }
@@ -444,7 +431,7 @@ private fun ManagedSessionState.label(): String = when (this) {
     is ManagedSessionState.Running -> "Running: $gameId"
     is ManagedSessionState.Failed -> "Error: $detail"
     is ManagedSessionState.Stopped -> when {
-        userRequestedStop -> "Stopped"
+        userRequestedStop -> "Manually exited"
         else -> "Stopped: ${exitCode ?: "unknown"}"
     }
 }
@@ -456,13 +443,17 @@ private fun reportContextFromState(state: ManagedSessionState): DiagnosticReport
 }
 
 @Composable
-private fun UnexpectedStopOverlay(
+private fun SessionStopReportOverlay(
     state: ManagedSessionState,
     onCreateReport: () -> Unit,
     onRetry: () -> Unit,
     onClose: () -> Unit,
 ) {
     val reportContext = reportContextFromState(state)
+    val userRequestedStop = when (state) {
+        is ManagedSessionState.Stopped -> state.userRequestedStop
+        else -> reportContext?.userRequestedStop == true
+    }
     val exitCode = when (state) {
         is ManagedSessionState.Stopped -> state.exitCode
         else -> reportContext?.termination?.exitCode
@@ -473,12 +464,25 @@ private fun UnexpectedStopOverlay(
     val reportId = reportContext?.reportId ?: "unavailable"
     val termination = reportContext?.termination
     val processLine = when {
+        userRequestedStop ->
+            "Process: manually stopped" +
+                (termination?.exitCode?.let { " (exit value $it)" } ?: "")
         termination?.signalNumber != null ->
             "Process: ${termination.processRole.name.lowercase()} · Signal ${termination.signalNumber}" +
                 (termination.signalName?.let { " ($it)" } ?: "")
         termination != null ->
             "Process reason: Not available (exit value ${termination.exitCode ?: "unknown"})"
         else -> "Process reason: Not available"
+    }
+    val title = if (userRequestedStop) {
+        "Game was manually exited"
+    } else {
+        "Game stopped unexpectedly"
+    }
+    val subtitle = if (userRequestedStop) {
+        "You stopped the session. You can still create a diagnostic report if something looked wrong."
+    } else {
+        "The emulation process ended before a normal shutdown."
     }
 
     Box(
@@ -496,13 +500,13 @@ private fun UnexpectedStopOverlay(
                 .padding(24.dp),
         ) {
             Text(
-                text = "Game stopped unexpectedly",
+                text = title,
                 color = BachataPalette.Primary,
                 fontWeight = FontWeight.Bold,
                 style = androidx.compose.material3.MaterialTheme.typography.headlineSmall,
             )
             Text(
-                text = "The emulation process ended before a normal shutdown.",
+                text = subtitle,
                 color = BachataPalette.Secondary,
                 modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
             )
