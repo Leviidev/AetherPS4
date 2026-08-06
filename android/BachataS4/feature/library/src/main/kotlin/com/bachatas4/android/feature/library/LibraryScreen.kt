@@ -1,9 +1,7 @@
 package com.bachatas4.android.feature.library
 
 import android.Manifest
-import android.app.Activity
 import android.content.Context
-import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
@@ -83,8 +81,6 @@ import com.bachatas4.android.data.GameIconPaths
 import com.bachatas4.android.data.GameRepository
 import com.bachatas4.android.data.ImportManager
 import com.bachatas4.android.data.ImportProgress
-import com.bachatas4.android.data.UiOrientation
-import com.bachatas4.android.data.UiOrientationPreference
 import com.bachatas4.android.designsystem.BachataActionBar
 import com.bachatas4.android.designsystem.theme.BachataPalette
 import com.bachatas4.android.runtime.input.GamepadInputManager
@@ -371,9 +367,6 @@ fun LibraryContent(
 ) {
     val selected = state.games.firstOrNull { it.id == state.selectedGameId }
     val context = LocalContext.current
-    var uiOrientation by remember {
-        mutableStateOf(UiOrientationPreference.read(context))
-    }
     val isImporting = ImportManager.isBusy(importProgress)
     val selectedCoverBitmap = remember(selected?.relativePath) {
         if (selected == null) null else {
@@ -450,14 +443,6 @@ fun LibraryContent(
 
             val header: @Composable () -> Unit = {
                 LibraryScreenHeader(
-                    uiOrientation = uiOrientation,
-                    onToggleOrientation = {
-                        val next = UiOrientationPreference.toggle(uiOrientation)
-                        UiOrientationPreference.write(context, next)
-                        context.findActivity()?.requestedOrientation =
-                            UiOrientationPreference.toActivityOrientation(next)
-                        uiOrientation = next
-                    },
                     onOpenSettings = onOpenSettings,
                 )
             }
@@ -760,8 +745,6 @@ fun LibraryContent(
 
 @Composable
 private fun LibraryScreenHeader(
-    uiOrientation: UiOrientation,
-    onToggleOrientation: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     Row(
@@ -786,10 +769,6 @@ private fun LibraryScreenHeader(
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
             color = BachataPalette.Primary,
-        )
-        OrientationToggleButton(
-            orientation = uiOrientation,
-            onClick = onToggleOrientation,
         )
         TextButton(onClick = onOpenSettings) {
             Text("⚙", color = BachataPalette.Primary, style = MaterialTheme.typography.titleLarge)
@@ -1320,12 +1299,6 @@ private fun formatBytes(bytes: Long): String {
     val mib = kib / 1024.0
     if (mib < 1024) return "%.1f MB".format(mib)
     return "%.2f GB".format(mib / 1024.0)
-}
-
-private tailrec fun Context.findActivity(): Activity? = when (this) {
-    is Activity -> this
-    is ContextWrapper -> baseContext.takeUnless { it === this }?.findActivity()
-    else -> null
 }
 
 @EntryPoint
