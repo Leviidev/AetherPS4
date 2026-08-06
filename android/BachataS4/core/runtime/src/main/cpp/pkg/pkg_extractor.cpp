@@ -302,6 +302,54 @@ bool derive_keys_from_entries(int fd, ExtractState& st, const char* passcode, st
     return false;
 }
 
+// Load one PFSC payload sector into `compressed_out`.
+// Fast path: copy from the initial decrypted PFS cache window (pfs_cache_size*2).
+// Slow path: when directory/inode blocks sit past that window (large titles like
+// Bloodborne), stream+decrypt from the full PKG — same windowing as extract_file.
+// Without this, build_fs_table used to `break` and silently produce a half tree
+// (~15G of 25G for CUSA00900, missing sce_module/libc.prx → exit 133).
+bool load_pfsc_sector(int fd, ExtractState& st, const std::vector<u8>& pfsc_cache,
+                      u64 sector_offset, u64 sector_size,
+                      std::vector<char>& compressed_out, std::string& err) {
+    if (sector_size == 0 || sector_size > 0x20000) {
+        err = "bad PFSC sector size";
+        return false;
+    }
+    compressed_out.resize(static_cast<size_t>(sector_size));
+    if (sector_offset + sector_size <= pfsc_cache.size()) {
+        std::memcpy(compressed_out.data(),
+                    pfsc_cache.data() + static_cast<size_t>(sector_offset),
+                    static_cast<size_t>(sector_size));
+        return true;
+    }
+
+    constexpr u64 kWindow = 0x11000;
+    std::vector<u8> enc(kWindow);
+    std::vector<u8> dec(kWindow);
+    const u64 file_offset =
+        u64(st.hdr.pfs_image_offset) + static_cast<u64>(st.pfsc_offset) + sector_offset;
+    const u64 current_sector = (static_cast<u64>(st.pfsc_offset) + sector_offset) / 0x1000;
+    const u64 aligned = (sector_offset + static_cast<u64>(st.pfsc_offset)) & ~u64{0xFFF};
+    const int previous_data =
+        static_cast<int>((sector_offset + static_cast<u64>(st.pfsc_offset)) - aligned);
+    std::fill(enc.begin(), enc.end(), 0);
+    const u64 read_off = file_offset - static_cast<u64>(previous_data);
+    const u64 pkg_size = u64(st.hdr.pkg_size);
+    const u64 max_read = read_off < pkg_size ? (pkg_size - read_off) : 0;
+    const size_t to_read = static_cast<size_t>(std::min<u64>(kWindow, max_read));
+    if (to_read > 0 && !pread_all(fd, enc.data(), to_read, static_cast<off_t>(read_off))) {
+        err = "PFS metadata sector read failed";
+        return false;
+    }
+    st.crypto.decryptPFS(st.dataKey, st.tweakKey, enc, dec, current_sector);
+    if (static_cast<size_t>(previous_data) + sector_size > dec.size()) {
+        err = "PFS metadata sector window OOB";
+        return false;
+    }
+    std::memcpy(compressed_out.data(), dec.data() + previous_data, static_cast<size_t>(sector_size));
+    return true;
+}
+
 bool build_fs_table(int fd, ExtractState& st, std::string& err) {
     std::array<u8, 16> seed{};
     if (!pread_all(fd, seed.data(), 16, static_cast<off_t>(u64(st.hdr.pfs_image_offset) + 0x370))) {
@@ -420,7 +468,15 @@ bool build_fs_table(int fd, ExtractState& st, std::string& err) {
 
     u32 ent_size = 0;
     u32 ndinode = 0;
-    int ndinode_counter = 0;
+    // flat_path_table uses its own index for extractPaths[…]=root. MUST NOT share
+    // with the FILE/DIR listing counter — sharing made end_reached fire early on
+    // large titles (Bloodborne: listed ~8500 of ~17129 inodes → half tree, no libc.prx).
+    int flat_path_idx = 0;
+    int listed_entries = 0;
+    // PFSC also holds file-data blocks after the dirent run. Once dinode parsing
+    // yields no FILE/DIR for a few blocks, further blocks are payload — stop.
+    // Without this, BB (num_blocks≈414k) hangs in "Preparing extract" forever.
+    int empty_dinode_blocks = 0;
     bool dinode_reached = false;
     bool uroot_reached = false;
     std::vector<char> compressedData;
@@ -444,6 +500,7 @@ bool build_fs_table(int fd, ExtractState& st, std::string& err) {
         return true;
     };
 
+    int streamed_sectors = 0;
     for (int i = 0; i < num_blocks; ++i) {
         if (g_cancel.load()) {
             err = "CANCELLED";
@@ -452,9 +509,19 @@ bool build_fs_table(int fd, ExtractState& st, std::string& err) {
         const u64 sectorOffset = st.sectorMap[static_cast<size_t>(i)];
         const u64 sectorSize = st.sectorMap[static_cast<size_t>(i) + 1] - sectorOffset;
         if (sectorSize == 0 || sectorSize > 0x20000) continue;
-        if (sectorOffset + sectorSize > pfsc.size()) break;
-        compressedData.resize(static_cast<size_t>(sectorSize));
-        std::memcpy(compressedData.data(), pfsc.data() + sectorOffset, static_cast<size_t>(sectorSize));
+        // Beyond the initial cache window: stream from full PKG (do not break —
+        // that silently truncated large titles mid-tree).
+        if (sectorOffset + sectorSize > pfsc.size()) {
+            ++streamed_sectors;
+            if (streamed_sectors == 1) {
+                LOGI("build_fs_table streaming past cache at block=%d off=0x%llx (cache=%zu)",
+                     i, static_cast<unsigned long long>(sectorOffset), pfsc.size());
+            }
+        }
+        if (!load_pfsc_sector(fd, st, pfsc, sectorOffset, sectorSize, compressedData, err)) {
+            LOGE("build_fs_table sector %d: %s", i, err.c_str());
+            return false;
+        }
         std::fill(decompressedData.begin(), decompressedData.end(), 0);
         if (sectorSize == 0x10000) {
             std::memcpy(decompressedData.data(), compressedData.data(), 0x10000);
@@ -497,9 +564,9 @@ bool build_fs_table(int fd, ExtractState& st, std::string& err) {
                 ent_size = static_cast<u32>(dirent.entsize);
                 if (ent_size == 0) break;
                 if (dirent.ino != 0) {
-                    ndinode_counter++;
+                    flat_path_idx++;
                 } else {
-                    st.extractPaths[ndinode_counter] = st.extract_root;
+                    st.extractPaths[flat_path_idx] = st.extract_root;
                     uroot_reached = false;
                     break;
                 }
@@ -513,12 +580,15 @@ bool build_fs_table(int fd, ExtractState& st, std::string& err) {
 
         bool end_reached = false;
         if (dinode_reached) {
+            int dirents_this_block = 0;
+            int added_this_block = 0;
             for (int j = 0; j < 0x10000; ) {
                 Dirent dirent{};
                 if (!read_dirent(j, dirent)) break;
                 if (dirent.ino == 0) break;
                 ent_size = static_cast<u32>(dirent.entsize);
                 if (ent_size == 0) break;
+                dirents_this_block++;
                 pfs_fs_table table{};
                 table.name = std::string(dirent.name, static_cast<size_t>(dirent.namelen));
                 table.inode = static_cast<u32>(dirent.ino);
@@ -535,15 +605,34 @@ bool build_fs_table(int fd, ExtractState& st, std::string& err) {
                         if (safe_under(st.extract_root, p)) fs::create_directories(p);
                     }
                     st.fsTable.push_back(table);
-                    ndinode_counter++;
-                    if ((ndinode_counter + 1) == static_cast<int>(ndinode)) end_reached = true;
+                    listed_entries++;
+                    added_this_block++;
+                    // Hard cap: enough FILE/DIR entries relative to inode count.
+                    // (flat_path_idx intentionally excluded — see declaration.)
+                    if (listed_entries + 1 >= static_cast<int>(ndinode)) end_reached = true;
                 }
                 j += static_cast<int>(ent_size);
+            }
+            if (dirents_this_block == 0) {
+                empty_dinode_blocks++;
+                // Contiguous dirent run ended; remaining PFSC blocks are file data.
+                // Do not key off added_this_block==0: blocks with only "."/".." are valid.
+                if (listed_entries > 0 && empty_dinode_blocks >= 2) end_reached = true;
+            } else {
+                empty_dinode_blocks = 0;
+            }
+            if ((i % 64) == 0 || end_reached) {
+                LOGI("build_fs_table progress block=%d/%d listed=%d added=%d empty=%d stream=%d",
+                     i, num_blocks, listed_entries, added_this_block, empty_dinode_blocks,
+                     streamed_sectors);
             }
             if (end_reached) break;
         }
     }
-    LOGI("build_fs_table done files=%zu inodes=%zu", st.fsTable.size(), st.iNodeBuf.size());
+    LOGI("build_fs_table done entries=%zu listed=%d inodes=%zu ndinode=%u "
+         "flat_path_idx=%d streamed_sectors=%d",
+         st.fsTable.size(), listed_entries, st.iNodeBuf.size(), ndinode, flat_path_idx,
+         streamed_sectors);
     return true;
 }
 
