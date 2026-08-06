@@ -42,6 +42,7 @@ setup_tree() {
   mkdir -p "$tree"
   cp -a "$project_root/." "$tree/"
   rm -rf "$tree/runtime/build" "$tree/android/BachataS4/app/build" "$tree/android/BachataS4/.gradle" "$tree/.git"
+  find "$tree/android/BachataS4" -type d \( -name ".cxx" -o -name ".kotlin" -o -name "build" \) -prune -exec rm -rf {} + 2>/dev/null || true
   find "$tree/runtime/sources" "$tree/externals" -name ".git" -type f -exec rm -f {} + 2>/dev/null || true
   mkdir -p "$tree/runtime/sources/winlator-app/.git" "$tree/runtime/sources/vortek-client/.git" "$tree/runtime/sources/box64/.git" "$tree/runtime/sources/fex/.git"
 }
