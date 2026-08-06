@@ -92,6 +92,8 @@ const REQUIRED_RUNTIME_PATHS = [
   "host/vulkan/icd.d/vortek.json",
   "usr/share/bachata/vortek/LICENSE",
   "usr/share/bachata/vortek/SOURCE.txt",
+  "usr/share/bachata/guest-runtime.json",
+  "usr/share/bachata/guest-runtime.txt",
   "host/libc.so.6",
   "host/libdl.so.2",
   "host/libgcc_s.so.1",
@@ -360,6 +362,32 @@ if (hostFexcoreGuestHarness.readUInt16LE(18) !== 183) fail("FEXCore guest harnes
 if (hostFexShadPs4.length < 20 || hostFexShadPs4[0] !== 0x7f ||
     hostFexShadPs4.subarray(1, 4).toString() !== "ELF" || hostFexShadPs4.readUInt16LE(18) !== 183) {
   fail("FEX shadPS4 is not AArch64 ELF");
+}
+// Optional deep guest pin: only enforce when pin binary is present locally.
+// Product path packages workspace FHD-ring guest; dig can drop a pin binary under runtime/pins/.
+{
+  const pinDir = resolve(dirname(fileURLToPath(import.meta.url)), "../pins/deep-guest-d45f");
+  const pinMetaPath = resolve(pinDir, "PIN.json");
+  const pinBinPath = resolve(pinDir, "shadps4-arm64-fex");
+  const guestMetaEntry = zipEntries.find((entry) => entry.path === "usr/share/bachata/guest-runtime.json");
+  const pinActive =
+    process.env.BACHATA_DEEP_GUEST_PIN !== "0" &&
+    existsSync(pinMetaPath) &&
+    existsSync(pinBinPath);
+  if (guestMetaEntry) {
+    const guestMeta = JSON.parse(guestMetaEntry.bytes.toString("utf8"));
+    console.log(
+      `GUEST_RUNTIME_BUILD variant=${guestMeta.variant} sha256=${guestMeta.sha256} revision=${guestMeta.revision}`,
+    );
+    if (pinActive) {
+      const pinMeta = JSON.parse(readFileSync(pinMetaPath, "utf8"));
+      const guestSha = sha256(hostFexShadPs4);
+      if (guestSha !== pinMeta.sha256) {
+        fail(`Packaged guest SHA ${guestSha} != deep pin ${pinMeta.sha256}`);
+      }
+      console.log(`GUEST_RUNTIME_BUILD pin verified sha256=${guestSha}`);
+    }
+  }
 }
 for (const marker of [
   FEX_REVISION,

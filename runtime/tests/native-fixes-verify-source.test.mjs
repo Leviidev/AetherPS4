@@ -15,13 +15,15 @@ test("native-fixes verifier is wired into the APK build as a post-assemble gate"
   assert.match(verifier, /Java_com_winlator_renderer_GPUImage_unlockHardwareBuffer/);
   assert.match(verifier, /abstract bind path=/);
   assert.match(verifier, /abstract listen path=/);
-  assert.match(verifier, /validFdCount/);
+  assert.match(verifier, /bachata_vortek_fence_host_wait/);
+  assert.match(verifier, /bachata_vortek_gpu_va_track/);
+  assert.match(verifier, /DEVICE_LOST_SNAPSHOT/);
   assert.match(verifier, /unzip/);
   assert.match(verifier, /nm/);
   assert.match(verifier, /strings/);
 
   assert.match(gradle, /verifyNativeRuntimeFixes/);
   assert.match(gradle, /verify-native-fixes\.mjs/);
-  assert.match(gradle, /finalizedBy\("verifyNativeRuntimeFixes"\)/);
-  assert.match(gradle, /startsWith\("assemble"\)/);
+  assert.match(gradle, /finalizedBy\(verifyTask\)/);
+  assert.match(gradle, /assembleTaskName/);
 });

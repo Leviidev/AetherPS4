@@ -7,21 +7,31 @@ import test from "node:test";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const read = (relative) => readFileSync(resolve(root, relative), "utf8");
 
-test("Vortek WaitForFences handles create-signaled SYNC_FD without false DEVICE_LOST", () => {
+test("Vortek WaitForFences host-waits create-signaled fences without SYNC_FD", () => {
   const server = read(
     "runtime/sources/winlator-app/app/src/main/cpp/vortekrenderer/src/request_handler.c",
   );
   const client = read("runtime/sources/vortek-client/src/vulkan_calls.c");
   const clientSock = read("runtime/sources/vortek-client/include/socket_utils.h");
 
+  const serverCreate = server.slice(server.indexOf("void vt_handle_vkCreateFence"));
+  // Must not force SYNC_FD export on every guest fence (Mali create-signaled footgun).
+  assert.doesNotMatch(
+    serverCreate.slice(0, serverCreate.indexOf("void vt_handle_vkDestroyFence")),
+    /VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT/,
+  );
+
   const serverWait = server.slice(server.indexOf("void vt_handle_vkWaitForFences"));
-  // Must filter Android already-signaled fd=-1 and never SCM_RIGHTS them.
-  assert.match(serverWait, /fd >= 0/);
-  assert.match(serverWait, /validFdCount/);
-  // GetFenceFd failure falls back to host wait + 0-FD reply.
+  const serverWaitBody = serverWait.slice(
+    0,
+    serverWait.indexOf("void vt_handle_vkCreateSemaphore"),
+  );
+  // Always host-wait; never vkGetFenceFdKHR for WaitForFences.
+  assert.match(serverWaitBody, /vkWaitForFences/);
+  assert.doesNotMatch(serverWaitBody, /vkGetFenceFd/);
   assert.match(
-    serverWait,
-    /vkGetFenceFd[\s\S]*vkWaitForFences[\s\S]*send_fds\(context->clientFd, NULL, 0/,
+    serverWaitBody,
+    /send_fds\(context->clientFd, NULL, 0, &result, sizeof\(VkResult\)\)/,
   );
 
   const clientWait = client.slice(client.indexOf("vt_call_vkWaitForFences"));

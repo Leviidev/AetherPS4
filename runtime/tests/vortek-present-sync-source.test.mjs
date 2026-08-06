@@ -34,6 +34,13 @@ test("Vortek waits for submitted rendering before copying the AHB to the composi
     present,
     /if \(result != VK_SUCCESS\) \{[\s\S]*present_sync_failed[\s\S]*return;[\s\S]*\}/,
   );
+  // Present complete only after compositor (not on render WaitIdle alone).
+  assert.match(
+    present,
+    /BachataUpstreamXWindowSwapchain_presentImage[\s\S]*notePresentComplete[\s\S]*compositor_sync/,
+  );
+  assert.match(swapchain, /bachata_consume_present_wait_semaphores/);
+  assert.match(swapchain, /BachataXWindowSwapchain_presentWithWaits/);
 
   assert.doesNotMatch(
     probe,
