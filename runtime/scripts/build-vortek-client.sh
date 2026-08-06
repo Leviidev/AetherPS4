@@ -102,6 +102,9 @@ cflags_common=(
   -Wno-discarded-qualifiers
   -Wno-unused-function
   -Wno-stringop-truncation
+  -ffile-prefix-map="$project_root=/usr/src/bachata-s4"
+  -fmacro-prefix-map="$project_root=/usr/src/bachata-s4"
+  -fdebug-prefix-map="$project_root=/usr/src/bachata-s4"
   -DVK_USE_PLATFORM_XLIB_KHR
   -DBACHATA_VORTEK_CLIENT_BUILD_ID="\"$client_revision\""
   -I"$build_dir/include"
@@ -132,8 +135,9 @@ build_shared() {
   done
   if ! "$cc" -shared -o "$out_lib" "${objects[@]}" \
       -Wl,-soname,libvulkan_vortek.so \
+      -Wl,--build-id=sha1 \
       -Wl,--version-script="$project_root/runtime/patches/vortek/libvulkan_vortek.map"; then
-    "$cc" -shared -o "$out_lib" "${objects[@]}" -Wl,-soname,libvulkan_vortek.so
+    "$cc" -shared -o "$out_lib" "${objects[@]}" -Wl,-soname,libvulkan_vortek.so -Wl,--build-id=sha1
   fi
   if command -v "${cc%-gcc}-strip" >/dev/null 2>&1; then
     "${cc%-gcc}-strip" --strip-unneeded "$out_lib" 2>/dev/null || true

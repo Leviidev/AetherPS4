@@ -271,7 +271,8 @@ install_dependencies_inside_debian() {
         libdbus-1-3 \
         libsystemd0 \
         zlib1g \
-        libdrm2; do
+        libdrm2 \
+        libcap2; do
 
         if ! check_matching_candidate "$package"; then
             candidate_failure=1
@@ -348,6 +349,7 @@ install_dependencies_inside_debian() {
         libsystemd0:amd64
         zlib1g:amd64
         libdrm2:amd64
+        libcap2:amd64
     )
 
     arch_arm64=(
@@ -382,6 +384,7 @@ install_dependencies_inside_debian() {
         libsystemd0:arm64
         zlib1g:arm64
         libdrm2:arm64
+        libcap2:arm64
     )
 
     arch_independent=(

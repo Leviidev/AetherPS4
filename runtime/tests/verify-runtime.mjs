@@ -115,6 +115,7 @@ const REQUIRED_RUNTIME_PATHS = [
   "host/libXdmcp.so.6",
   "host/libxcb.so",
   "host/libxcb.so.1",
+  "host/libcap.so.2",
   "lib/x86_64-linux-gnu/libc.so.6",
   "lib/x86_64-linux-gnu/libgcc_s.so.1",
   "lib/x86_64-linux-gnu/libm.so.6",
@@ -135,6 +136,7 @@ const REQUIRED_RUNTIME_PATHS = [
   "lib/x86_64-linux-gnu/libXau.so.6",
   "lib/x86_64-linux-gnu/libXdmcp.so.6",
   "lib/x86_64-linux-gnu/libxkbcommon.so.0",
+  "lib/x86_64-linux-gnu/libcap.so.2",
   "lib64/ld-linux-x86-64.so.2",
   "usr/share/bachata/shadps4-needed.txt",
   "usr/share/bachata/shadps4-arm64-fex-needed.txt",
@@ -380,5 +382,22 @@ if (hello.readUInt16LE(18) !== 62) fail("Probe is not x86_64 ELF");
 const shadps4 = zipEntries.find((entry) => entry.path === "bin/shadps4").bytes;
 if (shadps4.length < 20 || shadps4[0] !== 0x7f || shadps4.subarray(1, 4).toString() !== "ELF") fail("shadPS4 is not ELF");
 if (shadps4.readUInt16LE(18) !== 62) fail("shadPS4 is not x86_64 ELF");
+
+// Task 4: Validate that none of the four binaries contains clean-build checkout path
+const checkPaths = [projectRoot];
+if (process.env.REPRO_CHECKOUT_PATH) checkPaths.push(process.env.REPRO_CHECKOUT_PATH);
+const fourBinaries = [
+  { path: "bin/shadps4", bytes: shadps4 },
+  { path: "host/shadps4-arm64-fex", bytes: hostFexShadPs4 },
+  { path: "host/fexcore-guest-harness", bytes: hostFexcoreGuestHarness },
+  { path: "host/fexcore-smoke", bytes: hostFexcoreSmoke },
+];
+for (const b of fourBinaries) {
+  for (const cPath of checkPaths) {
+    if (b.bytes.includes(Buffer.from(cPath))) {
+      fail(`Binary ${b.path} contains checkout path: ${cPath}`);
+    }
+  }
+}
 
 console.log(`runtime verified: ${zipEntries.length} files, sha256=${sha256(readFileSync(zipPath))}`);

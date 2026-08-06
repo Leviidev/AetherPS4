@@ -16,7 +16,12 @@ done
 llvm_ar=$(command -v llvm-ar-21 || command -v llvm-ar)
 llvm_ranlib=$(command -v llvm-ranlib-21 || command -v llvm-ranlib)
 mkdir -p "$host_tools_dir"
-clang++ -std=c++23 "$font_embed_source" -o "$host_font_embed"
+clang++ -std=c++23 \
+  -ffile-prefix-map="$project_root=/usr/src/bachata-s4" \
+  -fmacro-prefix-map="$project_root=/usr/src/bachata-s4" \
+  -fdebug-prefix-map="$project_root=/usr/src/bachata-s4" \
+  -Wl,--build-id=sha1 \
+  "$font_embed_source" -o "$host_font_embed"
 test -x "$host_font_embed"
 sdl_patch="$project_root/runtime/patches/sdl3-winlator-x11.patch"
 if git -C "$project_root/externals/sdl3" apply --check "$sdl_patch"; then
@@ -59,7 +64,10 @@ cmake -S "$project_root" -B "$build_dir" -G Ninja \
   -DCMAKE_C_COMPILER_TARGET=aarch64-linux-gnu \
   -DCMAKE_CXX_COMPILER_TARGET=aarch64-linux-gnu \
   -DCMAKE_FIND_ROOT_PATH=/usr/aarch64-linux-gnu \
-  -DCMAKE_EXE_LINKER_FLAGS:STRING="-L$arm64_link_dir" \
+  -DCMAKE_INSTALL_PREFIX=/usr \
+  -DCMAKE_C_FLAGS="-ffile-prefix-map=$project_root=/usr/src/bachata-s4 -fmacro-prefix-map=$project_root=/usr/src/bachata-s4 -fdebug-prefix-map=$project_root=/usr/src/bachata-s4" \
+  -DCMAKE_CXX_FLAGS="-ffile-prefix-map=$project_root=/usr/src/bachata-s4 -fmacro-prefix-map=$project_root=/usr/src/bachata-s4 -fdebug-prefix-map=$project_root=/usr/src/bachata-s4" \
+  -DCMAKE_EXE_LINKER_FLAGS:STRING="-L$arm64_link_dir -Wl,--build-id=sha1" \
   -DX11_Xext_LIB:FILEPATH="$arm64_xext_lib" \
   -DXEXT_LIB:FILEPATH="$arm64_xext_lib" \
   -DIMGUI_FONT_EMBED_EXECUTABLE="$host_font_embed" \

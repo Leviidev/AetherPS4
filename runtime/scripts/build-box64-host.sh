@@ -168,7 +168,12 @@ mkdir -p "$build_dir"
 mkdir -p "$source_dir/tests"
 [[ -f "$source_dir/tests/box64-bash" ]] || touch "$source_dir/tests/box64-bash"
 affinity_test="$build_dir/test_bachata_thread_affinity"
-cc -Wall -Wextra -Werror "$source_dir/tests/test_bachata_thread_affinity.c" -o "$affinity_test"
+cc -Wall -Wextra -Werror \
+  -ffile-prefix-map="$project_root=/usr/src/bachata-s4" \
+  -fmacro-prefix-map="$project_root=/usr/src/bachata-s4" \
+  -fdebug-prefix-map="$project_root=/usr/src/bachata-s4" \
+  -Wl,--build-id=sha1 \
+  "$source_dir/tests/test_bachata_thread_affinity.c" -o "$affinity_test"
 "$affinity_test"
 
 cmake -S "$source_dir" -B "$build_dir" -G Ninja \
@@ -176,6 +181,10 @@ cmake -S "$source_dir" -B "$build_dir" -G Ninja \
   -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
   -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
   -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+  -DCMAKE_INSTALL_PREFIX=/usr \
+  -DCMAKE_C_FLAGS="-ffile-prefix-map=$project_root=/usr/src/bachata-s4 -fmacro-prefix-map=$project_root=/usr/src/bachata-s4 -fdebug-prefix-map=$project_root=/usr/src/bachata-s4" \
+  -DCMAKE_CXX_FLAGS="-ffile-prefix-map=$project_root=/usr/src/bachata-s4 -fmacro-prefix-map=$project_root=/usr/src/bachata-s4 -fdebug-prefix-map=$project_root=/usr/src/bachata-s4" \
+  -DCMAKE_EXE_LINKER_FLAGS="-Wl,--build-id=sha1" \
   -DARM64=ON \
   -DARM_DYNAREC=ON \
   -DBAD_SIGNAL=ON \

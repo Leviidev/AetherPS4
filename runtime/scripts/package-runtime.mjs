@@ -208,11 +208,17 @@ if (existsSync(hostLibxcb)) {
 const probeDir = join(rootfs, "bin");
 mkdirSync(probeDir, { recursive: true });
 
+const prefixFlags = [
+  `-ffile-prefix-map=${projectRoot}=/usr/src/bachata-s4`,
+  `-fmacro-prefix-map=${projectRoot}=/usr/src/bachata-s4`,
+  `-fdebug-prefix-map=${projectRoot}=/usr/src/bachata-s4`,
+];
+
 const helloProbe = join(probeDir, "hello");
-run("x86_64-linux-gnu-gcc", ["-O2", "-s", "-fno-ident", "-Wl,--build-id=none", resolve(projectRoot, "runtime/probes/hello.c"), "-o", helloProbe]);
+run("x86_64-linux-gnu-gcc", ["-O2", "-s", "-fno-ident", ...prefixFlags, "-Wl,--build-id=none", resolve(projectRoot, "runtime/probes/hello.c"), "-o", helloProbe]);
 
 const audioProbe = join(probeDir, "audio-tone");
-run("x86_64-linux-gnu-gcc", ["-O2", "-s", "-fno-ident", "-Wl,--build-id=none", resolve(projectRoot, "runtime/probes/audio-tone.c"), "-lm", "-o", audioProbe]);
+run("x86_64-linux-gnu-gcc", ["-O2", "-s", "-fno-ident", ...prefixFlags, "-Wl,--build-id=none", resolve(projectRoot, "runtime/probes/audio-tone.c"), "-lm", "-o", audioProbe]);
 
 // SDL and Vulkan probes - need dev packages installed
 const sdlHeaders = "/usr/include/SDL2";
@@ -222,14 +228,14 @@ const vulkanLibs = "/usr/lib/x86_64-linux-gnu";
 
 if (existsSync(sdlHeaders)) {
   const sdlProbe = join(probeDir, "sdl-window");
-  run("x86_64-linux-gnu-g++", ["-O2", "-s", "-fno-ident", "-Wl,--build-id=none",
+  run("x86_64-linux-gnu-g++", ["-O2", "-s", "-fno-ident", ...prefixFlags, "-Wl,--build-id=none",
     `-I${sdlHeaders}`, resolve(projectRoot, "runtime/probes/sdl-window.cpp"),
     `-L${sdlLibs}`, "-lSDL2", "-o", sdlProbe]);
 }
 
 if (existsSync(`${vulkanLibs}/libvulkan.so`) || existsSync("/usr/lib/x86_64-linux-gnu/libvulkan.so")) {
   const vkProbe = join(probeDir, "vulkan-info");
-  run("x86_64-linux-gnu-g++", ["-O2", "-s", "-fno-ident", "-Wl,--build-id=none",
+  run("x86_64-linux-gnu-g++", ["-O2", "-s", "-fno-ident", ...prefixFlags, "-Wl,--build-id=none",
     `-I${vulkanHeaders}`, resolve(projectRoot, "runtime/probes/vulkan-info.cpp"),
     `-L${vulkanLibs}`, "-lvulkan", "-o", vkProbe]);
 }
@@ -435,7 +441,7 @@ if (existsSync(arm64SrcFull)) {
     const manifest = {
       source_commit: (() => {
         try {
-          return execFileSync("git", ["rev-parse", "HEAD"], { cwd: projectRoot, encoding: "utf8" }).trim();
+          return execFileSync("git", ["rev-parse", "HEAD"], { cwd: projectRoot, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
         } catch {
           return "unknown";
         }

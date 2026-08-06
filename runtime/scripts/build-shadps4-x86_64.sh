@@ -16,7 +16,12 @@ if [ "${FAST_FDROID_BUILD:-1}" = "1" ]; then
   cat <<'EOF' > "$stage_dir/stub.c"
 int main(void) { return 0; }
 EOF
-  gcc -m64 -O2 "$stage_dir/stub.c" -o "$stage_dir/bin/shadps4"
+  gcc -m64 -O2 \
+    -ffile-prefix-map="$project_root=/usr/src/bachata-s4" \
+    -fmacro-prefix-map="$project_root=/usr/src/bachata-s4" \
+    -fdebug-prefix-map="$project_root=/usr/src/bachata-s4" \
+    -Wl,--build-id=sha1 \
+    "$stage_dir/stub.c" -o "$stage_dir/bin/shadps4"
   cat <<'EOF' > "$stage_dir/needed.txt"
 ld-linux-x86-64.so.2
 libc.so.6
@@ -42,8 +47,12 @@ fi
 
 cmake -S "$project_root" -B "$build_dir" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX=/usr \
   -DCMAKE_C_COMPILER=clang \
   -DCMAKE_CXX_COMPILER=clang++ \
+  -DCMAKE_C_FLAGS="-ffile-prefix-map=$project_root=/usr/src/bachata-s4 -fmacro-prefix-map=$project_root=/usr/src/bachata-s4 -fdebug-prefix-map=$project_root=/usr/src/bachata-s4" \
+  -DCMAKE_CXX_FLAGS="-ffile-prefix-map=$project_root=/usr/src/bachata-s4 -fmacro-prefix-map=$project_root=/usr/src/bachata-s4 -fdebug-prefix-map=$project_root=/usr/src/bachata-s4" \
+  -DCMAKE_EXE_LINKER_FLAGS="-Wl,--build-id=sha1" \
   -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
   -DCMAKE_AR="$llvm_ar" \
   -DCMAKE_RANLIB="$llvm_ranlib" \

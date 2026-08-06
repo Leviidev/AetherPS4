@@ -83,7 +83,10 @@ cmake -S "${FEX_SOURCE}" -B "${BUILD_DIR}" -G Ninja \
   -DCMAKE_FIND_ROOT_PATH=/usr/aarch64-linux-gnu \
   -DCMAKE_BUILD_TYPE=Release \
   -DTUNE_CPU=none \
-  -DCMAKE_INSTALL_PREFIX="${STAGE_DIR}" \
+  -DCMAKE_INSTALL_PREFIX=/usr \
+  -DCMAKE_C_FLAGS="-ffile-prefix-map=${PROJECT_ROOT}=/usr/src/bachata-s4 -fmacro-prefix-map=${PROJECT_ROOT}=/usr/src/bachata-s4 -fdebug-prefix-map=${PROJECT_ROOT}=/usr/src/bachata-s4" \
+  -DCMAKE_CXX_FLAGS="-ffile-prefix-map=${PROJECT_ROOT}=/usr/src/bachata-s4 -fmacro-prefix-map=${PROJECT_ROOT}=/usr/src/bachata-s4 -fdebug-prefix-map=${PROJECT_ROOT}=/usr/src/bachata-s4" \
+  -DCMAKE_EXE_LINKER_FLAGS="-Wl,--build-id=sha1" \
   -DBUILD_FEXCORE_ONLY=ON \
   -DFEXCORE_PROJECT_SOURCE_DIR="${PROJECT_ROOT}/src" \
   -DFEXCORE_SMOKE_SOURCE="${SMOKE_SOURCE}" \
@@ -108,7 +111,7 @@ ninja -C "${BUILD_DIR}" -t clean fexcore-guest-harness
 cmake --build "${BUILD_DIR}" --target fexcore-smoke fexcore-guest-harness --parallel
 rm -rf "${STAGE_DIR}"
 mkdir -p "${STAGE_DIR}"
-cmake --install "${BUILD_DIR}"
+cmake --install "${BUILD_DIR}" --prefix "${STAGE_DIR}"
 aarch64-linux-gnu-strip "${STAGE_DIR}/bin/fexcore-smoke" "${STAGE_DIR}/bin/fexcore-guest-harness"
 node "${VERIFIER}" "${STAGE_DIR}/bin/fexcore-smoke"
 node "${GUEST_HARNESS_VERIFIER}" "${STAGE_DIR}/bin/fexcore-guest-harness"

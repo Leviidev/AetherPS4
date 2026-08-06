@@ -210,6 +210,7 @@ addExtra(amd64Resolved, [
   "libX11.so.6", "libXcursor.so.1", "libXext.so.6", "libXfixes.so.3",
   "libXi.so.6", "libXrandr.so.2", "libXrender.so.1", "libXau.so.6", "libXdmcp.so.6",
   "libxcb.so.1", "libX11-xcb.so.1", "libvulkan.so.1", "libudev.so.1", "libuuid.so.1",
+  "libcap.so.2",
 ], amd64Paths);
 
 for (const [soname, info] of amd64Resolved) {
@@ -308,9 +309,11 @@ const checks = [
   ["host/libX11.so.6", "arm64 X11"],
   ["host/libvulkan.so.1", "arm64 vulkan"],
   ["host/libxkbcommon.so.0", "arm64 xkbcommon"],
+  ["host/libcap.so.2", "arm64 libcap"],
   ["lib64/ld-linux-x86-64.so.2", "x86_64 loader"],
   ["lib/x86_64-linux-gnu/libc.so.6", "x86_64 libc"],
   ["lib/x86_64-linux-gnu/libSDL2-2.0.so.0", "x86_64 SDL2"],
+  ["lib/x86_64-linux-gnu/libcap.so.2", "x86_64 libcap"],
   ["usr/share/X11/xkb", "XKB data"],
   ["etc/ssl/certs/ca-certificates.crt", "CA certs"],
 ];
