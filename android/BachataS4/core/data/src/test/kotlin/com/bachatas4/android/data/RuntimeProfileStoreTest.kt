@@ -58,6 +58,19 @@ class RuntimeProfileStoreTest {
     }
 
     @Test
+    fun loadIgnoresUnknownKeysFromOlderProfileSchema() = runTest {
+        File(temporaryFolder.root, "settings").mkdirs()
+        File(temporaryFolder.root, "settings/global.json").writeText(
+            """{"schemaVersion":1,"driverId":"turnip-test","maliGpuOptimizations":true}""",
+        )
+
+        val store = RuntimeProfileStore(temporaryFolder.root)
+        val loaded = store.load(ProfileScope.Global)
+
+        assertEquals("turnip-test", loaded.driverId)
+    }
+
+    @Test
     fun exportRoundTripsUnknownFields() = runTest {
         val store = RuntimeProfileStore(temporaryFolder.root)
         val profile = RuntimeProfile(

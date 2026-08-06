@@ -20,7 +20,7 @@ class RuntimeProfileStore(private val filesDir: File) {
     private val json = Json {
         prettyPrint = true
         encodeDefaults = true
-        ignoreUnknownKeys = false
+        ignoreUnknownKeys = true
     }
     private val mutex = Mutex()
     private val observed = ConcurrentHashMap<ProfileScope, MutableStateFlow<RuntimeProfile>>()
