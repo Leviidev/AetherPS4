@@ -95,9 +95,12 @@ class RuntimeLaunchProfileProvider internal constructor(
 
     private companion object {
         val FEX_COMPATIBILITY_CONSTRAINTS = mapOf(
+            // A/B (Mali-G615 / system-vortek): forced true correlated with post-SEGA Mali MMU
+            // faults + DEVICE_LOST. Force false to isolate copy/staging path vs guest→GPU VA map.
+            // Revisit once fault VAs are correlated to allocations; may restore true for FEX safety.
             "gpu.copy_gpu_buffers" to CompatibilityConstraint(
-                JsonPrimitive(true),
-                "FEX guest execution can reuse command buffers before asynchronous GPU parsing completes",
+                JsonPrimitive(false),
+                "A/B: disable GPU buffer copies on FEX to isolate Mali MMU fault after SEGA (was forced true)",
             ),
         )
 
@@ -105,6 +108,13 @@ class RuntimeLaunchProfileProvider internal constructor(
             "general.dev_kit_mode" to CompatibilityConstraint(
                 JsonPrimitive(false),
                 "Retail memory layout; DevKit expands guest direct memory and regressed Bloodborne on constrained devices",
+            ),
+            // Mailbox present races Mali (and some Adreno/Vortek) into VK_ERROR_DEVICE_LOST on
+            // the first real EOP flip after blank splash presents. FIFO keeps the present
+            // queue paced and was verified on Poco X6 Pro (Mali-G615): 32 EOP flips vs 1.
+            "gpu.present_mode" to CompatibilityConstraint(
+                JsonPrimitive("Fifo"),
+                "Mailbox present triggers early device-lost on Android system-vortek/Mali; FIFO is safer",
             ),
             "log.sync" to CompatibilityConstraint(JsonPrimitive(false), "Avoid blocking Android runtime logging"),
             "vulkan.pipeline_cache_enabled" to CompatibilityConstraint(JsonPrimitive(true), "Preserve Android pipeline cache"),

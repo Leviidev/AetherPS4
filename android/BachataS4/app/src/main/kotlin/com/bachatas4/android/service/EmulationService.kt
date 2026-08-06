@@ -11,6 +11,7 @@ import android.net.LocalServerSocket
 import android.net.LocalSocket
 import android.net.LocalSocketAddress
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import android.os.Build
 import com.bachatas4.android.BuildConfig
@@ -52,6 +53,7 @@ import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -176,6 +178,7 @@ class EmulationService : Service() {
             val installedRuntime = installRuntime()
             runtimeRoot = installedRuntime
             sessionLog.info("Runtime", "installed version=${installedRuntime.fileName}")
+            verifyDeepGuestRuntime(installedRuntime, sessionLog)
             checkpointStore.mark(DiagnosticCheckpoint.RUNTIME_VERIFIED)
             installedRuntime.resolve(".local/share").toFile().mkdirs()
             installedRuntime.resolve(".config").toFile().mkdirs()
@@ -276,7 +279,7 @@ class EmulationService : Service() {
                 emptyMap()
             }
             val environment = runtimeEnvironment(installedRuntime, runtimeHome, socketRoot, xServer.display) +
-                driverConfiguration.environment + backendEnvironment
+                driverConfiguration.environment + backendEnvironment + stagingDiagEnvironment()
             val shadPs4Executable = if (guestBackend == RuntimeGuestBackend.FEX) {
                 installedRuntime.resolve("host/shadps4-arm64-fex")
             } else {
@@ -604,7 +607,9 @@ class EmulationService : Service() {
                 Json { ignoreUnknownKeys = true }.decodeFromString<RuntimeManifest>(it.readText())
             }
             val target = installRoot.resolve(manifest.runtimeVersion)
-            if (target.toFile().isDirectory) return target
+            if (target.toFile().isDirectory) {
+                return target
+            }
             return assets.open("runtime/runtime.zip").use { bundle ->
                 RuntimeInstaller(installRoot).install(bundle, manifest).getOrElse { error ->
                     if (error is FileAlreadyExistsException && target.toFile().isDirectory) target else throw error
@@ -614,6 +619,46 @@ class EmulationService : Service() {
         val installedDir = installRoot.toFile().listFiles()?.firstOrNull { it.isDirectory && it.name.startsWith("box64-") }
         if (installedDir != null) return installedDir.toPath()
         throw IllegalStateException("Runtime not installed")
+    }
+
+    /**
+     * Deep-guest dig pin: d45f binary (e96e13ca…). Dig guest d468 regressed Sonic to ~14s.
+     * Diagnostic builds refuse to launch when guest SHA is not the expected deep pin.
+     */
+    private fun verifyDeepGuestRuntime(runtimeRoot: Path, sessionLog: SessionLog) {
+        val sha = guestSha256(runtimeRoot)
+        val metaFile = runtimeRoot.resolve("usr/share/bachata/guest-runtime.txt").toFile()
+        val meta = if (metaFile.isFile) metaFile.readText().trim() else "missing guest-runtime.txt"
+        val variant = meta.lineSequence().firstOrNull { it.startsWith("variant=") }?.substringAfter("=") ?: "?"
+        val revision = meta.lineSequence().firstOrNull { it.startsWith("revision=") }?.substringAfter("=") ?: "?"
+        val line =
+            "GUEST_RUNTIME_BUILD variant=$variant sha256=$sha revision=$revision"
+        sessionLog.info("Runtime", line)
+        Log.i(TAG, line)
+        // Pin is optional; workspace FHD-ring guest is the product path.
+        // Log mismatch when a deep pin SHA is configured for dig, do not hard-fail.
+        if (BuildConfig.DEBUG && variant == "deep" && sha != EXPECTED_DEEP_GUEST_SHA256) {
+            Log.w(
+                TAG,
+                "GUEST_RUNTIME_BUILD_MISMATCH expected ${EXPECTED_DEEP_GUEST_SHA256.take(16)}… " +
+                    "got ${sha.take(16)}… (workspace build OK for product FHD ring)",
+            )
+        }
+    }
+
+    private fun guestSha256(runtimeRoot: Path): String {
+        val bin = runtimeRoot.resolve("host/shadps4-arm64-fex").toFile()
+        if (!bin.isFile) return "missing"
+        val digest = MessageDigest.getInstance("SHA-256")
+        bin.inputStream().use { input ->
+            val buf = ByteArray(1024 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n <= 0) break
+                digest.update(buf, 0, n)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun runtimeEnvironment(runtimeRoot: Path, runtimeHome: Path, socketRoot: File, display: String) = mapOf(
@@ -635,6 +680,46 @@ class EmulationService : Service() {
         "BACHATA_VORTEK_TRACE_BIND_VERTEX_BUFFERS" to "1",
         "BACHATA_FEX_TRACE_SIGSYS" to "1",
     )
+
+    /**
+     * Late DEVICE_LOST A/B: inject guest staging knobs from Android system props.
+     *
+     *   adb shell setprop debug.bachata.staging_strict_scratch 1        # mode B
+     *   adb shell setprop debug.bachata.staging_strict_stream 1         # mode C
+     *   adb shell setprop debug.bachata.staging_strict_buffer_cache 1   # mode F (FHD detile src)
+     *   adb shell setprop debug.bachata.staging_tick_lag 4              # mode E scratch lag
+     *   adb shell setprop debug.bachata.buffer_cache_tick_lag 6         # G6 guest FHD src lag
+     *   Host detile (server props): detile_stamp / detile_source_exact_wait default OFF
+     *   GPU mapping dig: debug.bachata.pin_fhd_detile_sources=1 (never free FHD external)
+     *   Deep guest pin d45f is baked into runtime.zip (see GUEST_RUNTIME_BUILD log).
+     */
+    private fun stagingDiagEnvironment(): Map<String, String> {
+        val out = mutableMapOf<String, String>()
+        // Product playable defaults (override with prop=0/1 as needed).
+        // strict_scratch=1 + waitIdle froze Sonic; lag multi-buffer instead.
+        out["BACHATA_STAGING_STRICT_SCRATCH"] =
+            readSystemProperty("debug.bachata.staging_strict_scratch")?.takeIf { it.isNotBlank() } ?: "0"
+        out["BACHATA_STAGING_STRICT_STREAM"] =
+            readSystemProperty("debug.bachata.staging_strict_stream")?.takeIf { it.isNotBlank() } ?: "1"
+        out["BACHATA_STAGING_STRICT_BUFFER_CACHE"] =
+            readSystemProperty("debug.bachata.staging_strict_buffer_cache")?.takeIf { it.isNotBlank() } ?: "0"
+        out["BACHATA_STAGING_TICK_LAG"] =
+            readSystemProperty("debug.bachata.staging_tick_lag")?.takeIf { it.isNotBlank() } ?: "12"
+        readSystemProperty("debug.bachata.buffer_cache_tick_lag")?.takeIf { it.isNotBlank() }?.let {
+            out["BACHATA_BUFFER_CACHE_TICK_LAG"] = it
+        }
+        Log.i(TAG, "staging diag env=$out")
+        return out
+    }
+
+    private fun readSystemProperty(key: String): String? =
+        try {
+            val clazz = Class.forName("android.os.SystemProperties")
+            val get = clazz.getMethod("get", String::class.java)
+            (get.invoke(null, key) as? String)?.takeIf { it.isNotEmpty() }
+        } catch (_: Throwable) {
+            null
+        }
 
     private fun stopSession() {
         userRequestedStop.set(true)
@@ -669,6 +754,7 @@ class EmulationService : Service() {
     }
 
     private companion object {
+        const val TAG = "EmulationService"
         const val CHANNEL_ID = "emulation"
         const val NOTIFICATION_ID = 41
         const val SURFACE_TIMEOUT_MS = 30_000L
@@ -677,5 +763,8 @@ class EmulationService : Service() {
         const val MAX_ERROR_LOG_LINES = 20
         const val MAX_LOG_SESSIONS = 10
         const val EMULATED_LIBRARIES = "libSDL2-2.0.so.0:libudev.so.1:libuuid.so.1"
+        /** Matches runtime/pins/deep-guest-d45f/PIN.json */
+        const val EXPECTED_DEEP_GUEST_SHA256 =
+            "7e922b148c2cb12c70933494ce3d0f14034b4e26955aa4e19161eee85652137a"
     }
 }

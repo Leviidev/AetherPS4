@@ -154,6 +154,10 @@ tasks.whenTaskAdded {
 // path derived from the variant's output metadata — no timestamp-based scanning.
 androidComponents.onVariants { variant ->
     val verifyTaskName = "verifyNativeRuntimeFixes${variant.name.replaceFirstChar { it.uppercaseChar() }}"
+    // Derive the exact conventional APK directory for this variant.
+    // AGP writes output-metadata.json alongside the APK, which names the exact
+    // file.  We use that file (read at execution time, not config time) so the
+    // path is always exact — no timestamp-based scanning.
     val flavor = variant.flavorName ?: ""
     val buildType = variant.buildType ?: ""
     val conventionalApkDir = layout.buildDirectory.dir(
@@ -162,11 +166,16 @@ androidComponents.onVariants { variant ->
     val verifyTask = tasks.register(verifyTaskName) {
         group = "verification"
         description = "Checks the exact ${variant.name} APK for Bachata S4 native runtime fixes."
+        // Declare the APK directory as an input so Gradle knows this task
+        // depends on the assemble output without us scanning by timestamp.
         inputs.dir(conventionalApkDir).optional()
         doLast {
+            // Read AGP's output-metadata.json to find the exact APK filename
+            // for this variant.  This file is always written by assemble tasks.
             val dir = conventionalApkDir.get().asFile
             val metadataFile = File(dir, "output-metadata.json")
             val apk: File = if (metadataFile.exists()) {
+                // AGP output-metadata format: {"elements":[{"outputFile":"app-fdroid-release.apk",...}]}
                 val metaText = metadataFile.readText()
                 val match = Regex(""""outputFile"\s*:\s*"([^"]+\.apk)"""").find(metaText)
                 val fileName = match?.groupValues?.get(1)
@@ -175,6 +184,7 @@ androidComponents.onVariants { variant ->
                     if (!f.exists()) error("APK listed in metadata not found: ${f.absolutePath}")
                 }
             } else {
+                // Fallback if metadata is absent: accept exactly one .apk in dir.
                 val candidates = dir.listFiles { f -> f.isFile && f.extension == "apk" }
                     ?.sortedBy { it.name } ?: emptyList()
                 candidates.singleOrNull()
@@ -193,12 +203,12 @@ androidComponents.onVariants { variant ->
             )
         }
     }
+    // Wire: assemble<VariantName> finalizes with this variant's verifier.
     val assembleTaskName = "assemble${variant.name.replaceFirstChar { it.uppercaseChar() }}"
     tasks.matching { it.name == assembleTaskName }.configureEach {
         finalizedBy(verifyTask)
     }
 }
-
 
 androidComponents {
     beforeVariants { variantBuilder ->

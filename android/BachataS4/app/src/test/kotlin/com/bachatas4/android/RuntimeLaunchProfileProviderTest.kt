@@ -32,8 +32,15 @@ class RuntimeLaunchProfileProviderTest {
 
     private val devKit = spec("general.dev_kit_mode", "General.dev_kit_mode", SettingKind.BOOLEAN, JsonPrimitive(false))
     private val gpuCopy = spec("gpu.copy_gpu_buffers", "GPU.copy_gpu_buffers", SettingKind.BOOLEAN, JsonPrimitive(false))
+    private val presentMode = spec(
+        "gpu.present_mode",
+        "GPU.present_mode",
+        SettingKind.ENUM,
+        JsonPrimitive("Mailbox"),
+        listOf("Immediate", "Mailbox", "Fifo", "FifoRelaxed"),
+    )
     private val boxLog = spec("box64.log", "BOX64_LOG", SettingKind.ENUM, JsonPrimitive("0"), listOf("0", "1", "2"))
-    private val catalog = RuntimeSettingCatalog(listOf(devKit, gpuCopy), listOf(boxLog))
+    private val catalog = RuntimeSettingCatalog(listOf(devKit, gpuCopy, presentMode), listOf(boxLog))
     private val strictBackend = object : DriverManagerBackend {
         override fun capabilities() = DriverManagerCapabilities(false, false, false)
         override fun installed(): List<InstalledDriver> = emptyList()
@@ -65,14 +72,36 @@ class RuntimeLaunchProfileProviderTest {
     }
 
     @Test
-    fun fexForcesGpuCommandCopies() = runTest {
+    fun fexDisablesGpuCommandCopiesForMaliAb() = runTest {
         val store = RuntimeProfileStore(temporaryFolder.root)
         val provider = RuntimeLaunchProfileProvider(store, catalog, emptyMap(), strictBackend)
 
         val sonic = provider.resolve("CUSA07023")
 
-        assertEquals(JsonPrimitive(true), sonic.settings.getValue(gpuCopy.id).value)
+        // Temporary A/B: FEX no longer forces copies=true (Mali MMU fault isolation).
+        assertEquals(JsonPrimitive(false), sonic.settings.getValue(gpuCopy.id).value)
         assertEquals(ValueSource.COMPATIBILITY, sonic.settings.getValue(gpuCopy.id).source)
+    }
+
+    @Test
+    fun androidForcesFifoPresentMode() = runTest {
+        val store = RuntimeProfileStore(temporaryFolder.root)
+        val provider = RuntimeLaunchProfileProvider(
+            store,
+            catalog,
+            mapOf(
+                presentMode.id to CompatibilityConstraint(
+                    JsonPrimitive("Fifo"),
+                    "Mailbox present triggers early device-lost on Android system-vortek/Mali",
+                ),
+            ),
+            strictBackend,
+        )
+
+        val sonic = provider.resolve("CUSA07023")
+
+        assertEquals(JsonPrimitive("Fifo"), sonic.settings.getValue(presentMode.id).value)
+        assertEquals(ValueSource.COMPATIBILITY, sonic.settings.getValue(presentMode.id).source)
     }
 
     @Test
