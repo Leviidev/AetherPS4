@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <zlib.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdio>
@@ -568,9 +569,27 @@ bool extract_file(int fd, ExtractState& st, const pfs_fs_table& table, std::stri
         const int sectorOffsetMask = static_cast<int>((sectorOffset + st.pfsc_offset) & 0xFFFFF000);
         const int previousData = static_cast<int>((sectorOffset + st.pfsc_offset) - sectorOffsetMask);
 
-        if (!pread_all(fd, pfsc.data(), pfsc_buf_size, static_cast<off_t>(fileOffset - previousData))) {
-            err = "PFS read failed";
-            return false;
+        // Tolerate short reads near the PFS/PKG end: the needed sector
+        // (sectorSize bytes at offset previousData) is always within the
+        // valid region, but the fixed 0x11000 window can overshoot the file
+        // on the final blocks. decryptPFS only consumes complete 0x1000
+        // sectors, so zero-filled tail bytes never reach real output.
+        std::fill(pfsc.begin(), pfsc.end(), 0);
+        const u64 readOff = fileOffset - previousData;
+        const u64 pkgSize = u64(st.hdr.pkg_size);
+        const u64 maxRead = readOff < pkgSize ? (pkgSize - readOff) : 0;
+        const size_t toRead = static_cast<size_t>(std::min<u64>(pfsc_buf_size, maxRead));
+        if (toRead > 0) {
+            size_t got = 0;
+            while (got < toRead) {
+                const ssize_t r = pread(fd, pfsc.data() + got, toRead - got,
+                                         static_cast<off_t>(readOff) + static_cast<off_t>(got));
+                if (r <= 0) {
+                    err = "PFS read failed";
+                    return false;
+                }
+                got += static_cast<size_t>(r);
+            }
         }
         st.crypto.decryptPFS(st.dataKey, st.tweakKey, pfsc, pfs_decrypted, currentSector1);
         compressedData.resize(static_cast<size_t>(sectorSize));
