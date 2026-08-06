@@ -69,6 +69,8 @@ s32 PS4_SYSV_ABI posix_open(const char* path, s32 flags, u16 mode);
 s32 PS4_SYSV_ABI posix_close(s32 fd);
 s64 PS4_SYSV_ABI posix_lseek(s32 fd, s64 offset, s32 whence);
 s64 PS4_SYSV_ABI posix_read(s32 fd, void* buf, u64 nbytes);
+s32 PS4_SYSV_ABI posix_unlink(const char* path);
+s32 PS4_SYSV_ABI posix_rename(const char* from, const char* to);
 s64 PS4_SYSV_ABI sceKernelWrite(s32 fd, const void* buf, u64 nbytes);
 s64 PS4_SYSV_ABI sceKernelRead(s32 fd, void* buf, u64 nbytes);
 s64 PS4_SYSV_ABI sceKernelLseek(s32 fd, s64 offset, s32 whence);
