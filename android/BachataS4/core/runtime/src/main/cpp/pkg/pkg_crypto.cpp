@@ -3,6 +3,7 @@
 #include "pkg_crypto.h"
 #include "keys.h"
 #include "pkg_rsa_bridge.h"
+#include "aes_neon.h"
 extern "C" {
 #include "aes.h"
 }
@@ -104,13 +105,14 @@ void sha256(const uint8_t* data, size_t len, uint8_t out[32]) {
 }
 
 // ---------------- AES-128 via tiny-AES-c (kokke, public domain) ----------------
-void aes_encrypt_block(const uint8_t key[16], const uint8_t in[16], uint8_t out[16]) {
+// Retained for ad-hoc use; decryptPFS precomputes schedules directly for speed.
+[[maybe_unused]] void aes_encrypt_block(const uint8_t key[16], const uint8_t in[16], uint8_t out[16]) {
     struct AES_ctx ctx;
     AES_init_ctx(&ctx, key);
     std::memcpy(out, in, 16);
     AES_ECB_encrypt(&ctx, out);
 }
-void aes_decrypt_block(const uint8_t key[16], const uint8_t in[16], uint8_t out[16]) {
+[[maybe_unused]] void aes_decrypt_block(const uint8_t key[16], const uint8_t in[16], uint8_t out[16]) {
     struct AES_ctx ctx;
     AES_init_ctx(&ctx, key);
     std::memcpy(out, in, 16);
@@ -471,6 +473,60 @@ void Crypto::decryptPFS(std::span<const uint8_t, 16> dataKey,
                         uint64_t crypt_start_sector) {
     // LibOrbisPkg XtsDecryptReader: sectors < cryptStartSector are plaintext.
     // Default crypt_start_sector = 16 (BlockSize 0x10000 / 0x1000).
+    //
+    // Two equivalent code paths, byte-identical output:
+    //  - __ARM_FEATURE_AES: hardware AES-128 via ARMv8 crypto instructions
+    //    (10-30x faster than the tiny-AES-c software InvCipher).
+    //  - fallback: tiny-AES-c ECB with round keys computed once per call.
+#if defined(__ARM_FEATURE_AES)
+    // Round-key expansion via tiny-AES-c (once per call); per-block AES on NEON.
+    struct AES_ctx data_ctx_neon;
+    AES_init_ctx(&data_ctx_neon, dataKey.data());
+    struct AES_ctx tweak_ctx_neon;
+    AES_init_ctx(&tweak_ctx_neon, tweakKey.data());
+    const bachata_pkg::Aes128Keys data_keys =
+        bachata_pkg::aes128_keys_from_schedule(data_ctx_neon.RoundKey);
+    const bachata_pkg::Aes128Keys data_inv_keys =
+        bachata_pkg::aes128_inverse_keys(data_keys);
+    const bachata_pkg::Aes128Keys tweak_keys =
+        bachata_pkg::aes128_keys_from_schedule(tweak_ctx_neon.RoundKey);
+
+    for (size_t i = 0; i + 0x1000 <= src_image.size() && i + 0x1000 <= dst_image.size(); i += 0x1000) {
+        const uint64_t current_sector = sector + (i / 0x1000);
+        if (current_sector < crypt_start_sector) {
+            std::memcpy(dst_image.data() + i, src_image.data() + i, 0x1000);
+            continue;
+        }
+        // Tweak = sector index as little-endian u64 (zero-extended to 128b), AES-encrypted.
+        uint8_t tweak_bytes[16]{};
+        std::memcpy(tweak_bytes, &current_sector, sizeof(uint64_t));
+        uint8x16_t encrypted_tweak =
+            bachata_pkg::aes128_encrypt_block(tweak_keys, vld1q_u8(tweak_bytes));
+        for (int off = 0; off < 0x1000; off += 16) {
+            const uint8x16_t cipher = vld1q_u8(src_image.data() + i + off);
+            const uint8x16_t x = veorq_u8(cipher, encrypted_tweak);
+            const uint8x16_t dec = bachata_pkg::aes128_decrypt_block(data_inv_keys, x);
+            vst1q_u8(dst_image.data() + i + off, veorq_u8(dec, encrypted_tweak));
+            // GF(2^128) multiply encrypted_tweak by 2 (poly 0x87, LE byte order,
+            // LibOrbisPkg shift+carry). Kept scalar — only 16 ops/block.
+            uint8_t carry = 0;
+            uint8x16_t next = encrypted_tweak;
+            uint8_t* et = reinterpret_cast<uint8_t*>(&next);
+            for (int k = 0; k < 16; ++k) {
+                const uint8_t t = et[k];
+                et[k] = static_cast<uint8_t>((t << 1) | carry);
+                carry = static_cast<uint8_t>(t >> 7);
+            }
+            if (carry != 0) et[0] ^= 0x87;
+            encrypted_tweak = next;
+        }
+    }
+#else
+    struct AES_ctx data_ctx;
+    AES_init_ctx(&data_ctx, dataKey.data());
+    struct AES_ctx tweak_ctx;
+    AES_init_ctx(&tweak_ctx, tweakKey.data());
+
     for (size_t i = 0; i + 0x1000 <= src_image.size() && i + 0x1000 <= dst_image.size(); i += 0x1000) {
         const uint64_t current_sector = sector + (i / 0x1000);
         if (current_sector < crypt_start_sector) {
@@ -480,14 +536,16 @@ void Crypto::decryptPFS(std::span<const uint8_t, 16> dataKey,
         uint8_t tweak[16]{};
         std::memcpy(tweak, &current_sector, sizeof(uint64_t));
         uint8_t encrypted_tweak[16];
-        aes_encrypt_block(tweakKey.data(), tweak, encrypted_tweak);
+        std::memcpy(encrypted_tweak, tweak, 16);
+        AES_ECB_encrypt(&tweak_ctx, encrypted_tweak);
         for (int off = 0; off < 0x1000; off += 16) {
             uint8_t block[16];
             for (int j = 0; j < 16; ++j) {
                 block[j] = static_cast<uint8_t>(src_image[i + off + j] ^ encrypted_tweak[j]);
             }
             uint8_t dec[16];
-            aes_decrypt_block(dataKey.data(), block, dec);
+            std::memcpy(dec, block, 16);
+            AES_ECB_decrypt(&data_ctx, dec);
             for (int j = 0; j < 16; ++j) {
                 dst_image[i + off + j] = static_cast<uint8_t>(dec[j] ^ encrypted_tweak[j]);
             }
@@ -503,6 +561,7 @@ void Crypto::decryptPFS(std::span<const uint8_t, 16> dataKey,
             }
         }
     }
+#endif
 }
 
 void Crypto::RSA2048Decrypt(std::span<uint8_t, 32> out_key,
