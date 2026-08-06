@@ -18,3 +18,19 @@ endif()
 find_library(log-lib log)
 find_library(z-lib z)
 target_link_libraries(bachata_pkg PRIVATE ${log-lib} ${z-lib})
+
+# libdeflate: ~2x faster single-shot inflate than stock zlib, with a proper
+# status return (the legacy zlib path discarded inflate()'s result). Static,
+# decompression+zlib format only, compression/gzip/test programs disabled to
+# shrink the build. Scoped to bachata_pkg; zlib kept as the #else fallback.
+set(LIBDEFLATE_BUILD_STATIC_LIB ON CACHE BOOL "" FORCE)
+set(LIBDEFLATE_BUILD_SHARED_LIB OFF CACHE BOOL "" FORCE)
+set(LIBDEFLATE_COMPRESSION_SUPPORT OFF CACHE BOOL "" FORCE)
+set(LIBDEFLATE_BUILD_GZIP OFF CACHE BOOL "" FORCE)
+set(LIBDEFLATE_BUILD_TEST OFF CACHE BOOL "" FORCE)
+add_subdirectory(
+    "${BACHATA_ROOT}/externals/libdeflate"
+    "${CMAKE_CURRENT_BINARY_DIR}/libdeflate"
+)
+target_link_libraries(bachata_pkg PRIVATE libdeflate_static)
+target_compile_definitions(bachata_pkg PRIVATE BACHATA_HAVE_LIBDEFLATE)

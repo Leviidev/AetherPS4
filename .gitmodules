@@ -162,3 +162,6 @@
 [submodule "box64-sources"]
 	path = runtime/sources/box64
 	url = https://github.com/ptitSeb/box64.git
+[submodule "externals/libdeflate"]
+	path = externals/libdeflate
+	url = https://github.com/ebiggers/libdeflate.git

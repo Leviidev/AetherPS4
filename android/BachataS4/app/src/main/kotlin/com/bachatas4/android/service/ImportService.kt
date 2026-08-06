@@ -9,6 +9,8 @@ import android.content.Intent
 import android.net.Uri
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
+import android.system.Os
+import android.system.OsConstants
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.documentfile.provider.DocumentFile
@@ -325,14 +327,20 @@ class ImportService : Service() {
             job = job.copy(uriPersistable = persistable, updatedAtMs = System.currentTimeMillis())
             jobStore.update(job)
 
-            // Probe via SAF fd (header-only; sequential extract will use a local cache).
+            // Probe via SAF fd. The extractor is pure pread (no lseek/mmap/fopen),
+            // so if the SAF fd is seekable it can feed nativeExtract directly and skip
+            // the multi-GB local-cache copy (Tier 4). Non-seekable providers (cloud
+            // drives → pipe fds) fall back to the sequential copy path below.
             val probe: PkgProbeResult
+            var safFdSeekable = false
             try {
                 withContext(Dispatchers.IO) {
                     contentResolver.openFileDescriptor(uri, "r")
                         ?: error("Cannot open PKG")
                 }.use { descriptor ->
                     Log.i(TAG, "pkg openFileDescriptor ok sizeHint=${descriptor.statSize}")
+                    safFdSeekable = isOpenFdSeekable(descriptor)
+                    Log.i(TAG, "pkg saf fd seekable=$safFdSeekable")
                     Log.i(TAG, "pkg nativeProbe start fd=${descriptor.fd}")
                     probe = withContext(Dispatchers.IO) { PkgExtractor.nativeProbe(descriptor.fd) }
                 }
@@ -374,13 +382,15 @@ class ImportService : Service() {
             val packageBytes = probe.packageSize.coerceAtLeast(0L)
             val extractBytes = (probe.pfsImageSize.takeIf { it > 0 } ?: packageBytes).coerceAtLeast(0L)
             // Peak usage while extract holds both the local PKG cache and staging tree.
-            val peak = packageBytes + extractBytes
+            // Direct-SAF-fd path skips the cache copy, so peak = extract tree only.
+            val peak = if (safFdSeekable) extractBytes else (packageBytes + extractBytes)
             val margin = maxOf(STORAGE_MARGIN_BYTES, peak / 20L) // 5% or 256 MiB
             val required = peak + margin
             val free = filesDir.usableSpace
             Log.i(
                 TAG,
-                "pkg space package=$packageBytes extract=$extractBytes required=$required free=$free",
+                "pkg space package=$packageBytes extract=$extractBytes " +
+                    "direct=$safFdSeekable required=$required free=$free",
             )
 
             ImportManager.update(
@@ -439,20 +449,6 @@ class ImportService : Service() {
                 )
             }
 
-            val cacheDir = File(filesDir, "pkg-cache").canonicalFile
-            cacheDir.mkdirs()
-            cacheFile = File(cacheDir, "$jobId.pkg").canonicalFile
-            job = job.copy(
-                cachePath = "pkg-cache/$jobId.pkg",
-                stagingDir = "games/.import-$jobId",
-                state = InstallJob.STATE_EXTRACTING,
-                updatedAtMs = System.currentTimeMillis(),
-            )
-            jobStore.update(job)
-            Log.i(TAG, "pkg cache copy start dest=${cacheFile!!.absolutePath} size=$packageBytes")
-            copyPkgToLocalCache(uri, cacheFile!!, displayName, packageBytes)
-            Log.i(TAG, "pkg cache copy done size=${cacheFile!!.length()}")
-
             staging = File(gamesDir, ".import-$jobId").canonicalFile
             staging!!.mkdirs()
             Log.i(TAG, "pkg staging=${staging!!.absolutePath}")
@@ -467,9 +463,40 @@ class ImportService : Service() {
             }.distinct()
             Log.i(TAG, "pkg extract candidates=${candidates.size} (passcodes redacted)")
 
-            ParcelFileDescriptor.open(cacheFile, ParcelFileDescriptor.MODE_READ_ONLY).use { localPfd ->
-                val fd = localPfd.fd
-                Log.i(TAG, "pkg local open ok fd=$fd size=${localPfd.statSize}")
+            // Branch the extract fd source. Direct path feeds the seekable SAF fd
+            // straight to the native extractor (no multi-GB flash write). Copy path
+            // streams the full PKG into app-private storage first. Both paths then
+            // share the same extract/verify/finalize block below.
+            val extractPfd: ParcelFileDescriptor = if (safFdSeekable) {
+                job = job.copy(
+                    stagingDir = "games/.import-$jobId",
+                    state = InstallJob.STATE_EXTRACTING,
+                    updatedAtMs = System.currentTimeMillis(),
+                )
+                jobStore.update(job)
+                Log.i(TAG, "pkg direct saf fd (skip cache) uri=$uriString")
+                contentResolver.openFileDescriptor(uri, "r")
+                    ?: error("Cannot reopen PKG for extract")
+            } else {
+                val cacheDir = File(filesDir, "pkg-cache").canonicalFile
+                cacheDir.mkdirs()
+                cacheFile = File(cacheDir, "$jobId.pkg").canonicalFile
+                job = job.copy(
+                    cachePath = "pkg-cache/$jobId.pkg",
+                    stagingDir = "games/.import-$jobId",
+                    state = InstallJob.STATE_EXTRACTING,
+                    updatedAtMs = System.currentTimeMillis(),
+                )
+                jobStore.update(job)
+                Log.i(TAG, "pkg cache copy start dest=${cacheFile!!.absolutePath} size=$packageBytes")
+                copyPkgToLocalCache(uri, cacheFile!!, displayName, packageBytes)
+                Log.i(TAG, "pkg cache copy done size=${cacheFile!!.length()}")
+                ParcelFileDescriptor.open(cacheFile, ParcelFileDescriptor.MODE_READ_ONLY)
+            }
+
+            extractPfd.use { pfd ->
+                val fd = pfd.fd
+                Log.i(TAG, "pkg extract fd=$fd size=${pfd.statSize} direct=$safFdSeekable")
 
                 for ((index, candidate) in candidates.withIndex()) {
                     Log.i(
@@ -605,8 +632,22 @@ class ImportService : Service() {
     }
 
     /**
+     * Returns true if [fd] supports random access (pread/lseek). Non-seekable
+     * providers (cloud drives → pipe fds) return false; the caller then falls
+     * back to the sequential [copyPkgToLocalCache] path before extracting.
+     */
+    private fun isOpenFdSeekable(pfd: ParcelFileDescriptor): Boolean = try {
+        Os.lseek(pfd.fileDescriptor, 0, OsConstants.SEEK_CUR)
+        true
+    } catch (e: Exception) {
+        // ErrnoException(ESPIPE) on pipes/streams; treat any failure as non-seekable.
+        false
+    }
+
+    /**
      * Sequential stream copy from SAF/content URI into app-private storage.
-     * Local random reads during extract are far faster than SAF pread.
+     * Fallback used when the SAF fd is not seekable; the seekable direct path
+     * skips this copy entirely and feeds the SAF fd straight to the extractor.
      */
     private suspend fun copyPkgToLocalCache(
         uri: Uri,

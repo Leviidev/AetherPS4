@@ -8,6 +8,9 @@
 #include <android/log.h>
 #include <unistd.h>
 #include <zlib.h>
+#if defined(BACHATA_HAVE_LIBDEFLATE)
+#include <libdeflate.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -16,7 +19,9 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -101,18 +106,40 @@ bool pread_all(int fd, void* buf, size_t n, off_t off) {
     return true;
 }
 
-void DecompressPFSC(std::span<char> compressed, std::span<char> decompressed) {
+// Decompress one PFSC block (zlib format) into `decompressed`. Returns false on
+// any error. The legacy zlib path discarded inflate()'s return value; this now
+// surfaces corruption as a hard extract failure.
+bool DecompressPFSC(std::span<char> compressed, std::span<char> decompressed) {
+#if defined(BACHATA_HAVE_LIBDEFLATE)
+    // libdeflate: ~2x faster single-shot inflate than stock zlib. A fresh
+    // decompressor per call is cheap (no per-block allocation); the hot path
+    // is the actual inflate, not the alloc.
+    struct libdeflate_decompressor* d = libdeflate_alloc_decompressor();
+    if (d == nullptr) return false;
+    size_t actual_out = 0;
+    const enum libdeflate_result res = libdeflate_zlib_decompress(
+        d,
+        compressed.data(),
+        compressed.size(),
+        decompressed.data(),
+        decompressed.size(),
+        &actual_out);
+    libdeflate_free_decompressor(d);
+    return res == LIBDEFLATE_SUCCESS;
+#else
     z_stream stream{};
     stream.zalloc = Z_NULL;
     stream.zfree = Z_NULL;
     stream.opaque = Z_NULL;
-    if (inflateInit(&stream) != Z_OK) return;
+    if (inflateInit(&stream) != Z_OK) return false;
     stream.avail_in = static_cast<uInt>(compressed.size());
     stream.next_in = reinterpret_cast<Bytef*>(compressed.data());
     stream.avail_out = static_cast<uInt>(decompressed.size());
     stream.next_out = reinterpret_cast<Bytef*>(decompressed.data());
-    inflate(&stream, Z_FINISH);
+    const int ret = inflate(&stream, Z_FINISH);
     inflateEnd(&stream);
+    return ret == Z_STREAM_END;
+#endif
 }
 
 u32 GetPFSCOffset(std::span<const u8> pfs_image) {
@@ -432,7 +459,10 @@ bool build_fs_table(int fd, ExtractState& st, std::string& err) {
         if (sectorSize == 0x10000) {
             std::memcpy(decompressedData.data(), compressedData.data(), 0x10000);
         } else if (sectorSize < 0x10000) {
-            DecompressPFSC(compressedData, decompressedData);
+            if (!DecompressPFSC(compressedData, decompressedData)) {
+                err = "PFSC decompress failed (fs table)";
+                return false;
+            }
         } else {
             continue;
         }
@@ -519,7 +549,8 @@ bool build_fs_table(int fd, ExtractState& st, std::string& err) {
 
 bool extract_file(int fd, ExtractState& st, const pfs_fs_table& table, std::string& err,
                   void (*progress)(void* ctx, uint64_t done, uint64_t total, const char* file),
-                  void* progress_ctx, uint64_t done_base, uint64_t total_bytes) {
+                  void* progress_ctx, const std::atomic<uint64_t>& done_global,
+                  uint64_t total_bytes) {
     if (table.type != PFS_FILE) return true;
     if (table.inode < 0 || static_cast<size_t>(table.inode) >= st.iNodeBuf.size()) {
         err = "Bad inode";
@@ -597,7 +628,10 @@ bool extract_file(int fd, ExtractState& st, const pfs_fs_table& table, std::stri
         if (sectorSize == 0x10000) {
             std::memcpy(decompressedData.data(), compressedData.data(), 0x10000);
         } else if (sectorSize < 0x10000) {
-            DecompressPFSC(compressedData, decompressedData);
+            if (!DecompressPFSC(compressedData, decompressedData)) {
+                err = "PFSC decompress failed";
+                return false;
+            }
         }
         size_decompressed += 0x10000;
         if (j < nblocks - 1) {
@@ -612,7 +646,8 @@ bool extract_file(int fd, ExtractState& st, const pfs_fs_table& table, std::stri
             (j == 0 || j == nblocks - 1 || ((j + 1) % kProgressEveryBlocks) == 0)) {
             const uint64_t partial =
                 written > static_cast<uint64_t>(bsize) ? static_cast<uint64_t>(bsize) : written;
-            progress(progress_ctx, done_base + partial, total_bytes, table.name.c_str());
+            progress(progress_ctx, done_global.load(std::memory_order_relaxed) + partial,
+                     total_bytes, table.name.c_str());
         }
     }
     return true;
@@ -785,32 +820,77 @@ int bachata_pkg_extract(int fd, const char* out_path, const char* passcode_or_nu
     if (progress) {
         progress(progress_ctx, 0, total, "");
     }
-    uint64_t done = 0;
-    size_t file_index = 0;
-    for (const auto& t : st.fsTable) {
-        if (g_cancel.load()) {
-            LOGI("extract cancelled");
-            return 2;
-        }
-        if (t.type != PFS_FILE) continue;
-        ++file_index;
-        if (file_index == 1 || (file_index % 25) == 0) {
-            LOGI("extract file #%zu name=%s", file_index, t.name.c_str());
-        }
-        if (progress) {
-            progress(progress_ctx, done, total, t.name.c_str());
-        }
-        if (!extract_file(fd, st, t, err, progress, progress_ctx, done, total)) {
-            if (err == "CANCELLED") return 2;
-            LOGE("extract %s: %s", t.name.c_str(), err.c_str());
-            return 3;
-        }
-        if (t.inode >= 0 && static_cast<size_t>(t.inode) < st.iNodeBuf.size()) {
-            done += static_cast<uint64_t>(st.iNodeBuf[t.inode].Size);
-        }
-        if (progress) progress(progress_ctx, done, total, t.name.c_str());
+
+    // Parallel per-file extraction. extract_file touches only read-only
+    // ExtractState fields + its own ofstream; Crypto is stateless (no members);
+    // pread on the shared fd is thread-safe (POSIX, no fd-offset mutation).
+    // Safe to run across a worker pool. Progress accumulates via an atomic.
+    std::vector<size_t> fileIdx;
+    fileIdx.reserve(st.fsTable.size());
+    for (size_t i = 0; i < st.fsTable.size(); ++i) {
+        if (st.fsTable[i].type == PFS_FILE) fileIdx.push_back(i);
     }
-    LOGI("extract done files=%zu bytes=%llu", file_index, static_cast<unsigned long long>(done));
+    const size_t fileCount = fileIdx.size();
+    if (fileCount == 0) {
+        if (progress) progress(progress_ctx, 0, total, "");
+        LOGI("extract done files=0 bytes=0");
+        return 0;
+    }
+
+    std::atomic<uint64_t> done{0};
+    std::atomic<size_t> next{0};
+    std::atomic<bool> failed{false};
+    std::mutex err_mu;
+    std::string shared_err;
+    // Cap at 8: diminishing returns past the big.LITTLE cluster, and each extra
+    // thread is 8 MiB+ of scratch buffers (pfsc + decrypted + inflight I/O).
+    // fileCount >= 1 here so clamp high bound is never below the low bound of 1.
+    unsigned hw = std::thread::hardware_concurrency();
+    if (hw == 0) hw = 4;
+    const unsigned nthreads = std::clamp<unsigned>(
+        hw, 1u, std::min<unsigned>(8u, static_cast<unsigned>(fileCount)));
+    LOGI("extract parallel files=%zu threads=%u", fileCount, nthreads);
+
+    auto worker = [&]() {
+        while (!g_cancel.load() && !failed.load()) {
+            const size_t i = next.fetch_add(1, std::memory_order_relaxed);
+            if (i >= fileCount) break;
+            const auto& t = st.fsTable[fileIdx[i]];
+            std::string err;
+            if (!extract_file(fd, st, t, err, progress, progress_ctx, done, total)) {
+                failed.store(true, std::memory_order_relaxed);
+                std::lock_guard<std::mutex> lk(err_mu);
+                if (shared_err.empty()) shared_err = err;
+                break;
+            }
+            if (t.inode >= 0 && static_cast<size_t>(t.inode) < st.iNodeBuf.size()) {
+                done.fetch_add(static_cast<uint64_t>(st.iNodeBuf[t.inode].Size),
+                               std::memory_order_relaxed);
+            }
+            if (progress) {
+                progress(progress_ctx, done.load(std::memory_order_relaxed), total, t.name.c_str());
+            }
+        }
+    };
+
+    std::vector<std::thread> pool;
+    pool.reserve(nthreads);
+    for (unsigned k = 0; k < nthreads; ++k) pool.emplace_back(worker);
+    for (auto& th : pool) th.join();
+
+    const uint64_t done_final = done.load(std::memory_order_relaxed);
+    if (g_cancel.load()) {
+        LOGI("extract cancelled");
+        return 2;
+    }
+    if (failed.load()) {
+        err = shared_err;
+        if (err == "CANCELLED") return 2;
+        LOGE("parallel extract: %s", err.c_str());
+        return 3;
+    }
+    if (progress) progress(progress_ctx, done_final, total, "");
+    LOGI("extract done files=%zu bytes=%llu", fileCount, static_cast<unsigned long long>(done_final));
     return 0;
 }
 
