@@ -1317,9 +1317,6 @@ void vt_handle_vkWaitForFences(VkContext* context) {
     uint32_t fenceCount;
     VkBool32 waitAll;
     uint64_t timeout;
-    /* APK gate marker for runtime/tests/verify-native-fixes.mjs — keep literal. */
-    static const char kBachataVortekFenceHostWaitMarker[] = "bachata_vortek_fence_host_wait";
-    (void)kBachataVortekFenceHostWaitMarker;
 
     vt_unserialize_vkWaitForFences((VkDevice)&deviceId, &fenceCount, NULL, &waitAll, &timeout, context->inputBuffer, &context->memoryPool);
     VkDevice device = VkObject_fromId(deviceId);
@@ -1338,6 +1335,11 @@ void vt_handle_vkWaitForFences(VkContext* context) {
     VkResult result = vulkanWrapper.vkWaitForFences(device, fenceCount, fences, waitAll, timeout);
 #ifdef BACHATA_VORTEK_SERVER
     {
+        /* APK gate marker (verify-native-fixes.mjs): must appear as a live log
+         * format string so linker --gc-sections cannot drop it. */
+        __android_log_print(ANDROID_LOG_VERBOSE, "Bachata.Vortek",
+                            "bachata_vortek_fence_host_wait count=%u waitAll=%d result=%d",
+                            fenceCount, waitAll ? 1 : 0, (int)result);
         void* fencePtrs[fenceCount > 0 ? fenceCount : 1];
         for (uint32_t fi = 0; fi < fenceCount; fi++) {
             fencePtrs[fi] = (void*)fences[fi];
