@@ -108,13 +108,9 @@ class RuntimeLaunchProfileProvider internal constructor(
                 JsonPrimitive(false),
                 "Retail memory layout; DevKit expands guest direct memory and regressed Bloodborne on constrained devices",
             ),
-            // Mailbox present races Mali (and some Adreno/Vortek) into VK_ERROR_DEVICE_LOST on
-            // the first real EOP flip after blank splash presents. FIFO keeps the present
-            // queue paced and was verified on Poco X6 Pro (Mali-G615): 32 EOP flips vs 1.
-            "gpu.present_mode" to CompatibilityConstraint(
-                JsonPrimitive("Fifo"),
-                "Mailbox present triggers early device-lost on Android system-vortek/Mali; FIFO is safer",
-            ),
+            // Do NOT force Fifo for all Android: with multi-image swapchains it queues several
+            // frames and looks like heavy smear/blur when the camera moves (Turnip/Bloodborne
+            // regression). Keep Mailbox default; Mali/system-vortek can set Fifo per-driver later.
             "log.sync" to CompatibilityConstraint(JsonPrimitive(false), "Avoid blocking Android runtime logging"),
             "vulkan.pipeline_cache_enabled" to CompatibilityConstraint(JsonPrimitive(true), "Preserve Android pipeline cache"),
             "vulkan.pipeline_cache_archived" to CompatibilityConstraint(JsonPrimitive(false), "Use live Android pipeline cache"),

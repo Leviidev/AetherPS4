@@ -83,24 +83,15 @@ class RuntimeLaunchProfileProviderTest {
     }
 
     @Test
-    fun androidForcesFifoPresentMode() = runTest {
+    fun androidDoesNotForceFifoPresentMode() = runTest {
         val store = RuntimeProfileStore(temporaryFolder.root)
-        val provider = RuntimeLaunchProfileProvider(
-            store,
-            catalog,
-            mapOf(
-                presentMode.id to CompatibilityConstraint(
-                    JsonPrimitive("Fifo"),
-                    "Mailbox present triggers early device-lost on Android system-vortek/Mali",
-                ),
-            ),
-            strictBackend,
-        )
+        val provider = RuntimeLaunchProfileProvider(store, catalog, emptyMap(), strictBackend)
 
-        val sonic = provider.resolve("CUSA07023")
+        val bloodborne = provider.resolve("CUSA00900")
 
-        assertEquals(JsonPrimitive("Fifo"), sonic.settings.getValue(presentMode.id).value)
-        assertEquals(ValueSource.COMPATIBILITY, sonic.settings.getValue(presentMode.id).source)
+        // Catalog default is Mailbox; global Fifo force was removed (smear on Turnip).
+        assertEquals(JsonPrimitive("Mailbox"), bloodborne.settings.getValue(presentMode.id).value)
+        assertEquals(ValueSource.DEFAULT, bloodborne.settings.getValue(presentMode.id).source)
     }
 
     @Test
