@@ -9,12 +9,16 @@ if ! command -v aarch64-linux-gnu-gcc >/dev/null 2>&1; then
   exit 1
 fi
 
+# ---- Pristine-build vendor step ----
+# After 'git clean -xffd && git submodule update --init --recursive', the vendored
+# source trees under runtime/sources/ are gone.  Vendor them automatically so the
+# build does not depend on a pre-populated working tree.
 if [[ ! -d "runtime/sources/winlator-app/.git" ]]; then
-  echo "[build-runtime-debian] Vendoring winlator-app…"
+  echo "[build-runtime-debian] Vendoring winlator-app (pristine tree)…"
   runtime/scripts/vendor-winlator.sh
 fi
 if [[ ! -d "runtime/sources/vortek-client/.git" ]]; then
-  echo "[build-runtime-debian] Vendoring vortek-client…"
+  echo "[build-runtime-debian] Vendoring vortek-client (pristine tree)…"
   runtime/scripts/vendor-vortek.sh
 fi
 
@@ -24,4 +28,3 @@ bash runtime/scripts/build-shadps4-arm64.sh
 runtime/scripts/build-vortek-client.sh
 node runtime/scripts/stage-debian-runtime.mjs
 node runtime/scripts/package-runtime.mjs
-

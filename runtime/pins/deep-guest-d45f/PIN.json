@@ -1,0 +1,9 @@
+{
+  "variant": "deep",
+  "revision": "d45f",
+  "label": "box64-50c8b90b09b4-d45f-fhd-ring",
+  "binary": "shadps4-arm64-fex",
+  "sha256": "7e922b148c2cb12c70933494ce3d0f14034b4e26955aa4e19161eee85652137a",
+  "buildId": "fhd-ring-local",
+  "note": "Optional pin for Mali Sonic dig. Prefer workspace build from source (FHD ring). Binary is gitignored; place locally if you need an exact pin."
+}

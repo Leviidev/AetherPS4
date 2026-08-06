@@ -273,6 +273,65 @@ for (const lib of readFileSync(shadps4Arm64Needed, "utf8").trim().split("\n")) {
   if (!existsSync(join(hostDir, lib))) fail(`Missing ARM64 FEX shadPS4 dep: ${lib}`);
 }
 
+// ---- Deep guest pin (d45f) ----
+// Dig guest d468 regressed Sonic to ~14s freeze; deep d45f reached ~70–117s.
+// Always package the pinned binary unless BACHATA_DEEP_GUEST_PIN=0.
+const deepGuestPinDir = resolve(projectRoot, "runtime/pins/deep-guest-d45f");
+const deepGuestPinBin = join(deepGuestPinDir, "shadps4-arm64-fex");
+const deepGuestPinMetaPath = join(deepGuestPinDir, "PIN.json");
+// Prefer pin when binary present; otherwise package the just-built guest.
+// BACHATA_DEEP_GUEST_PIN=0 forces workspace build even if pin binary exists.
+const deepGuestForceOff = process.env.BACHATA_DEEP_GUEST_PIN === "0";
+const deepGuestAvailable =
+  !deepGuestForceOff && existsSync(deepGuestPinBin) && existsSync(deepGuestPinMetaPath);
+let guestRuntimeMeta = {
+  variant: "built",
+  revision: "workspace",
+  sha256: sha256(readFileSync(join(hostDir, "shadps4-arm64-fex"))),
+  label: "workspace-build",
+};
+if (deepGuestAvailable) {
+  const pinMeta = JSON.parse(readFileSync(deepGuestPinMetaPath, "utf8"));
+  const pinSha = sha256(readFileSync(deepGuestPinBin));
+  if (pinSha !== pinMeta.sha256) {
+    fail(`Deep guest pin SHA mismatch: got ${pinSha} expected ${pinMeta.sha256}`);
+  }
+  copy(deepGuestPinBin, join(hostDir, "shadps4-arm64-fex"), 0o755);
+  // Keep stage binary in sync so debug-symbol Build ID matches packaged guest.
+  copy(deepGuestPinBin, shadps4Arm64Binary, 0o755);
+  guestRuntimeMeta = {
+    variant: pinMeta.variant || "deep",
+    revision: pinMeta.revision || "d45f",
+    sha256: pinSha,
+    label: pinMeta.label || "deep-guest-d45f",
+    buildId: pinMeta.buildId || "",
+  };
+  console.log(
+    `GUEST_RUNTIME_BUILD variant=${guestRuntimeMeta.variant} sha256=${guestRuntimeMeta.sha256} ` +
+      `revision=${guestRuntimeMeta.revision}`,
+  );
+} else {
+  console.warn(
+    `GUEST_RUNTIME_BUILD variant=built sha256=${guestRuntimeMeta.sha256} revision=workspace ` +
+      (deepGuestForceOff
+        ? `(deep pin disabled via BACHATA_DEEP_GUEST_PIN=0)`
+        : `(no local pin binary; using workspace guest)`),
+  );
+}
+writeFileSync(
+  join(provDir, "guest-runtime.json"),
+  JSON.stringify(guestRuntimeMeta, null, 2) + "\n",
+);
+writeFileSync(
+  join(provDir, "guest-runtime.txt"),
+  [
+    `variant=${guestRuntimeMeta.variant}`,
+    `revision=${guestRuntimeMeta.revision}`,
+    `sha256=${guestRuntimeMeta.sha256}`,
+    `label=${guestRuntimeMeta.label}`,
+  ].join("\n") + "\n",
+);
+
 copy(hostBox64Binary, join(hostDir, "box64"), 0o755);
 
 // Vortek guest ICD (aarch64 glibc client) — optional until built, required when present in lock.

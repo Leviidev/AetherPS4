@@ -441,3 +441,7 @@ result
 /runtime/sources/
 
 .cxx
+
+# Large local guest pins (optional; package-runtime uses if present)
+runtime/pins/**/shadps4-arm64-fex
+runtime/pins/**/*.debug
