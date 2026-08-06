@@ -12,6 +12,7 @@
 #include "common/assert.h"
 #include "common/debug.h"
 #include "common/div_ceil.h"
+#include "common/logging/log.h"
 #include "common/scope_exit.h"
 #include "core/emulator_settings.h"
 #include "core/memory.h"
@@ -942,6 +943,19 @@ void TextureCache::RefreshImage(Image& image) {
         tile_manager.DetileImage(in_buffer->Handle(), in_offset, image.info);
     for (auto& copy : image_copies) {
         copy.bufferOffset += offset;
+    }
+
+    if (image.info.guest_size >= 0x700000) {
+        // Close the Mode A blind spot: stamp buffer_cache (or stream) source as detile-read.
+        // Host dispatch log often has srcResource=0; guest track is authoritative for FHD src.
+        buffer_cache.NoteDetileSourceUse(in_buffer->Handle(), in_offset, image.info.guest_size,
+                                         "detile_src");
+        LOG_WARNING(Render_Vulkan,
+                    "IMAGE_UPLOAD_CHAIN size={:#x} srcBuffer={:#x} srcOffset={:#x} "
+                    "detileDst={:#x} detileOffset={:#x} tick={} w={} h={} tiled={}",
+                    image.info.guest_size, u64(VkBuffer(in_buffer->Handle())), in_offset,
+                    u64(VkBuffer(buffer)), offset, scheduler.CurrentTick(), image.info.size.width,
+                    image.info.size.height, image.info.props.is_tiled ? 1 : 0);
     }
 
     image.Upload(image_copies, buffer, offset);

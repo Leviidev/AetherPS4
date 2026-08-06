@@ -3,6 +3,7 @@
 
 #include <ranges>
 #include "common/assert.h"
+#include "common/logging/log.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -386,6 +387,14 @@ void Image::Upload(std::span<const vk::BufferImageCopy> upload_copies, vk::Buffe
         .imageMemoryBarrierCount = static_cast<u32>(image_barriers.size()),
         .pImageMemoryBarriers = image_barriers.data(),
     });
+    // Provenance for late DEVICE_LOST dig: FHD 0x7f8000 copy_buffer_to_image.
+    LOG_WARNING(Render_Vulkan,
+                "COPY_BUFFER_TO_IMAGE_PROV srcBuffer={:#x} offset={:#x} size={:#x} "
+                "dstImage={:#x} tick={} copies={} width={} height={} guestSize={:#x} "
+                "path=Image::Upload",
+                u64(VkBuffer(buffer)), offset, info.guest_size, u64(VkImage(GetImage())),
+                scheduler->CurrentTick(), static_cast<u32>(upload_copies.size()), info.size.width,
+                info.size.height, info.guest_size);
     cmdbuf.copyBufferToImage(buffer, GetImage(), vk::ImageLayout::eTransferDstOptimal,
                              upload_copies);
     cmdbuf.pipelineBarrier2(vk::DependencyInfo{

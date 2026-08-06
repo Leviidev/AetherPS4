@@ -630,8 +630,15 @@ Frame* Presenter::PrepareLastFrame() {
         if (result == vk::Result::eTimeout) {
             continue;
         }
-        ASSERT_MSG(result != vk::Result::eErrorDeviceLost,
-                   "Device lost during waiting for a frame");
+        if (result == vk::Result::eErrorDeviceLost) {
+            // Soft-fail: hard ASSERT became exit 133 on Mali after first game frame.
+            // Returning the frame lets Present discover device-lost on acquire/present.
+            LOG_CRITICAL(Render_Vulkan, "Device lost during waiting for a frame (PrepareLastFrame)");
+            break;
+        }
+        LOG_ERROR(Render_Vulkan, "Unexpected waitForFences result in PrepareLastFrame: {}",
+                  vk::to_string(result));
+        break;
     }
 
     auto& scheduler = flip_scheduler;
@@ -864,7 +871,9 @@ Frame* Presenter::PrepareBlankFrame(bool present_thread) {
 void Presenter::Present(Frame* frame, bool is_reusing_frame) {
     static std::atomic_uint32_t present_traces{};
     const u32 trace_id = present_traces.fetch_add(1, std::memory_order_relaxed);
-    const bool trace = trace_id < 32;
+    // Log first 64, then every 16th, always around suspected 32-present boundary.
+    const bool trace = trace_id < 64 || (trace_id % 16u) == 0u ||
+                       (trace_id >= 28 && trace_id <= 40);
     // Free the frame for reuse
     const auto free_frame = [&] {
         if (!is_reusing_frame) {
@@ -891,12 +900,29 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame) {
     }
     if (trace) {
         LOG_INFO(Render_Vulkan, "BACHATA_PRESENT_TRACE id={} stage=acquire_done", trace_id);
+        LOG_INFO(Render_Vulkan,
+                 "FRAME_SLOT_ACQUIRE presentId={} slot={} frameW={} frameH={} "
+                 "swapchainFrameIndex={} swapchainImageCount={} readyTick={}",
+                 trace_id, frame ? int(frame->id) : -1, frame ? frame->width : 0,
+                 frame ? frame->height : 0, swapchain.GetFrameIndex(), swapchain.GetImageCount(),
+                 frame ? frame->ready_tick : 0);
     }
 
     // Reset fence for queue submission. Do it here instead of GetRenderFrame() because we may
     // skip frame because of slow swapchain recreation. If a frame skip occurs, we skip signal
     // the frame's present fence and future GetRenderFrame() call will hang waiting for this frame.
     const auto reset_result = instance.GetDevice().resetFences(frame->present_done);
+    if (reset_result == vk::Result::eErrorDeviceLost) {
+        LOG_CRITICAL(Render_Vulkan, "Device lost while resetting present done fence");
+        static std::atomic<bool> device_lost_snapshot_logged{false};
+        if (!device_lost_snapshot_logged.exchange(true)) {
+            LOG_CRITICAL(Render_Vulkan,
+                         "DEVICE_LOST_SNAPSHOT where=resetPresentFence presentId={} slot={}",
+                         trace_id, frame ? int(frame->id) : -1);
+        }
+        free_frame();
+        return;
+    }
     ASSERT_MSG(reset_result == vk::Result::eSuccess,
                "Unexpected error resetting present done fence: {}", vk::to_string(reset_result));
 
@@ -1143,6 +1169,16 @@ Frame* Presenter::GetRenderFrame() {
     const vk::Device device = instance.GetDevice();
     vk::Result result{};
 
+    static std::atomic_uint32_t get_frame_traces{};
+    const u32 get_id = get_frame_traces.fetch_add(1, std::memory_order_relaxed);
+    if (get_id < 64 || (get_id % 16u) == 0u || (get_id >= 28 && get_id <= 40)) {
+        LOG_INFO(Render_Vulkan,
+                 "GET_RENDER_FRAME_WAIT frameGetId={} slot={} poolSize={} freeRemaining={} "
+                 "readyTick={} (before waitForFences)",
+                 get_id, frame ? int(frame->id) : -1, present_frames.size(), free_queue.size(),
+                 frame ? frame->ready_tick : 0);
+    }
+
     const auto wait = [&]() {
         result = device.waitForFences(frame->present_done, false, std::numeric_limits<u64>::max());
         return result;
@@ -1150,12 +1186,33 @@ Frame* Presenter::GetRenderFrame() {
 
     // Wait for the presentation to be finished so all frame resources are free
     while (wait() != vk::Result::eSuccess) {
-        ASSERT_MSG(result != vk::Result::eErrorDeviceLost,
-                   "Device lost during waiting for a frame");
         // Retry if the waiting times out
         if (result == vk::Result::eTimeout) {
             continue;
         }
+        if (result == vk::Result::eErrorDeviceLost) {
+            // Soft-fail on Mali/Vortek: ASSERT_MSG here was exit 133 after the first
+            // real EOP flip. Return the frame so Present can soft-fail acquire/present
+            // and the session can stop without an immediate trap.
+            // Client-side snapshot header; server dumps live alloc map via
+            // DEVICE_LOST_SNAPSHOT in libbachata_vortek_server (logcat Bachata.Vortek.GpuTrack).
+            static std::atomic<bool> device_lost_snapshot_logged{false};
+            const u32 flip_num = DebugState.GetFrameNum();
+            LOG_CRITICAL(Render_Vulkan, "Device lost during waiting for a frame (GetRenderFrame)");
+            if (!device_lost_snapshot_logged.exchange(true)) {
+                LOG_CRITICAL(Render_Vulkan,
+                             "DEVICE_LOST_SNAPSHOT where=GetRenderFrame lastPresent={} "
+                             "currentFrameId={} frameSize={}x{} hdr={} "
+                             "flipFrameNum={} (server alloc dump in logcat tag "
+                             "Bachata.Vortek.GpuTrack)",
+                             flip_num, frame ? int(frame->id) : -1, frame ? frame->width : 0,
+                             frame ? frame->height : 0, frame && frame->is_hdr ? 1 : 0, flip_num);
+            }
+            break;
+        }
+        LOG_ERROR(Render_Vulkan, "Unexpected waitForFences result in GetRenderFrame: {}",
+                  vk::to_string(result));
+        break;
     }
 
     if (frame->width != expected_frame_width || frame->height != expected_frame_height ||

@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "common/alignment.h"
+#include "common/assert.h"
+#include "common/logging/log.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -9,13 +12,27 @@
 #include "video_core/texture_cache/image_info.h"
 #include "video_core/texture_cache/image_view.h"
 #include "video_core/texture_cache/tile_manager.h"
+#include "video_core/staging_diag.h"
 
 #include "video_core/host_shaders/tiling_comp.h"
+
+#include <algorithm>
+#include <chrono>
+#include <limits>
+// std::count_if used in AcquireScratchSlot claim()
 
 #include <magic_enum/magic_enum.hpp>
 #include <vk_mem_alloc.h>
 
 namespace VideoCore {
+
+namespace {
+constexpr u32 AlignScratchCapacity(u32 size) {
+    // Round up to 256 KiB to reduce thrash on near-FHD sizes; FHD RGBA = 0x7f8000.
+    constexpr u32 kGrain = 256 * 1024;
+    return static_cast<u32>(Common::AlignUp(static_cast<u64>(size), kGrain));
+}
+} // namespace
 
 struct TilingInfo {
     u32 bank_swizzle;
@@ -76,31 +93,312 @@ TileManager::TileManager(const Vulkan::Instance& instance, Vulkan::Scheduler& sc
     ASSERT_MSG(layout_result == vk::Result::eSuccess, "Failed to create pipeline layout: {}",
                vk::to_string(layout_result));
     pl_layout = std::move(layout);
+
+    scratch_slots.reserve(kScratchMaxSlots);
+    LogStagingDiagConfigOnce();
+    LOG_WARNING(Render_Vulkan,
+                "STAGING_POOL_INIT initialSlots={} maxSlots={} path=detile_scratch_ring "
+                "strictScratch={} tickLag={}",
+                kScratchInitialSlots, kScratchMaxSlots, StagingDiag().strict_scratch ? 1 : 0,
+                StagingDiag().tick_lag);
 }
 
-TileManager::~TileManager() = default;
+TileManager::~TileManager() {
+    for (auto& slot : scratch_slots) {
+        if (slot.buffer) {
+            // Best-effort: wait GPU before tear-down so host does not free in-flight memory.
+            if (slot.state == ScratchState::GpuInFlight && slot.tick != 0) {
+                scheduler.Wait(slot.tick);
+            }
+            vmaDestroyBuffer(instance.GetAllocator(), slot.buffer, slot.allocation);
+            slot.buffer = VK_NULL_HANDLE;
+            slot.allocation = VK_NULL_HANDLE;
+        }
+    }
+    scratch_slots.clear();
+}
 
-TileManager::ScratchBuffer TileManager::GetScratchBuffer(u32 size) {
+void TileManager::RefreshScratchCompletions() {
+    // Slot.tick is the scheduler tick of the open cmdbuf when acquired (StreamBuffer-style).
+    // That tick is only signaled on the next SubmitExecution(NextTick). Until then
+    // CurrentTick() == slot.tick and the work has NOT been submitted — must not free.
+    // Smoking-gun failure: IsFree(tick) alone returned true on the same unsubmitted tick
+    // under Vortek, so every detile reused slot0 (same dstBuffer) → Mali CS_BUS_FAULT.
+    //
+    // Mode B (strict_scratch): never free here on optimistic IsFree — only Wait() path frees.
+    // Mode E (tick_lag): require cpuTick >= tick + lag before free (diag only).
+    const u64 cpu_tick = scheduler.CurrentTick();
+    const auto& diag = StagingDiag();
+    for (u32 i = 0; i < scratch_slots.size(); ++i) {
+        auto& slot = scratch_slots[i];
+        if (slot.state != ScratchState::GpuInFlight && slot.state != ScratchState::Recording &&
+            slot.state != ScratchState::Submitted) {
+            continue;
+        }
+        if (slot.tick == 0) {
+            continue;
+        }
+        // Still on open cmdbuf (not submitted yet).
+        if (slot.tick >= cpu_tick) {
+            continue;
+        }
+        if (diag.strict_scratch) {
+            // Lifecycle: FREE→RECORDING→SUBMITTED→HOST_COMPLETED(via Wait)→FREE.
+            // IsFree alone is not host-GPU proof under Vortek timeline.
+            continue;
+        }
+        // Product lag floor=6 when unset — multi-buffer without waitIdle freeze.
+        const u32 lag = diag.tick_lag > 0 ? diag.tick_lag : 12;
+        if (cpu_tick < slot.tick + lag) {
+            continue;
+        }
+        if (!scheduler.IsFree(slot.tick)) {
+            continue;
+        }
+        LOG_WARNING(Render_Vulkan,
+                    "STAGING_SLOT_COMPLETED slot={} generation={} tick={} cpuTick={} "
+                    "capacity={:#x} mode=isfree lag={}",
+                    i, slot.generation, slot.tick, cpu_tick, slot.capacity, diag.tick_lag);
+        slot.state = ScratchState::Free;
+        slot.tick = 0;
+    }
+}
+
+bool TileManager::CreateScratchSlot(u32 capacity) {
+    if (scratch_slots.size() >= kScratchMaxSlots) {
+        return false;
+    }
     constexpr auto usage =
         vk::BufferUsageFlagBits::eUniformBuffer | vk::BufferUsageFlagBits::eStorageBuffer |
         vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst;
 
     const vk::BufferCreateInfo buffer_ci = {
-        .size = size,
+        .size = capacity,
         .usage = usage,
     };
-
     const VmaAllocationCreateInfo alloc_info{
         .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
     };
 
-    VkBuffer buffer;
-    VmaAllocation allocation;
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VmaAllocation allocation = VK_NULL_HANDLE;
     const auto buffer_ci_unsafe = static_cast<VkBufferCreateInfo>(buffer_ci);
     const auto result = vmaCreateBuffer(instance.GetAllocator(), &buffer_ci_unsafe, &alloc_info,
                                         &buffer, &allocation, nullptr);
-    ASSERT(result == VK_SUCCESS);
-    return {buffer, allocation};
+    ASSERT_MSG(result == VK_SUCCESS, "STAGING_POOL_GROWN failed size={:#x} result={}", capacity,
+               int(result));
+    if (result != VK_SUCCESS || !buffer) {
+        return false;
+    }
+
+    ScratchSlot slot{};
+    slot.buffer = vk::Buffer{buffer};
+    slot.allocation = allocation;
+    slot.capacity = capacity;
+    slot.generation = 0;
+    slot.tick = 0;
+    slot.state = ScratchState::Free;
+    scratch_slots.push_back(slot);
+    ++scratch_stats_grows;
+
+    LOG_WARNING(Render_Vulkan,
+                "STAGING_POOL_GROWN slots={} capacity={:#x} totalBytes≈{:#x}",
+                scratch_slots.size(), capacity,
+                static_cast<u64>(scratch_slots.size()) * capacity);
+    return true;
+}
+
+void TileManager::MaybeLogScratchPoolStats() {
+    const u64 tick = scheduler.CurrentTick();
+    // ~every 300 ticks ≈ few seconds of frame work; keep low volume.
+    if (scratch_stats_last_log_tick != 0 && tick < scratch_stats_last_log_tick + 300) {
+        return;
+    }
+    scratch_stats_last_log_tick = tick;
+    u32 free_n = 0;
+    u32 busy_n = 0;
+    u64 bytes = 0;
+    for (const auto& s : scratch_slots) {
+        bytes += s.capacity;
+        if (s.state == ScratchState::Free) {
+            ++free_n;
+        } else {
+            ++busy_n;
+        }
+    }
+    LOG_WARNING(Render_Vulkan,
+                "STAGING_POOL_STATS slots={} free={} busy={} bytes={:#x} grows={} acquired={} "
+                "waits={}",
+                scratch_slots.size(), free_n, busy_n, bytes, scratch_stats_grows,
+                scratch_stats_acquired, scratch_stats_waits);
+}
+
+TileManager::ScratchSlot& TileManager::AcquireScratchSlot(u32 size) {
+    const u32 need = AlignScratchCapacity(size);
+    RefreshScratchCompletions();
+
+    // Round-robin among free compatible slots so we actually multi-buffer instead of
+    // always picking slot 0 when IsFree falsely reports completion.
+    auto try_find_free = [&]() -> ScratchSlot* {
+        if (scratch_slots.empty()) {
+            return nullptr;
+        }
+        const u32 n = static_cast<u32>(scratch_slots.size());
+        for (u32 k = 0; k < n; ++k) {
+            const u32 i = (next_scratch_rr + k) % n;
+            auto& slot = scratch_slots[i];
+            if (slot.state != ScratchState::Free || slot.capacity < need) {
+                continue;
+            }
+            next_scratch_rr = (i + 1) % n;
+            return &slot;
+        }
+        return nullptr;
+    };
+
+    auto claim = [&](ScratchSlot* free, bool reused) -> ScratchSlot& {
+        free->state = ScratchState::GpuInFlight;
+        free->generation = next_scratch_generation++;
+        free->tick = scheduler.CurrentTick();
+        ++scratch_stats_acquired;
+        LOG_WARNING(Render_Vulkan,
+                    "STAGING_SLOT_ACQUIRED slot={} generation={} capacity={:#x} need={:#x} "
+                    "tick={} reused={} freeLeft={} strictScratch={} tickLag={}",
+                    static_cast<u32>(free - scratch_slots.data()), free->generation, free->capacity,
+                    need, free->tick, reused ? 1 : 0,
+                    static_cast<u32>(std::count_if(
+                        scratch_slots.begin(), scratch_slots.end(),
+                        [](const ScratchSlot& s) { return s.state == ScratchState::Free; })),
+                    StagingDiag().strict_scratch ? 1 : 0, StagingDiag().tick_lag);
+        MaybeLogScratchPoolStats();
+        return *free;
+    };
+
+    if (ScratchSlot* free = try_find_free()) {
+        return claim(free, true);
+    }
+
+    // Grow pool: first demand fills to initialSlots; later demand grows to maxSlots.
+    // Each slot = unique VkBuffer + VkDeviceMemory for TileManager lifetime (no rebind).
+    const u32 target =
+        scratch_slots.empty()
+            ? kScratchInitialSlots
+            : static_cast<u32>(std::min<size_t>(scratch_slots.size() + 1, kScratchMaxSlots));
+    while (scratch_slots.size() < target && scratch_slots.size() < kScratchMaxSlots) {
+        if (!CreateScratchSlot(need)) {
+            break;
+        }
+    }
+
+    RefreshScratchCompletions();
+    if (ScratchSlot* free = try_find_free()) {
+        return claim(free, false);
+    }
+
+    // Still busy but under max: grow one more before waiting.
+    if (scratch_slots.size() < kScratchMaxSlots && CreateScratchSlot(need)) {
+        RefreshScratchCompletions();
+        if (ScratchSlot* free = try_find_free()) {
+            return claim(free, false);
+        }
+    }
+
+    // All slots busy — wait only oldest *submitted* slot (tick < CurrentTick).
+    // Never wait a tick still equal to CurrentTick (would Flush+wait open cmdbuf including
+    // the work we are about to record).
+    LOG_WARNING(Render_Vulkan,
+                "STAGING_POOL_EXHAUSTED slots={} need={:#x} — wait oldest exact tick",
+                scratch_slots.size(), need);
+    ++scratch_stats_waits;
+
+    const u64 cpu_tick = scheduler.CurrentTick();
+    ScratchSlot* oldest = nullptr;
+    for (auto& slot : scratch_slots) {
+        if (slot.state != ScratchState::GpuInFlight || slot.capacity < need) {
+            continue;
+        }
+        if (slot.tick >= cpu_tick) {
+            continue; // not submitted yet
+        }
+        if (!oldest || slot.tick < oldest->tick) {
+            oldest = &slot;
+        }
+    }
+    if (!oldest) {
+        // All busy slots still on open cmdbuf — must Flush so ticks can advance, then wait.
+        scheduler.Flush();
+        RefreshScratchCompletions();
+        if (ScratchSlot* free = try_find_free()) {
+            return claim(free, true);
+        }
+        for (auto& slot : scratch_slots) {
+            if (slot.state != ScratchState::GpuInFlight || slot.capacity < need) {
+                continue;
+            }
+            if (!oldest || slot.tick < oldest->tick) {
+                oldest = &slot;
+            }
+        }
+    }
+    ASSERT_MSG(oldest != nullptr, "STAGING_POOL_EXHAUSTED with no slots");
+
+    // Exhaust rare with 16 slots + lag free. QueueWaitIdle only if Wait optimistic.
+    scheduler.Flush();
+    const auto wait_begin = std::chrono::steady_clock::now();
+    scheduler.Wait(oldest->tick);
+    auto wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::steady_clock::now() - wait_begin)
+                       .count();
+    if (wait_ms < 1) {
+        const auto q_begin = std::chrono::steady_clock::now();
+        (void)instance.GetGraphicsQueue().waitIdle();
+        wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::steady_clock::now() - q_begin)
+                      .count();
+        LOG_WARNING(Render_Vulkan,
+                    "STAGING_SLOT_QUEUE_IDLE generation={} tick={} elapsedMs={}",
+                    oldest->generation, oldest->tick, wait_ms);
+    }
+    if (wait_ms > 100) {
+        LOG_WARNING(Render_Vulkan,
+                    "TARGETED_FENCE_WAIT_SLOW kind=staging_scratch serial={} elapsedMs={} "
+                    "generation={} capacity={:#x}",
+                    oldest->tick, wait_ms, oldest->generation, oldest->capacity);
+    }
+    LOG_WARNING(Render_Vulkan,
+                "STAGING_SLOT_COMPLETED slot={} generation={} tick={} capacity={:#x} waited=1 "
+                "elapsedMs={} mode=exact_wait",
+                static_cast<u32>(oldest - scratch_slots.data()), oldest->generation, oldest->tick,
+                oldest->capacity, wait_ms);
+    oldest->state = ScratchState::Free;
+    oldest->tick = 0;
+
+    // If still undersized (rare), destroy only this free slot and recreate larger — not while GPU owns it.
+    if (oldest->capacity < need) {
+        vmaDestroyBuffer(instance.GetAllocator(), oldest->buffer, oldest->allocation);
+        oldest->buffer = VK_NULL_HANDLE;
+        oldest->allocation = VK_NULL_HANDLE;
+        const vk::BufferCreateInfo buffer_ci = {
+            .size = need,
+            .usage = vk::BufferUsageFlagBits::eUniformBuffer |
+                     vk::BufferUsageFlagBits::eStorageBuffer |
+                     vk::BufferUsageFlagBits::eTransferSrc |
+                     vk::BufferUsageFlagBits::eTransferDst,
+        };
+        const VmaAllocationCreateInfo alloc_info{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VmaAllocation allocation = VK_NULL_HANDLE;
+        const auto ci = static_cast<VkBufferCreateInfo>(buffer_ci);
+        const auto result =
+            vmaCreateBuffer(instance.GetAllocator(), &ci, &alloc_info, &buffer, &allocation, nullptr);
+        ASSERT(result == VK_SUCCESS);
+        oldest->buffer = vk::Buffer{buffer};
+        oldest->allocation = allocation;
+        oldest->capacity = need;
+        LOG_WARNING(Render_Vulkan, "STAGING_POOL_GROWN resize slot capacity={:#x}", need);
+    }
+
+    return claim(oldest, true);
 }
 
 vk::Pipeline TileManager::GetTilingPipeline(const ImageInfo& info, bool is_tiler) {
@@ -191,10 +489,12 @@ TileManager::Result TileManager::DetileImage(vk::Buffer in_buffer, u32 in_offset
         .range = sizeof(params),
     };
 
-    const auto [out_buffer, out_allocation] = GetScratchBuffer(info.guest_size);
-    scheduler.DeferOperation([this, out_buffer, out_allocation]() {
-        vmaDestroyBuffer(instance.GetAllocator(), out_buffer, out_allocation);
-    });
+    // Persistent scratch ring: never create/destroy 0x7f8000 buffers per frame.
+    ScratchSlot& scratch = AcquireScratchSlot(info.guest_size);
+    const vk::Buffer out_buffer = scratch.buffer;
+    LOG_WARNING(Render_Vulkan,
+                "STAGING_SLOT_SUBMITTED generation={} tick={} op=detile size={:#x}",
+                scratch.generation, scratch.tick, info.guest_size);
 
     scheduler.EndRendering();
 
@@ -252,6 +552,27 @@ TileManager::Result TileManager::DetileImage(vk::Buffer in_buffer, u32 in_offset
     }
 
     const auto dim_x = (info.guest_size / (info.num_bits / 8)) / 64;
+    // Machine-searchable GPU access log for Vortek Mali DEVICE_LOST investigation.
+    // tilingMode numeric matches AmdGpu::TileMode; Display2DThin=10, linear=0-class.
+    LOG_WARNING(Render_Vulkan,
+                "GPU_ACCESS submission=client operation=detile shader={}_{} "
+                "srcBuffer={:#x} srcOffset={:#x} srcSize={:#x} "
+                "dstBuffer={:#x} dstOffset=0x0 dstSize={:#x} "
+                "width={} height={} pitch={} tilingMode={} guestSize={:#x} "
+                "isTiled={} arrayMode={} bpp={}",
+                magic_enum::enum_name(info.tile_mode), info.num_bits,
+                u64(VkBuffer(in_buffer)), in_offset, info.guest_size, u64(VkBuffer(out_buffer)),
+                info.guest_size, info.size.width, info.size.height, info.pitch, u32(info.tile_mode),
+                info.guest_size, info.props.is_tiled ? 1 : 0, u32(info.array_mode),
+                info.num_bits);
+    // Linear tile modes only (Depth2DThin64=0 is valid tiled depth, not linear).
+    if (!info.props.is_tiled || info.tile_mode == AmdGpu::TileMode::DisplayLinearAligned ||
+        info.tile_mode == AmdGpu::TileMode::DisplayLinearGeneral) {
+        LOG_WARNING(Render_Vulkan,
+                    "GPU_RANGE_INVALID operation=detile reason=linear_or_untiled_into_detiler "
+                    "tilingMode={} isTiled={}",
+                    u32(info.tile_mode), info.props.is_tiled ? 1 : 0);
+    }
     cmdbuf.dispatch(dim_x, 1, 1);
     return {out_buffer, 0};
 }
@@ -286,10 +607,11 @@ void TileManager::TileImage(Image& in_image, std::span<vk::BufferImageCopy> buff
         .range = sizeof(params),
     };
 
-    const auto [temp_buffer, temp_allocation] = GetScratchBuffer(info.guest_size);
-    scheduler.DeferOperation([this, temp_buffer, temp_allocation]() {
-        vmaDestroyBuffer(instance.GetAllocator(), temp_buffer, temp_allocation);
-    });
+    ScratchSlot& scratch = AcquireScratchSlot(info.guest_size);
+    const vk::Buffer temp_buffer = scratch.buffer;
+    LOG_WARNING(Render_Vulkan,
+                "STAGING_SLOT_SUBMITTED generation={} tick={} op=tile size={:#x}",
+                scratch.generation, scratch.tick, info.guest_size);
 
     const auto cmdbuf = scheduler.CommandBuffer();
     in_image.Download(buffer_copies, temp_buffer, 0, copy_size);

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <atomic>
 #include <limits>
 #include "common/assert.h"
 #include "common/logging/log.h"
@@ -121,6 +122,23 @@ bool Swapchain::AcquireNextImage() {
     case vk::Result::eErrorUnknown:
         needs_recreation = true;
         break;
+    case vk::Result::eErrorDeviceLost:
+        // Mali/Vortek can report device-lost after heavy first-frame GPU work. Do not
+        // UNREACHABLE (exit 133); mark for recreation and let Present skip the frame so
+        // session logs flush and the Android layer can observe a clean stop.
+        LOG_CRITICAL(Render_Vulkan, "Swapchain acquire returned ErrorDeviceLost");
+        {
+            // Client-side gate; server dumps alloc map via present_sync / GpuTrack.
+            static std::atomic<bool> device_lost_snapshot_logged{false};
+            if (!device_lost_snapshot_logged.exchange(true)) {
+                LOG_CRITICAL(Render_Vulkan,
+                             "DEVICE_LOST_SNAPSHOT where=AcquireNextImage frame_index={} "
+                             "image_count={} image_index={} (server dump: Bachata.Vortek.GpuTrack)",
+                             frame_index, image_count, image_index);
+            }
+        }
+        needs_recreation = true;
+        break;
     default:
         LOG_CRITICAL(Render_Vulkan, "Swapchain acquire returned unknown result {}",
                      vk::to_string(result));
@@ -142,7 +160,18 @@ bool Swapchain::Present() {
     };
 
     auto result = instance.GetPresentQueue().presentKHR(present_info);
-    if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR) {
+    if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR ||
+        result == vk::Result::eErrorDeviceLost || result == vk::Result::eErrorSurfaceLostKHR) {
+        if (result == vk::Result::eErrorDeviceLost) {
+            LOG_CRITICAL(Render_Vulkan, "Swapchain present returned ErrorDeviceLost");
+            static std::atomic<bool> device_lost_snapshot_logged{false};
+            if (!device_lost_snapshot_logged.exchange(true)) {
+                LOG_CRITICAL(Render_Vulkan,
+                             "DEVICE_LOST_SNAPSHOT where=QueuePresent frame_index={} "
+                             "image_count={} image_index={} (server dump: Bachata.Vortek.GpuTrack)",
+                             frame_index, image_count, image_index);
+            }
+        }
         needs_recreation = true;
     } else {
         ASSERT_MSG(result == vk::Result::eSuccess, "Swapchain presentation failed: {}",

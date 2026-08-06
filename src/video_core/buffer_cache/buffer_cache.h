@@ -3,6 +3,10 @@
 
 #pragma once
 
+#include <memory>
+#include <unordered_map>
+#include <vector>
+
 #include <boost/container/small_vector.hpp>
 #include "common/lru_cache.h"
 #include "common/slot_vector.h"
@@ -131,6 +135,15 @@ public:
     /// Attempts to obtain a buffer without modifying the cache contents.
     [[nodiscard]] std::pair<Buffer*, u32> ObtainBufferForImage(VAddr gpu_addr, u32 size);
 
+    /// Strict-stream multi-slot host-visible upload (mode C/D). Frees only after Wait.
+    [[nodiscard]] std::pair<Buffer*, u32> AcquireImageStagingSlot(u32 size);
+    void RefreshImageStagingCompletions();
+
+    /// FHD detile source lifetime (buffer_cache 3-way rotate).
+    /// Note after detile records a read; Ensure before Synchronize/rewrite of same buffer.
+    void NoteDetileSourceUse(vk::Buffer handle, u32 offset, u32 size, const char* path);
+    void EnsureDetileSourceWritable(Buffer& buffer, u32 size);
+
     /// Return true when a region is registered on the cache
     [[nodiscard]] bool IsRegionRegistered(VAddr addr, size_t size);
 
@@ -213,6 +226,37 @@ private:
     Buffer gds_buffer;
     Buffer bda_pagetable_buffer;
     Common::SlotVector<Buffer> slot_buffers;
+
+    /// Mode C/D: independent host-visible buffers for full-res image uploads.
+    /// Never wrap a single StreamBuffer range until host completion is proven.
+    static constexpr u32 kImageStagingInitialSlots = 8;
+    static constexpr u32 kImageStagingMaxSlots = 16;
+    struct ImageStagingSlot {
+        std::unique_ptr<Buffer> buffer;
+        u32 capacity{};
+        u64 generation{};
+        u64 tick{};
+        bool busy{false};
+    };
+    std::vector<ImageStagingSlot> image_staging_slots;
+    u64 next_image_staging_generation{1};
+    u32 next_image_staging_rr{0};
+    u64 image_staging_stats_acquired{};
+    u64 image_staging_stats_waits{};
+
+    /// Per VkBuffer handle: last detile-read generation (Mode A blind spot).
+    struct DetileSourceLease {
+        u64 generation{};
+        u64 tick{};
+        u32 size{};
+        bool busy{false};
+    };
+    std::unordered_map<u64, DetileSourceLease> detile_source_leases;
+    u64 next_detile_source_generation{1};
+    u64 detile_source_stats_notes{};
+    u64 detile_source_stats_waits{};
+    u64 detile_source_stats_unsafe{};
+
     u64 total_used_memory = 0;
     u64 trigger_gc_memory = 0;
     u64 critical_gc_memory = 0;

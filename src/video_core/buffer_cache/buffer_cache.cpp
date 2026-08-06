@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <chrono>
 #include "common/alignment.h"
+#include "common/assert.h"
 #include "common/debug.h"
+#include "common/logging/log.h"
 #include "common/scope_exit.h"
 #include "core/memory.h"
 #include "video_core/amdgpu/liverpool.h"
@@ -13,6 +16,7 @@
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/staging_diag.h"
 #include "video_core/texture_cache/texture_cache.h"
 
 namespace VideoCore {
@@ -399,23 +403,309 @@ std::pair<Buffer*, u32> BufferCache::ObtainBuffer(VAddr device_addr, u32 size, b
     return {&buffer, buffer.Offset(device_addr)};
 }
 
+void BufferCache::RefreshImageStagingCompletions() {
+    // FHD Upload ring: do NOT free on lag/IsFree (still freeflight under Vortek).
+    // Free only on exhaust with Wait + QueueWaitIdle (rare ~every 16 slots).
+    // device.waitIdle thrash froze Sonic; lag-only free still DEVICE_LOST ~20–40s.
+    (void)scheduler;
+}
+
+std::pair<Buffer*, u32> BufferCache::AcquireImageStagingSlot(u32 size) {
+    LogStagingDiagConfigOnce();
+    const u32 need = static_cast<u32>(Common::AlignUp(static_cast<u64>(size), 256 * 1024));
+    RefreshImageStagingCompletions();
+
+    auto try_find_free = [&]() -> ImageStagingSlot* {
+        if (image_staging_slots.empty()) {
+            return nullptr;
+        }
+        const u32 n = static_cast<u32>(image_staging_slots.size());
+        for (u32 k = 0; k < n; ++k) {
+            const u32 i = (next_image_staging_rr + k) % n;
+            auto& slot = image_staging_slots[i];
+            if (slot.busy || !slot.buffer || slot.capacity < need) {
+                continue;
+            }
+            next_image_staging_rr = (i + 1) % n;
+            return &slot;
+        }
+        return nullptr;
+    };
+
+    auto claim = [&](ImageStagingSlot& slot, bool reused) -> std::pair<Buffer*, u32> {
+        slot.busy = true;
+        slot.generation = next_image_staging_generation++;
+        slot.tick = scheduler.CurrentTick();
+        ++image_staging_stats_acquired;
+        LOG_WARNING(Render_Vulkan,
+                    "UPLOAD_STAGING_ACQUIRED slot={} generation={} capacity={:#x} need={:#x} "
+                    "tick={} reused={} path=image_staging_ring buffer={:#x}",
+                    static_cast<u32>(&slot - image_staging_slots.data()), slot.generation,
+                    slot.capacity, need, slot.tick, reused ? 1 : 0,
+                    u64(VkBuffer(slot.buffer->Handle())));
+        return {slot.buffer.get(), 0};
+    };
+
+    if (ImageStagingSlot* free = try_find_free()) {
+        return claim(*free, true);
+    }
+
+    // Grow pool to initial/max.
+    const u32 target = image_staging_slots.empty()
+                           ? kImageStagingInitialSlots
+                           : static_cast<u32>(std::min<size_t>(image_staging_slots.size() + 1,
+                                                                kImageStagingMaxSlots));
+    while (image_staging_slots.size() < target && image_staging_slots.size() < kImageStagingMaxSlots) {
+        ImageStagingSlot slot{};
+        slot.buffer = std::make_unique<Buffer>(instance, scheduler, MemoryUsage::Upload, 0,
+                                               AllFlags, need);
+        slot.capacity = need;
+        image_staging_slots.push_back(std::move(slot));
+        LOG_WARNING(Render_Vulkan,
+                    "UPLOAD_STAGING_GROWN slots={} capacity={:#x} path=image_staging_ring",
+                    image_staging_slots.size(), need);
+    }
+
+    RefreshImageStagingCompletions();
+    if (ImageStagingSlot* free = try_find_free()) {
+        return claim(*free, false);
+    }
+
+    if (image_staging_slots.size() < kImageStagingMaxSlots) {
+        ImageStagingSlot slot{};
+        slot.buffer = std::make_unique<Buffer>(instance, scheduler, MemoryUsage::Upload, 0,
+                                               AllFlags, need);
+        slot.capacity = need;
+        image_staging_slots.push_back(std::move(slot));
+        LOG_WARNING(Render_Vulkan,
+                    "UPLOAD_STAGING_GROWN slots={} capacity={:#x} path=image_staging_ring",
+                    image_staging_slots.size(), need);
+        if (ImageStagingSlot* free = try_find_free()) {
+            return claim(*free, false);
+        }
+    }
+
+    // Exhausted — Wait oldest submitted slot.
+    LOG_WARNING(Render_Vulkan,
+                "UPLOAD_STAGING_EXHAUSTED slots={} need={:#x} — wait oldest exact tick",
+                image_staging_slots.size(), need);
+    ++image_staging_stats_waits;
+
+    const u64 cpu_tick = scheduler.CurrentTick();
+    ImageStagingSlot* oldest = nullptr;
+    for (auto& slot : image_staging_slots) {
+        if (!slot.busy || slot.capacity < need) {
+            continue;
+        }
+        if (slot.tick >= cpu_tick) {
+            continue;
+        }
+        if (!oldest || slot.tick < oldest->tick) {
+            oldest = &slot;
+        }
+    }
+    if (!oldest) {
+        scheduler.Flush();
+        RefreshImageStagingCompletions();
+        if (ImageStagingSlot* free = try_find_free()) {
+            return claim(*free, true);
+        }
+        for (auto& slot : image_staging_slots) {
+            if (!slot.busy || slot.capacity < need) {
+                continue;
+            }
+            if (!oldest || slot.tick < oldest->tick) {
+                oldest = &slot;
+            }
+        }
+    }
+    ASSERT_MSG(oldest != nullptr, "UPLOAD_STAGING_EXHAUSTED with no slots");
+
+    // Exhaust rare with 16 slots + lag free. Prefer Wait; if optimistic (0ms),
+    // QueueWaitIdle only (not DeviceWaitIdle — that froze Sonic).
+    scheduler.Flush();
+    const auto wait_begin = std::chrono::steady_clock::now();
+    scheduler.Wait(oldest->tick);
+    auto wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::steady_clock::now() - wait_begin)
+                       .count();
+    if (wait_ms < 1) {
+        const auto q_begin = std::chrono::steady_clock::now();
+        (void)instance.GetGraphicsQueue().waitIdle();
+        wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::steady_clock::now() - q_begin)
+                      .count();
+        LOG_WARNING(Render_Vulkan,
+                    "UPLOAD_STAGING_QUEUE_IDLE slot={} generation={} tick={} elapsedMs={}",
+                    static_cast<u32>(oldest - image_staging_slots.data()), oldest->generation,
+                    oldest->tick, wait_ms);
+    }
+    LOG_WARNING(Render_Vulkan,
+                "UPLOAD_STAGING_COMPLETED slot={} generation={} tick={} capacity={:#x} "
+                "waited=1 elapsedMs={} mode=exact_wait",
+                static_cast<u32>(oldest - image_staging_slots.data()), oldest->generation,
+                oldest->tick, oldest->capacity, wait_ms);
+    oldest->busy = false;
+    oldest->tick = 0;
+    return claim(*oldest, true);
+}
+
+void BufferCache::NoteDetileSourceUse(vk::Buffer handle, u32 offset, u32 size, const char* path) {
+    if (!IsFullResStagingSize(size) || !handle) {
+        return;
+    }
+    const u64 key = u64(VkBuffer(handle));
+    auto& lease = detile_source_leases[key];
+    lease.generation = next_detile_source_generation++;
+    lease.tick = scheduler.CurrentTick();
+    lease.size = size;
+    lease.busy = true;
+    ++detile_source_stats_notes;
+    LOG_WARNING(Render_Vulkan,
+                "DETILE_SOURCE_USE bufferCacheHandle={:#x} offset={:#x} size={:#x} "
+                "generation={} tick={} path={} notes={} waits={} unsafe={}",
+                key, offset, size, lease.generation, lease.tick, path ? path : "?",
+                detile_source_stats_notes, detile_source_stats_waits, detile_source_stats_unsafe);
+}
+
+void BufferCache::EnsureDetileSourceWritable(Buffer& buffer, u32 size) {
+    if (!IsFullResStagingSize(size)) {
+        return;
+    }
+    const u64 key = u64(VkBuffer(buffer.Handle()));
+    auto it = detile_source_leases.find(key);
+    if (it == detile_source_leases.end() || !it->second.busy) {
+        return;
+    }
+    auto& lease = it->second;
+    const u64 cpu_tick = scheduler.CurrentTick();
+    const bool strict = StagingDiag().strict_buffer_cache;
+    const u32 bc_lag = StagingDiag().buffer_cache_tick_lag;
+
+    // Prior detile still on the *open* cmdbuf (not submitted). Never Flush from this path —
+    // mid-frame Flush during image upload raced present under system-vortek and caused
+    // early DEVICE_LOST (~frame 1 / few detiles). Leave lease busy; next Obtain after
+    // natural submit will re-check.
+    if (lease.tick >= cpu_tick) {
+        LOG_WARNING(Render_Vulkan,
+                    "DETILE_SOURCE_OPEN_CMDBUF bufferCacheHandle={:#x} generation={} tick={} "
+                    "cpuTick={} strict={} bufferCacheTickLag={} — skip wait/flush",
+                    key, lease.generation, lease.tick, cpu_tick, strict ? 1 : 0, bc_lag);
+        return;
+    }
+
+    // Guest lag diagnostic (G6/G8): only free when cpuTick >= prevTick + lag.
+    // Host exact wait is preferred; lag is heuristic fallback (not product default).
+    if (bc_lag > 0 && cpu_tick < lease.tick + bc_lag) {
+        const auto wait_begin = std::chrono::steady_clock::now();
+        scheduler.Wait(lease.tick);
+        const auto wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - wait_begin)
+                                 .count();
+        ++detile_source_stats_waits;
+        LOG_WARNING(Render_Vulkan,
+                    "DETILE_SOURCE_WAIT bufferCacheHandle={:#x} generation={} prevTick={} "
+                    "cpuTick={} bufferCacheTickLag={} elapsedMs={} mode=tick_lag",
+                    key, lease.generation, lease.tick, cpu_tick, bc_lag, wait_ms);
+        lease.busy = false;
+        return;
+    }
+
+    const bool free_now = scheduler.IsFree(lease.tick);
+    if (!free_now) {
+        ++detile_source_stats_unsafe;
+        LOG_WARNING(Render_Vulkan,
+                    "DETILE_SOURCE_REUSE_UNSAFE bufferCacheHandle={:#x} size={:#x} "
+                    "generation={} prevTick={} cpuTick={} strict={} bufferCacheTickLag={} "
+                    "path=buffer_cache",
+                    key, lease.size, lease.generation, lease.tick, cpu_tick, strict ? 1 : 0,
+                    bc_lag);
+    }
+
+    // Non-strict (default launch path): log-only — no Wait. Host detile exact wait is primary.
+    // Strict Mode F: Wait only after work is submitted (tick < CurrentTick).
+    if (strict) {
+        const auto wait_begin = std::chrono::steady_clock::now();
+        scheduler.Wait(lease.tick);
+        const auto wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - wait_begin)
+                                 .count();
+        ++detile_source_stats_waits;
+        LOG_WARNING(Render_Vulkan,
+                    "DETILE_SOURCE_WAIT bufferCacheHandle={:#x} generation={} prevTick={} "
+                    "elapsedMs={} strict=1 mode=exact_wait freeWas={}",
+                    key, lease.generation, lease.tick, wait_ms, free_now ? 1 : 0);
+    }
+    lease.busy = false;
+}
+
 std::pair<Buffer*, u32> BufferCache::ObtainBufferForImage(VAddr gpu_addr, u32 size) {
+    LogStagingDiagConfigOnce();
+    const u64 tick = scheduler.CurrentTick();
+
+    // Product path (Mali/Vortek freeflight — CUSA07023 class):
+    // Full-res detile sources must NOT rewrite a buffer_cache handle the GPU may still
+    // read. FHD video-out buffers are almost always already registered → legacy path
+    // did SynchronizeBuffer in-place → DEVICE_LOST / "Memory is not mapped".
+    // Always multi-slot host-visible ring for FHD (independent of staging diag props —
+    // prop=0 previously forced strict_stream off and re-enabled the race).
+    // Opt-out only for dig: BACHATA_STAGING_STRICT_STREAM=0 *and*
+    // BACHATA_STAGING_ALLOW_FHD_BUFFER_CACHE=1.
+    const bool allow_fhd_buffer_cache =
+        StagingEnvTruthy(std::getenv("BACHATA_STAGING_ALLOW_FHD_BUFFER_CACHE"));
+    if (IsFullResStagingSize(size) && !allow_fhd_buffer_cache) {
+        auto [buf, offset] = AcquireImageStagingSlot(size);
+        ASSERT(buf && buf->mapped_data.size() >= size);
+        memory->CopySparseMemory(gpu_addr, buf->mapped_data.data(), size);
+        LOG_WARNING(Render_Vulkan,
+                    "OBTAIN_BUFFER_FOR_IMAGE path=image_staging_ring size={:#x} "
+                    "buffer={:#x} offset={:#x} tick={} gpuAddr={:#x}",
+                    size, u64(VkBuffer(buf->Handle())), offset, tick, gpu_addr);
+        return {buf, offset};
+    }
+
     // Check if any buffer contains the full requested range.
     const BufferId buffer_id = page_table[gpu_addr >> CACHING_PAGEBITS].buffer_id;
     if (buffer_id) {
         if (Buffer& buffer = slot_buffers[buffer_id]; buffer.IsInBounds(gpu_addr, size)) {
+            // Mode F / dig: do not rewrite FHD buffer_cache source while prior detile still owns it.
+            EnsureDetileSourceWritable(buffer, size);
             SynchronizeBuffer(buffer, gpu_addr, size, false, false);
-            return {&buffer, buffer.Offset(gpu_addr)};
+            const u32 offset = buffer.Offset(gpu_addr);
+            if (IsFullResStagingSize(size)) {
+                LOG_WARNING(Render_Vulkan,
+                            "OBTAIN_BUFFER_FOR_IMAGE path=buffer_cache size={:#x} "
+                            "buffer={:#x} offset={:#x} tick={} gpuAddr={:#x} "
+                            "strictBufferCache={}",
+                            size, u64(VkBuffer(buffer.Handle())), offset, tick, gpu_addr,
+                            StagingDiag().strict_buffer_cache ? 1 : 0);
+            }
+            return {&buffer, offset};
         }
     }
     // If some buffer within was GPU modified create a full buffer to avoid losing GPU data.
     if (IsRegionGpuModified(gpu_addr, size)) {
-        return ObtainBuffer(gpu_addr, size, false, false);
+        auto result = ObtainBuffer(gpu_addr, size, false, false);
+        if (IsFullResStagingSize(size)) {
+            LOG_WARNING(Render_Vulkan,
+                        "OBTAIN_BUFFER_FOR_IMAGE path=obtain_full size={:#x} "
+                        "buffer={:#x} offset={:#x} tick={} gpuAddr={:#x}",
+                        size, u64(VkBuffer(result.first->Handle())), result.second, tick,
+                        gpu_addr);
+        }
+        return result;
     }
-    // In all other cases, just do a CPU copy to the staging buffer.
+
+    // Baseline: CPU copy into shared staging StreamBuffer ring.
     const auto [data, offset] = staging_buffer.Map(size, 16);
     memory->CopySparseMemory(gpu_addr, data, size);
     staging_buffer.Commit();
+    if (IsFullResStagingSize(size)) {
+        LOG_WARNING(Render_Vulkan,
+                    "OBTAIN_BUFFER_FOR_IMAGE path=StreamBuffer size={:#x} "
+                    "buffer={:#x} offset={:#x} tick={} gpuAddr={:#x}",
+                    size, u64(VkBuffer(staging_buffer.Handle())), offset, tick, gpu_addr);
+    }
     return {&staging_buffer, offset};
 }
 
