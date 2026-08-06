@@ -95,12 +95,11 @@ class RuntimeLaunchProfileProvider internal constructor(
 
     private companion object {
         val FEX_COMPATIBILITY_CONSTRAINTS = mapOf(
-            // A/B (Mali-G615 / system-vortek): forced true correlated with post-SEGA Mali MMU
-            // faults + DEVICE_LOST. Force false to isolate copy/staging path vs guest→GPU VA map.
-            // Revisit once fault VAs are correlated to allocations; may restore true for FEX safety.
+            // FEX can reuse command buffers before async GPU parsing completes; keep host copies.
+            // Do NOT force false globally for Mali digs — that regressed Bloodborne on Turnip.
             "gpu.copy_gpu_buffers" to CompatibilityConstraint(
-                JsonPrimitive(false),
-                "A/B: disable GPU buffer copies on FEX to isolate Mali MMU fault after SEGA (was forced true)",
+                JsonPrimitive(true),
+                "FEX guest execution can reuse command buffers before asynchronous GPU parsing completes",
             ),
         )
 

@@ -74,6 +74,7 @@ private:
     ScratchSlot& AcquireScratchSlot(u32 size);
     void RefreshScratchCompletions();
     bool CreateScratchSlot(u32 capacity);
+    void ResizeScratchSlot(ScratchSlot& slot, u32 need);
     void MaybeLogScratchPoolStats();
 
 private:

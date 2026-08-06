@@ -72,15 +72,14 @@ class RuntimeLaunchProfileProviderTest {
     }
 
     @Test
-    fun fexDisablesGpuCommandCopiesForMaliAb() = runTest {
+    fun fexForcesGpuCommandCopies() = runTest {
         val store = RuntimeProfileStore(temporaryFolder.root)
         val provider = RuntimeLaunchProfileProvider(store, catalog, emptyMap(), strictBackend)
 
-        val sonic = provider.resolve("CUSA07023")
+        val bloodborne = provider.resolve("CUSA00900")
 
-        // Temporary A/B: FEX no longer forces copies=true (Mali MMU fault isolation).
-        assertEquals(JsonPrimitive(false), sonic.settings.getValue(gpuCopy.id).value)
-        assertEquals(ValueSource.COMPATIBILITY, sonic.settings.getValue(gpuCopy.id).source)
+        assertEquals(JsonPrimitive(true), bloodborne.settings.getValue(gpuCopy.id).value)
+        assertEquals(ValueSource.COMPATIBILITY, bloodborne.settings.getValue(gpuCopy.id).source)
     }
 
     @Test
