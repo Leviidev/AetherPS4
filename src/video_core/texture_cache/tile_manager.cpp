@@ -94,13 +94,17 @@ TileManager::TileManager(const Vulkan::Instance& instance, Vulkan::Scheduler& sc
                vk::to_string(layout_result));
     pl_layout = std::move(layout);
 
-    scratch_slots.reserve(kScratchMaxSlots);
     LogStagingDiagConfigOnce();
-    LOG_WARNING(Render_Vulkan,
-                "STAGING_POOL_INIT initialSlots={} maxSlots={} path=detile_scratch_ring "
-                "strictScratch={} tickLag={}",
-                kScratchInitialSlots, kScratchMaxSlots, StagingDiag().strict_scratch ? 1 : 0,
-                StagingDiag().tick_lag);
+    if (MaliGpuOptEnabled()) {
+        scratch_slots.reserve(kScratchMaxSlots);
+        if (StagingVerbose()) {
+            LOG_WARNING(Render_Vulkan,
+                        "STAGING_POOL_INIT initialSlots={} maxSlots={} path=detile_scratch_ring "
+                        "strictScratch={} tickLag={}",
+                        kScratchInitialSlots, kScratchMaxSlots,
+                        StagingDiag().strict_scratch ? 1 : 0, StagingDiag().tick_lag);
+        }
+    }
 }
 
 TileManager::~TileManager() {
@@ -116,6 +120,29 @@ TileManager::~TileManager() {
         }
     }
     scratch_slots.clear();
+}
+
+TileManager::ScratchBuffer TileManager::GetScratchBuffer(u32 size) {
+    constexpr auto usage =
+        vk::BufferUsageFlagBits::eUniformBuffer | vk::BufferUsageFlagBits::eStorageBuffer |
+        vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst;
+
+    const vk::BufferCreateInfo buffer_ci = {
+        .size = size,
+        .usage = usage,
+    };
+
+    const VmaAllocationCreateInfo alloc_info{
+        .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
+    };
+
+    VkBuffer buffer;
+    VmaAllocation allocation;
+    const auto buffer_ci_unsafe = static_cast<VkBufferCreateInfo>(buffer_ci);
+    const auto result = vmaCreateBuffer(instance.GetAllocator(), &buffer_ci_unsafe, &alloc_info,
+                                        &buffer, &allocation, nullptr);
+    ASSERT(result == VK_SUCCESS);
+    return {vk::Buffer{buffer}, allocation};
 }
 
 void TileManager::RefreshScratchCompletions() {
@@ -147,18 +174,19 @@ void TileManager::RefreshScratchCompletions() {
             // IsFree alone is not host-GPU proof under Vortek timeline.
             continue;
         }
-        // Product lag floor=6 when unset — multi-buffer without waitIdle freeze.
-        const u32 lag = diag.tick_lag > 0 ? diag.tick_lag : 12;
-        if (cpu_tick < slot.tick + lag) {
+        // Lag only when explicitly set (Mali opt injects tick_lag=12). No silent floor.
+        if (diag.tick_lag > 0 && cpu_tick < slot.tick + diag.tick_lag) {
             continue;
         }
         if (!scheduler.IsFree(slot.tick)) {
             continue;
         }
-        LOG_WARNING(Render_Vulkan,
-                    "STAGING_SLOT_COMPLETED slot={} generation={} tick={} cpuTick={} "
-                    "capacity={:#x} mode=isfree lag={}",
-                    i, slot.generation, slot.tick, cpu_tick, slot.capacity, diag.tick_lag);
+        if (StagingVerbose()) {
+            LOG_WARNING(Render_Vulkan,
+                        "STAGING_SLOT_COMPLETED slot={} generation={} tick={} cpuTick={} "
+                        "capacity={:#x} mode=isfree lag={}",
+                        i, slot.generation, slot.tick, cpu_tick, slot.capacity, diag.tick_lag);
+        }
         slot.state = ScratchState::Free;
         slot.tick = 0;
     }
@@ -201,10 +229,12 @@ bool TileManager::CreateScratchSlot(u32 capacity) {
     scratch_slots.push_back(slot);
     ++scratch_stats_grows;
 
-    LOG_WARNING(Render_Vulkan,
-                "STAGING_POOL_GROWN slots={} capacity={:#x} totalBytes≈{:#x}",
-                scratch_slots.size(), capacity,
-                static_cast<u64>(scratch_slots.size()) * capacity);
+    if (StagingVerbose()) {
+        LOG_WARNING(Render_Vulkan,
+                    "STAGING_POOL_GROWN slots={} capacity={:#x} totalBytes≈{:#x}",
+                    scratch_slots.size(), capacity,
+                    static_cast<u64>(scratch_slots.size()) * capacity);
+    }
     return true;
 }
 
@@ -225,6 +255,9 @@ void TileManager::MaybeLogScratchPoolStats() {
         } else {
             ++busy_n;
         }
+    }
+    if (!StagingVerbose()) {
+        return;
     }
     LOG_WARNING(Render_Vulkan,
                 "STAGING_POOL_STATS slots={} free={} busy={} bytes={:#x} grows={} acquired={} "
@@ -260,7 +293,9 @@ void TileManager::ResizeScratchSlot(ScratchSlot& slot, u32 need) {
     slot.buffer = vk::Buffer{buffer};
     slot.allocation = allocation;
     slot.capacity = need;
-    LOG_WARNING(Render_Vulkan, "STAGING_POOL_GROWN resize slot capacity={:#x}", need);
+    if (StagingVerbose()) {
+        LOG_WARNING(Render_Vulkan, "STAGING_POOL_GROWN resize slot capacity={:#x}", need);
+    }
 }
 
 TileManager::ScratchSlot& TileManager::AcquireScratchSlot(u32 size) {
@@ -298,15 +333,17 @@ TileManager::ScratchSlot& TileManager::AcquireScratchSlot(u32 size) {
         free->generation = next_scratch_generation++;
         free->tick = scheduler.CurrentTick();
         ++scratch_stats_acquired;
-        LOG_WARNING(Render_Vulkan,
-                    "STAGING_SLOT_ACQUIRED slot={} generation={} capacity={:#x} need={:#x} "
-                    "tick={} reused={} freeLeft={} strictScratch={} tickLag={}",
-                    static_cast<u32>(free - scratch_slots.data()), free->generation, free->capacity,
-                    need, free->tick, reused ? 1 : 0,
-                    static_cast<u32>(std::count_if(
-                        scratch_slots.begin(), scratch_slots.end(),
-                        [](const ScratchSlot& s) { return s.state == ScratchState::Free; })),
-                    StagingDiag().strict_scratch ? 1 : 0, StagingDiag().tick_lag);
+        if (StagingVerbose()) {
+            LOG_WARNING(Render_Vulkan,
+                        "STAGING_SLOT_ACQUIRED slot={} generation={} capacity={:#x} need={:#x} "
+                        "tick={} reused={} freeLeft={} strictScratch={} tickLag={}",
+                        static_cast<u32>(free - scratch_slots.data()), free->generation,
+                        free->capacity, need, free->tick, reused ? 1 : 0,
+                        static_cast<u32>(std::count_if(
+                            scratch_slots.begin(), scratch_slots.end(),
+                            [](const ScratchSlot& s) { return s.state == ScratchState::Free; })),
+                        StagingDiag().strict_scratch ? 1 : 0, StagingDiag().tick_lag);
+        }
         MaybeLogScratchPoolStats();
         return *free;
     };
@@ -346,9 +383,11 @@ TileManager::ScratchSlot& TileManager::AcquireScratchSlot(u32 size) {
 
     // All slots busy — wait oldest *submitted* slot of any capacity, free, resize, claim.
     // Never wait a tick still equal to CurrentTick (open cmdbuf).
-    LOG_WARNING(Render_Vulkan,
-                "STAGING_POOL_EXHAUSTED slots={} need={:#x} — wait oldest exact tick",
-                scratch_slots.size(), need);
+    if (StagingVerbose()) {
+        LOG_WARNING(Render_Vulkan,
+                    "STAGING_POOL_EXHAUSTED slots={} need={:#x} — wait oldest exact tick",
+                    scratch_slots.size(), need);
+    }
     ++scratch_stats_waits;
 
     auto find_oldest_busy = [&](bool submitted_only) -> ScratchSlot* {
@@ -384,9 +423,11 @@ TileManager::ScratchSlot& TileManager::AcquireScratchSlot(u32 size) {
     if (!oldest) {
         // Last resort: allocate one more even past soft max is not allowed — resize any free
         // or force-wait every busy slot via queue idle so something becomes free.
-        LOG_WARNING(Render_Vulkan,
-                    "STAGING_POOL_EXHAUSTED slots={} need={:#x} — queue idle drain",
-                    scratch_slots.size(), need);
+        if (StagingVerbose()) {
+            LOG_WARNING(Render_Vulkan,
+                        "STAGING_POOL_EXHAUSTED slots={} need={:#x} — queue idle drain",
+                        scratch_slots.size(), need);
+        }
         scheduler.Flush();
         (void)instance.GetGraphicsQueue().waitIdle();
         for (auto& slot : scratch_slots) {
@@ -414,15 +455,19 @@ TileManager::ScratchSlot& TileManager::AcquireScratchSlot(u32 size) {
         wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                       std::chrono::steady_clock::now() - q_begin)
                       .count();
-        LOG_WARNING(Render_Vulkan,
-                    "STAGING_SLOT_QUEUE_IDLE generation={} tick={} elapsedMs={}",
-                    oldest->generation, oldest->tick, wait_ms);
+        if (StagingVerbose()) {
+            LOG_WARNING(Render_Vulkan,
+                        "STAGING_SLOT_QUEUE_IDLE generation={} tick={} elapsedMs={}",
+                        oldest->generation, oldest->tick, wait_ms);
+        }
     }
-    LOG_WARNING(Render_Vulkan,
-                "STAGING_SLOT_COMPLETED slot={} generation={} tick={} capacity={:#x} waited=1 "
-                "elapsedMs={} mode=exact_wait",
-                static_cast<u32>(oldest - scratch_slots.data()), oldest->generation, oldest->tick,
-                oldest->capacity, wait_ms);
+    if (StagingVerbose()) {
+        LOG_WARNING(Render_Vulkan,
+                    "STAGING_SLOT_COMPLETED slot={} generation={} tick={} capacity={:#x} waited=1 "
+                    "elapsedMs={} mode=exact_wait",
+                    static_cast<u32>(oldest - scratch_slots.data()), oldest->generation,
+                    oldest->tick, oldest->capacity, wait_ms);
+    }
     oldest->state = ScratchState::Free;
     oldest->tick = 0;
     return claim(oldest, true);
@@ -516,12 +561,23 @@ TileManager::Result TileManager::DetileImage(vk::Buffer in_buffer, u32 in_offset
         .range = sizeof(params),
     };
 
-    // Persistent scratch ring: never create/destroy 0x7f8000 buffers per frame.
-    ScratchSlot& scratch = AcquireScratchSlot(info.guest_size);
-    const vk::Buffer out_buffer = scratch.buffer;
-    LOG_WARNING(Render_Vulkan,
-                "STAGING_SLOT_SUBMITTED generation={} tick={} op=detile size={:#x}",
-                scratch.generation, scratch.tick, info.guest_size);
+    // Mali opt: persistent ring. Default: mainline create + deferred destroy.
+    vk::Buffer out_buffer;
+    if (MaliGpuOptEnabled()) {
+        ScratchSlot& scratch = AcquireScratchSlot(info.guest_size);
+        out_buffer = scratch.buffer;
+        if (StagingVerbose()) {
+            LOG_WARNING(Render_Vulkan,
+                        "STAGING_SLOT_SUBMITTED generation={} tick={} op=detile size={:#x}",
+                        scratch.generation, scratch.tick, info.guest_size);
+        }
+    } else {
+        const auto [buf, allocation] = GetScratchBuffer(info.guest_size);
+        out_buffer = buf;
+        scheduler.DeferOperation([this, buf, allocation]() {
+            vmaDestroyBuffer(instance.GetAllocator(), buf, allocation);
+        });
+    }
 
     scheduler.EndRendering();
 
@@ -579,26 +635,25 @@ TileManager::Result TileManager::DetileImage(vk::Buffer in_buffer, u32 in_offset
     }
 
     const auto dim_x = (info.guest_size / (info.num_bits / 8)) / 64;
-    // Machine-searchable GPU access log for Vortek Mali DEVICE_LOST investigation.
-    // tilingMode numeric matches AmdGpu::TileMode; Display2DThin=10, linear=0-class.
-    LOG_WARNING(Render_Vulkan,
-                "GPU_ACCESS submission=client operation=detile shader={}_{} "
-                "srcBuffer={:#x} srcOffset={:#x} srcSize={:#x} "
-                "dstBuffer={:#x} dstOffset=0x0 dstSize={:#x} "
-                "width={} height={} pitch={} tilingMode={} guestSize={:#x} "
-                "isTiled={} arrayMode={} bpp={}",
-                magic_enum::enum_name(info.tile_mode), info.num_bits,
-                u64(VkBuffer(in_buffer)), in_offset, info.guest_size, u64(VkBuffer(out_buffer)),
-                info.guest_size, info.size.width, info.size.height, info.pitch, u32(info.tile_mode),
-                info.guest_size, info.props.is_tiled ? 1 : 0, u32(info.array_mode),
-                info.num_bits);
-    // Linear tile modes only (Depth2DThin64=0 is valid tiled depth, not linear).
-    if (!info.props.is_tiled || info.tile_mode == AmdGpu::TileMode::DisplayLinearAligned ||
-        info.tile_mode == AmdGpu::TileMode::DisplayLinearGeneral) {
+    if (StagingVerbose()) {
         LOG_WARNING(Render_Vulkan,
-                    "GPU_RANGE_INVALID operation=detile reason=linear_or_untiled_into_detiler "
-                    "tilingMode={} isTiled={}",
-                    u32(info.tile_mode), info.props.is_tiled ? 1 : 0);
+                    "GPU_ACCESS submission=client operation=detile shader={}_{} "
+                    "srcBuffer={:#x} srcOffset={:#x} srcSize={:#x} "
+                    "dstBuffer={:#x} dstOffset=0x0 dstSize={:#x} "
+                    "width={} height={} pitch={} tilingMode={} guestSize={:#x} "
+                    "isTiled={} arrayMode={} bpp={}",
+                    magic_enum::enum_name(info.tile_mode), info.num_bits,
+                    u64(VkBuffer(in_buffer)), in_offset, info.guest_size,
+                    u64(VkBuffer(out_buffer)), info.guest_size, info.size.width, info.size.height,
+                    info.pitch, u32(info.tile_mode), info.guest_size,
+                    info.props.is_tiled ? 1 : 0, u32(info.array_mode), info.num_bits);
+        if (!info.props.is_tiled || info.tile_mode == AmdGpu::TileMode::DisplayLinearAligned ||
+            info.tile_mode == AmdGpu::TileMode::DisplayLinearGeneral) {
+            LOG_WARNING(Render_Vulkan,
+                        "GPU_RANGE_INVALID operation=detile reason=linear_or_untiled_into_detiler "
+                        "tilingMode={} isTiled={}",
+                        u32(info.tile_mode), info.props.is_tiled ? 1 : 0);
+        }
     }
     cmdbuf.dispatch(dim_x, 1, 1);
     return {out_buffer, 0};
@@ -634,11 +689,22 @@ void TileManager::TileImage(Image& in_image, std::span<vk::BufferImageCopy> buff
         .range = sizeof(params),
     };
 
-    ScratchSlot& scratch = AcquireScratchSlot(info.guest_size);
-    const vk::Buffer temp_buffer = scratch.buffer;
-    LOG_WARNING(Render_Vulkan,
-                "STAGING_SLOT_SUBMITTED generation={} tick={} op=tile size={:#x}",
-                scratch.generation, scratch.tick, info.guest_size);
+    vk::Buffer temp_buffer;
+    if (MaliGpuOptEnabled()) {
+        ScratchSlot& scratch = AcquireScratchSlot(info.guest_size);
+        temp_buffer = scratch.buffer;
+        if (StagingVerbose()) {
+            LOG_WARNING(Render_Vulkan,
+                        "STAGING_SLOT_SUBMITTED generation={} tick={} op=tile size={:#x}",
+                        scratch.generation, scratch.tick, info.guest_size);
+        }
+    } else {
+        const auto [buf, allocation] = GetScratchBuffer(info.guest_size);
+        temp_buffer = buf;
+        scheduler.DeferOperation([this, buf, allocation]() {
+            vmaDestroyBuffer(instance.GetAllocator(), buf, allocation);
+        });
+    }
 
     const auto cmdbuf = scheduler.CommandBuffer();
     in_image.Download(buffer_copies, temp_buffer, 0, copy_size);

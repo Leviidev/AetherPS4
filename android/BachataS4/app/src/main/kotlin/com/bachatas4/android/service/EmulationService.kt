@@ -279,7 +279,11 @@ class EmulationService : Service() {
                 emptyMap()
             }
             val environment = runtimeEnvironment(installedRuntime, runtimeHome, socketRoot, xServer.display) +
-                driverConfiguration.environment + backendEnvironment + stagingDiagEnvironment()
+                driverConfiguration.environment + backendEnvironment +
+                stagingDiagEnvironment(maliGpuOptimizations = launchProfile.maliGpuOptimizations)
+            if (launchProfile.maliGpuOptimizations) {
+                sessionLog.info("Runtime", "maliGpuOptimizations=true")
+            }
             val shadPs4Executable = if (guestBackend == RuntimeGuestBackend.FEX) {
                 installedRuntime.resolve("host/shadps4-arm64-fex")
             } else {
@@ -682,33 +686,53 @@ class EmulationService : Service() {
     )
 
     /**
-     * Late DEVICE_LOST A/B: inject guest staging knobs from Android system props.
+     * Guest staging env for Mali freeflight + optional dig props.
      *
-     *   adb shell setprop debug.bachata.staging_strict_scratch 1        # mode B
-     *   adb shell setprop debug.bachata.staging_strict_stream 1         # mode C
-     *   adb shell setprop debug.bachata.staging_strict_buffer_cache 1   # mode F (FHD detile src)
-     *   adb shell setprop debug.bachata.staging_tick_lag 4              # mode E scratch lag
-     *   adb shell setprop debug.bachata.buffer_cache_tick_lag 6         # G6 guest FHD src lag
-     *   Host detile (server props): detile_stamp / detile_source_exact_wait default OFF
-     *   GPU mapping dig: debug.bachata.pin_fhd_detile_sources=1 (never free FHD external)
-     *   Deep guest pin d45f is baked into runtime.zip (see GUEST_RUNTIME_BUILD log).
+     * Driver settings "Mali GPU optimizations" → BACHATA_MALI_GPU_OPT=1 and tick_lag=12.
+     * Turnip leaves this off (mainline detile scratch).
+     *
+     * Dig overrides (adb):
+     *   debug.bachata.staging_strict_scratch / stream / buffer_cache / tick_lag
+     *   debug.bachata.staging_fhd_ring / staging_verbose / mali_gpu_opt
      */
-    private fun stagingDiagEnvironment(): Map<String, String> {
+    private fun stagingDiagEnvironment(maliGpuOptimizations: Boolean = false): Map<String, String> {
         val out = mutableMapOf<String, String>()
-        // Product playable defaults (override with prop=0/1 as needed).
-        // strict_scratch=1 + waitIdle froze Sonic; lag multi-buffer instead.
-        out["BACHATA_STAGING_STRICT_SCRATCH"] =
-            readSystemProperty("debug.bachata.staging_strict_scratch")?.takeIf { it.isNotBlank() } ?: "0"
-        out["BACHATA_STAGING_STRICT_STREAM"] =
-            readSystemProperty("debug.bachata.staging_strict_stream")?.takeIf { it.isNotBlank() } ?: "1"
-        out["BACHATA_STAGING_STRICT_BUFFER_CACHE"] =
-            readSystemProperty("debug.bachata.staging_strict_buffer_cache")?.takeIf { it.isNotBlank() } ?: "0"
-        out["BACHATA_STAGING_TICK_LAG"] =
-            readSystemProperty("debug.bachata.staging_tick_lag")?.takeIf { it.isNotBlank() } ?: "12"
+        val propMali = readSystemProperty("debug.bachata.mali_gpu_opt")
+        val maliOn = when {
+            propMali != null && propMali.isNotBlank() -> propMali != "0"
+            else -> maliGpuOptimizations
+        }
+        if (maliOn) {
+            out["BACHATA_MALI_GPU_OPT"] = "1"
+            // Freeflight multi-buffer lag unless dig prop overrides.
+            if (readSystemProperty("debug.bachata.staging_tick_lag").isNullOrBlank()) {
+                out["BACHATA_STAGING_TICK_LAG"] = "12"
+            }
+        }
+        readSystemProperty("debug.bachata.staging_strict_scratch")?.takeIf { it.isNotBlank() }?.let {
+            out["BACHATA_STAGING_STRICT_SCRATCH"] = it
+        }
+        readSystemProperty("debug.bachata.staging_strict_stream")?.takeIf { it.isNotBlank() }?.let {
+            out["BACHATA_STAGING_STRICT_STREAM"] = it
+        }
+        readSystemProperty("debug.bachata.staging_strict_buffer_cache")?.takeIf { it.isNotBlank() }?.let {
+            out["BACHATA_STAGING_STRICT_BUFFER_CACHE"] = it
+        }
+        readSystemProperty("debug.bachata.staging_tick_lag")?.takeIf { it.isNotBlank() }?.let {
+            out["BACHATA_STAGING_TICK_LAG"] = it
+        }
         readSystemProperty("debug.bachata.buffer_cache_tick_lag")?.takeIf { it.isNotBlank() }?.let {
             out["BACHATA_BUFFER_CACHE_TICK_LAG"] = it
         }
-        Log.i(TAG, "staging diag env=$out")
+        readSystemProperty("debug.bachata.staging_fhd_ring")?.takeIf { it.isNotBlank() }?.let {
+            out["BACHATA_STAGING_FHD_RING"] = it
+        }
+        readSystemProperty("debug.bachata.staging_verbose")?.takeIf { it.isNotBlank() }?.let {
+            out["BACHATA_STAGING_VERBOSE"] = it
+        }
+        if (out.isNotEmpty()) {
+            Log.i(TAG, "staging diag env=$out")
+        }
         return out
     }
 

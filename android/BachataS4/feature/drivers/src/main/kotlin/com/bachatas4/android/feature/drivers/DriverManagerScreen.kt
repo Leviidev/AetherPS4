@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -226,6 +227,51 @@ fun DriverManagerScreen(
                             ) {
                                 Text("Select Vortek")
                             }
+                        }
+                    }
+                }
+            }
+
+            item {
+                BachataPanel(
+                    modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth(),
+                    color = BachataPalette.RaisedSurface,
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = "GPU Compatibility",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = BachataPalette.Primary,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                                Text(
+                                    text = "Mali GPU optimizations",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = BachataPalette.Primary,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Text(
+                                    text = "Enable multi-slot staging for Mali + Vortek freeflight " +
+                                        "(late DEVICE_LOST). Leave off on Turnip/Adreno for best FPS. " +
+                                        "Applies on next game launch.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = BachataPalette.Secondary,
+                                )
+                            }
+                            Switch(
+                                checked = state.maliGpuOptimizations,
+                                onCheckedChange = viewModel::setMaliGpuOptimizations,
+                                enabled = !state.loading,
+                            )
                         }
                     }
                 }

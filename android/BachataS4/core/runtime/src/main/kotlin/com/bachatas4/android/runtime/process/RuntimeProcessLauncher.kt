@@ -188,12 +188,15 @@ class RuntimeProcessLauncher(
             "BACHATA_VORTEK_PROC_AUDIT",
             "BACHATA_VORTEK_TRACE_BIND_VERTEX_BUFFERS",
             "BACHATA_FEX_TRACE_SIGSYS",
-            // Guest staging A/B for late DEVICE_LOST (see staging_diag.h).
+            // Guest staging / Mali freeflight (see staging_diag.h).
+            "BACHATA_MALI_GPU_OPT",
+            "BACHATA_STAGING_VERBOSE",
             "BACHATA_STAGING_STRICT_SCRATCH",
             "BACHATA_STAGING_STRICT_STREAM",
             "BACHATA_STAGING_STRICT_BUFFER_CACHE",
             "BACHATA_STAGING_TICK_LAG",
             "BACHATA_BUFFER_CACHE_TICK_LAG",
+            "BACHATA_STAGING_FHD_RING",
         )
         val BOX64_ENVIRONMENT = Regex("BOX64_[A-Z0-9_]+")
     }

@@ -20,6 +20,7 @@
 #include "video_core/page_manager.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/staging_diag.h"
 #include "video_core/texture_cache/host_compatibility.h"
 #include "video_core/texture_cache/image_view.h"
 #include "video_core/texture_cache/texture_cache.h"
@@ -950,12 +951,15 @@ void TextureCache::RefreshImage(Image& image) {
         // Host dispatch log often has srcResource=0; guest track is authoritative for FHD src.
         buffer_cache.NoteDetileSourceUse(in_buffer->Handle(), in_offset, image.info.guest_size,
                                          "detile_src");
-        LOG_WARNING(Render_Vulkan,
-                    "IMAGE_UPLOAD_CHAIN size={:#x} srcBuffer={:#x} srcOffset={:#x} "
-                    "detileDst={:#x} detileOffset={:#x} tick={} w={} h={} tiled={}",
-                    image.info.guest_size, u64(VkBuffer(in_buffer->Handle())), in_offset,
-                    u64(VkBuffer(buffer)), offset, scheduler.CurrentTick(), image.info.size.width,
-                    image.info.size.height, image.info.props.is_tiled ? 1 : 0);
+        if (StagingVerbose()) {
+            LOG_WARNING(Render_Vulkan,
+                        "IMAGE_UPLOAD_CHAIN size={:#x} srcBuffer={:#x} srcOffset={:#x} "
+                        "detileDst={:#x} detileOffset={:#x} tick={} w={} h={} tiled={}",
+                        image.info.guest_size, u64(VkBuffer(in_buffer->Handle())), in_offset,
+                        u64(VkBuffer(buffer)), offset, scheduler.CurrentTick(),
+                        image.info.size.width, image.info.size.height,
+                        image.info.props.is_tiled ? 1 : 0);
+        }
     }
 
     image.Upload(image_copies, buffer, offset);

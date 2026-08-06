@@ -20,6 +20,8 @@ data class DriverManagerUiState(
     val available: List<TurnipReleaseAsset> = emptyList(),
     val scope: ProfileScope = ProfileScope.Global,
     val selectedDriverId: String = RuntimeVulkanDriverIds.SYSTEM,
+    /** Mali freeflight staging path; default false (Turnip mainline). */
+    val maliGpuOptimizations: Boolean = false,
     val capabilities: DriverManagerCapabilities = DriverManagerCapabilities(
         remoteCatalogEnabled = false,
         importEnabled = false,
@@ -48,8 +50,22 @@ class DriverManagerViewModel @Inject constructor(
 
     fun selectScope(scope: ProfileScope) {
         viewModelScope.launch {
-            val selected = profiles.load(scope).driverId ?: RuntimeVulkanDriverIds.SYSTEM
-            mutableState.value = mutableState.value.copy(scope = scope, selectedDriverId = selected)
+            val profile = profiles.load(scope)
+            val selected = profile.driverId ?: RuntimeVulkanDriverIds.SYSTEM
+            mutableState.value = mutableState.value.copy(
+                scope = scope,
+                selectedDriverId = selected,
+                maliGpuOptimizations = profile.maliGpuOptimizations == true,
+            )
+        }
+    }
+
+    fun setMaliGpuOptimizations(enabled: Boolean) {
+        viewModelScope.launch {
+            profiles.update(mutableState.value.scope) {
+                it.copy(maliGpuOptimizations = enabled.takeIf { on -> on })
+            }
+            mutableState.value = mutableState.value.copy(maliGpuOptimizations = enabled)
         }
     }
 
@@ -60,7 +76,9 @@ class DriverManagerViewModel @Inject constructor(
         val scope = mutableState.value.scope
         // Prefer persisted profile so Play migration remaps stale Turnip ids even before selectScope settles.
         // system-vortek is synthetic opt-in and must never be remapped to Turnip.
-        val selected = profiles.load(scope).driverId ?: RuntimeVulkanDriverIds.SYSTEM
+        val profile = profiles.load(scope)
+        val selected = profile.driverId ?: RuntimeVulkanDriverIds.SYSTEM
+        val maliOpt = profile.maliGpuOptimizations == true
         val knownSynthetic = RuntimeVulkanDriverIds.isSynthetic(selected)
         if (!knownSynthetic && installed.none { it.metadata.id == selected }) {
             val fallback = installed.firstOrNull()?.metadata?.id ?: RuntimeVulkanDriverIds.SYSTEM
@@ -72,6 +90,7 @@ class DriverManagerViewModel @Inject constructor(
                 installed = installed,
                 available = releases,
                 selectedDriverId = fallback,
+                maliGpuOptimizations = maliOpt,
             )
         } else {
             mutableState.value = mutableState.value.copy(
@@ -79,6 +98,7 @@ class DriverManagerViewModel @Inject constructor(
                 installed = installed,
                 available = releases,
                 selectedDriverId = selected,
+                maliGpuOptimizations = maliOpt,
             )
         }
     }

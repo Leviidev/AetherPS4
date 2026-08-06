@@ -31,6 +31,12 @@ data class RuntimeProfile(
     val guestBackend: RuntimeGuestBackend? = null,
     val box64Preset: Box64Preset? = null,
     val driverId: String? = null,
+    /**
+     * Mali GPU freeflight mitigations (multi-slot detile scratch ring + tick lag).
+     * Default off so Turnip/Adreno keeps mainline staging performance.
+     * Enable on Mali + system-vortek when freeflight / late DEVICE_LOST appears.
+     */
+    val maliGpuOptimizations: Boolean? = null,
     val controllerSlots: List<ControllerProfile> = emptyList(),
     val touchLayoutId: String? = null,
 )

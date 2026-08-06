@@ -42,6 +42,8 @@ data class ResolvedRuntimeProfile(
     val driverId: String,
     val controllerSlots: List<ControllerProfile>,
     val touchLayoutId: String?,
+    /** Mali freeflight staging path; default false (Turnip mainline). */
+    val maliGpuOptimizations: Boolean = false,
 ) {
     fun boolean(id: String): Boolean =
         requireNotNull(settings[id]?.value as? JsonPrimitive) { "Missing boolean setting $id" }.boolean
@@ -89,6 +91,7 @@ class RuntimeProfileResolver(
             driverId = game?.driverId ?: global.driverId ?: "system",
             controllerSlots = game?.controllerSlots?.takeIf { it.isNotEmpty() } ?: global.controllerSlots,
             touchLayoutId = game?.touchLayoutId ?: global.touchLayoutId,
+            maliGpuOptimizations = game?.maliGpuOptimizations ?: global.maliGpuOptimizations ?: false,
         )
     }
 

@@ -554,6 +554,10 @@ void BufferCache::NoteDetileSourceUse(vk::Buffer handle, u32 offset, u32 size, c
     if (!IsFullResStagingSize(size) || !handle) {
         return;
     }
+    // Lease tracking is for Mali dig / strict buffer-cache only.
+    if (!MaliGpuOptEnabled() && !StagingDiag().strict_buffer_cache) {
+        return;
+    }
     const u64 key = u64(VkBuffer(handle));
     auto& lease = detile_source_leases[key];
     lease.generation = next_detile_source_generation++;
@@ -561,11 +565,14 @@ void BufferCache::NoteDetileSourceUse(vk::Buffer handle, u32 offset, u32 size, c
     lease.size = size;
     lease.busy = true;
     ++detile_source_stats_notes;
-    LOG_WARNING(Render_Vulkan,
-                "DETILE_SOURCE_USE bufferCacheHandle={:#x} offset={:#x} size={:#x} "
-                "generation={} tick={} path={} notes={} waits={} unsafe={}",
-                key, offset, size, lease.generation, lease.tick, path ? path : "?",
-                detile_source_stats_notes, detile_source_stats_waits, detile_source_stats_unsafe);
+    if (StagingVerbose()) {
+        LOG_WARNING(Render_Vulkan,
+                    "DETILE_SOURCE_USE bufferCacheHandle={:#x} offset={:#x} size={:#x} "
+                    "generation={} tick={} path={} notes={} waits={} unsafe={}",
+                    key, offset, size, lease.generation, lease.tick, path ? path : "?",
+                    detile_source_stats_notes, detile_source_stats_waits,
+                    detile_source_stats_unsafe);
+    }
 }
 
 void BufferCache::EnsureDetileSourceWritable(Buffer& buffer, u32 size) {
@@ -641,26 +648,21 @@ void BufferCache::EnsureDetileSourceWritable(Buffer& buffer, u32 size) {
 
 std::pair<Buffer*, u32> BufferCache::ObtainBufferForImage(VAddr gpu_addr, u32 size) {
     LogStagingDiagConfigOnce();
-    const u64 tick = scheduler.CurrentTick();
 
-    // Product path (Mali/Vortek freeflight — CUSA07023 class):
-    // Full-res detile sources must NOT rewrite a buffer_cache handle the GPU may still
-    // read. FHD video-out buffers are almost always already registered → legacy path
-    // did SynchronizeBuffer in-place → DEVICE_LOST / "Memory is not mapped".
-    // Always multi-slot host-visible ring for FHD (independent of staging diag props —
-    // prop=0 previously forced strict_stream off and re-enabled the race).
-    // Opt-out only for dig: BACHATA_STAGING_STRICT_STREAM=0 *and*
-    // BACHATA_STAGING_ALLOW_FHD_BUFFER_CACHE=1.
-    const bool allow_fhd_buffer_cache =
-        StagingEnvTruthy(std::getenv("BACHATA_STAGING_ALLOW_FHD_BUFFER_CACHE"));
-    if (IsFullResStagingSize(size) && !allow_fhd_buffer_cache) {
+    // Mali dig opt-in only. Forcing the multi-slot Upload ring for all FHD on Turnip
+    // skipped SynchronizeBuffer and copied sparse guest memory into host-visible
+    // staging → black floors + blocky garbage textures (Bloodborne on Adreno 750).
+    // Enable with BACHATA_STAGING_FHD_RING=1 (or debug.bachata.staging_fhd_ring=1).
+    if (IsFullResStagingSize(size) &&
+        StagingEnvTruthy(std::getenv("BACHATA_STAGING_FHD_RING"))) {
         auto [buf, offset] = AcquireImageStagingSlot(size);
         ASSERT(buf && buf->mapped_data.size() >= size);
         memory->CopySparseMemory(gpu_addr, buf->mapped_data.data(), size);
         LOG_WARNING(Render_Vulkan,
                     "OBTAIN_BUFFER_FOR_IMAGE path=image_staging_ring size={:#x} "
                     "buffer={:#x} offset={:#x} tick={} gpuAddr={:#x}",
-                    size, u64(VkBuffer(buf->Handle())), offset, tick, gpu_addr);
+                    size, u64(VkBuffer(buf->Handle())), offset, scheduler.CurrentTick(),
+                    gpu_addr);
         return {buf, offset};
     }
 
@@ -668,44 +670,20 @@ std::pair<Buffer*, u32> BufferCache::ObtainBufferForImage(VAddr gpu_addr, u32 si
     const BufferId buffer_id = page_table[gpu_addr >> CACHING_PAGEBITS].buffer_id;
     if (buffer_id) {
         if (Buffer& buffer = slot_buffers[buffer_id]; buffer.IsInBounds(gpu_addr, size)) {
-            // Mode F / dig: do not rewrite FHD buffer_cache source while prior detile still owns it.
             EnsureDetileSourceWritable(buffer, size);
             SynchronizeBuffer(buffer, gpu_addr, size, false, false);
-            const u32 offset = buffer.Offset(gpu_addr);
-            if (IsFullResStagingSize(size)) {
-                LOG_WARNING(Render_Vulkan,
-                            "OBTAIN_BUFFER_FOR_IMAGE path=buffer_cache size={:#x} "
-                            "buffer={:#x} offset={:#x} tick={} gpuAddr={:#x} "
-                            "strictBufferCache={}",
-                            size, u64(VkBuffer(buffer.Handle())), offset, tick, gpu_addr,
-                            StagingDiag().strict_buffer_cache ? 1 : 0);
-            }
-            return {&buffer, offset};
+            return {&buffer, buffer.Offset(gpu_addr)};
         }
     }
     // If some buffer within was GPU modified create a full buffer to avoid losing GPU data.
     if (IsRegionGpuModified(gpu_addr, size)) {
-        auto result = ObtainBuffer(gpu_addr, size, false, false);
-        if (IsFullResStagingSize(size)) {
-            LOG_WARNING(Render_Vulkan,
-                        "OBTAIN_BUFFER_FOR_IMAGE path=obtain_full size={:#x} "
-                        "buffer={:#x} offset={:#x} tick={} gpuAddr={:#x}",
-                        size, u64(VkBuffer(result.first->Handle())), result.second, tick,
-                        gpu_addr);
-        }
-        return result;
+        return ObtainBuffer(gpu_addr, size, false, false);
     }
 
     // Baseline: CPU copy into shared staging StreamBuffer ring.
     const auto [data, offset] = staging_buffer.Map(size, 16);
     memory->CopySparseMemory(gpu_addr, data, size);
     staging_buffer.Commit();
-    if (IsFullResStagingSize(size)) {
-        LOG_WARNING(Render_Vulkan,
-                    "OBTAIN_BUFFER_FOR_IMAGE path=StreamBuffer size={:#x} "
-                    "buffer={:#x} offset={:#x} tick={} gpuAddr={:#x}",
-                    size, u64(VkBuffer(staging_buffer.Handle())), offset, tick, gpu_addr);
-    }
     return {&staging_buffer, offset};
 }
 

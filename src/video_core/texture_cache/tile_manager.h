@@ -18,21 +18,13 @@ struct Image;
 class StreamBuffer;
 
 /**
- * Persistent detile/tile scratch ring (guest-side staging slots).
+ * Detile/tile scratch allocation.
  *
- * Replaces create+destroy of FHD (0x7f8000) scratch buffers every frame —
- * that VMA free/reuse caused host SUBALLOC_REUSE_IN_FLIGHT / DEVICE_LOST on
- * Mali under system-vortek. Each slot owns a unique VkBuffer+memory for life
- * of TileManager.
+ * Default (Turnip / BACHATA_MALI_GPU_OPT unset): mainline create+Defer destroy.
  *
- * Free rules (see staging_diag.h A/B):
- *   A baseline: tick < CurrentTick && IsFree(tick)
- *   B strict_scratch: free only after scheduler.Wait (no optimistic IsFree)
- *   E tick_lag: also require cpuTick >= tick + lag
- *
- * Logs: STAGING_SLOT_ACQUIRED, STAGING_SLOT_SUBMITTED, STAGING_SLOT_COMPLETED,
- *       STAGING_POOL_GROWN, STAGING_POOL_EXHAUSTED, STAGING_POOL_STATS,
- *       STAGING_DIAG_CONFIG
+ * Mali optimizations (BACHATA_MALI_GPU_OPT=1): multi-slot persistent ring that
+ * avoids VMA free/reuse freeflight on system-vortek. Free rules in staging_diag.h.
+ * Dig logs only with BACHATA_STAGING_VERBOSE=1.
  */
 class TileManager {
     static constexpr size_t NUM_BPPS = 5;
@@ -40,6 +32,7 @@ class TileManager {
     static constexpr u32 kScratchMaxSlots = 16;
 
 public:
+    using ScratchBuffer = std::pair<vk::Buffer, VmaAllocation>;
     using Result = std::pair<vk::Buffer, u32>;
 
     explicit TileManager(const Vulkan::Instance& instance, Vulkan::Scheduler& scheduler,
@@ -70,7 +63,10 @@ private:
 
     vk::Pipeline GetTilingPipeline(const ImageInfo& info, bool is_tiler);
 
-    /// Acquire persistent scratch slot (never destroy while in use).
+    /// Mainline path: allocate scratch and defer destroy after GPU work.
+    ScratchBuffer GetScratchBuffer(u32 size);
+
+    /// Mali ring path: acquire persistent scratch slot (never destroy while in use).
     ScratchSlot& AcquireScratchSlot(u32 size);
     void RefreshScratchCompletions();
     bool CreateScratchSlot(u32 capacity);
