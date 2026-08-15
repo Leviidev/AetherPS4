@@ -1,19 +1,14 @@
-name: Compatibility website
+# Deploy the compatibility website from the gh-pages branch.
+#
+# Scheduled workflows only run when defined on the default branch, so this
+# dispatcher lives on release-source main. It checks out ONLY the gh-pages
+# branch (website content, never emulator source) and deploys it. It has no
+# push trigger: publishing site content happens on the gh-pages branch and
+# deploys there; this file covers scheduled refreshes and manual redeploys.
+
+name: Deploy website (from gh-pages)
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "compatibility-site/**"
-      - "scripts/compatibility/**"
-      - ".agents/skills/bachata-compatibility/**"
-      - ".github/workflows/compatibility-pages.yml"
-  pull_request:
-    paths:
-      - "compatibility-site/**"
-      - "scripts/compatibility/**"
-      - ".agents/skills/bachata-compatibility/**"
-      - ".github/workflows/compatibility-pages.yml"
   schedule:
     - cron: "41 */6 * * *"
   workflow_dispatch:
@@ -31,9 +26,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out Bachata S4 frontend
+      - name: Check out website content (gh-pages branch only)
         uses: actions/checkout@v4
         with:
+          ref: gh-pages
           path: bachata
 
       - name: Check out compatibility source data
@@ -56,19 +52,14 @@ jobs:
         working-directory: compatibility
         run: python3 scripts/build_site_data.py --output generated
 
-      - name: Check frontend source
-        working-directory: bachata
-        run: |
-          node --check compatibility-site/assets/js/app.js
-          bash -n scripts/compatibility/capture_android_report.sh
-
       - name: Assemble Pages artifact
         shell: bash
         run: |
           set -euo pipefail
           rm -rf _site
           cp -a bachata/compatibility-site _site
-          mkdir -p _site/data _site/evidence
+          mkdir -p _site/data _site/evidence _site/assets
+          cp bachata/assets/bachata-s4-logo.png _site/assets/bachata-s4-logo.png
           cp compatibility/generated/site-index.json _site/data/site-index.json
           cp compatibility/generated/releases.json _site/data/releases.json
           cp -a compatibility/generated/games _site/data/games
@@ -87,14 +78,25 @@ jobs:
             exit 1
           fi
 
+      - name: Verify production ads.txt
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f _site/ads.txt
+          EXPECTED_ADS_TXT='google.com, pub-8704776489115590, DIRECT, f08c47fec0942fa0'
+          ACTUAL_ADS_TXT="$(tr -d '\r' < _site/ads.txt | sed '/^[[:space:]]*$/d')"
+          if [[ "$ACTUAL_ADS_TXT" != "$EXPECTED_ADS_TXT" ]]; then
+            echo "::error::Production ads.txt does not contain the expected AdSense publisher record."
+            exit 1
+          fi
+          echo "ads.txt verified: $ACTUAL_ADS_TXT"
+
       - name: Upload Pages artifact
-        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v5
         with:
           path: _site
 
   deploy:
-    if: github.event_name != 'pull_request'
     needs: build
     environment:
       name: github-pages
