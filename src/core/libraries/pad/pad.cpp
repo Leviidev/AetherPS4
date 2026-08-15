@@ -42,6 +42,42 @@ static u64 pad_handle_counter = 1;
 static std::unordered_map<HandleKey, s32, HandleKeyHash> pad_handle_map{};
 static std::unordered_map<s32, GameController*> handle_to_controller_map{};
 
+// SnowRunner title polls scePadReadState with handle 1 and never calls scePadOpen.
+// Desktop SDL discovery opens a handle first; Android only ConnectController().
+static s32 EnsurePadHandle(s32 handle) {
+    if (handle_to_controller_map.find(handle) != handle_to_controller_map.end()) {
+        return handle;
+    }
+    if (handle < 1) {
+        return ORBIS_PAD_ERROR_INVALID_HANDLE;
+    }
+    if (!g_initialized) {
+        g_initialized = true;
+    }
+    const s32 user_id = UserManagement.GetDefaultUser().user_id;
+    LOG_INFO(Lib_Pad, "auto-open missing handle {} for user {}", handle, user_id);
+    auto existing = pad_handle_map.find({user_id, 0, 0});
+    s32 opened = existing != pad_handle_map.end() ? existing->second
+                                                  : scePadOpen(user_id, 0, 0, nullptr);
+    if (opened == ORBIS_PAD_ERROR_ALREADY_OPENED) {
+        existing = pad_handle_map.find({user_id, 0, 0});
+        opened = existing != pad_handle_map.end() ? existing->second : opened;
+    }
+    if (opened < 0) {
+        LOG_WARNING(Lib_Pad, "auto-open failed: {}", opened);
+        return opened;
+    }
+    auto cit = handle_to_controller_map.find(opened);
+    if (cit == handle_to_controller_map.end()) {
+        return ORBIS_PAD_ERROR_INVALID_HANDLE;
+    }
+    if (handle != opened) {
+        handle_to_controller_map[handle] = cit->second;
+        LOG_INFO(Lib_Pad, "aliased handle {} to opened {}", handle, opened);
+    }
+    return handle;
+}
+
 int PS4_SYSV_ABI scePadClose(s32 handle) {
     LOG_WARNING(Lib_Pad, "called, handle: {}", handle);
     if (handle_to_controller_map.erase(handle) == 0) {
@@ -133,6 +169,7 @@ int PS4_SYSV_ABI scePadGetCapability() {
 
 int PS4_SYSV_ABI scePadGetControllerInformation(s32 handle, OrbisPadControllerInformation* pInfo) {
     LOG_DEBUG(Lib_Pad, "called handle = {}", handle);
+    handle = EnsurePadHandle(handle);
     auto it = handle_to_controller_map.find(handle);
     if (it == handle_to_controller_map.end()) {
         return ORBIS_PAD_ERROR_INVALID_HANDLE;
@@ -197,14 +234,21 @@ int PS4_SYSV_ABI scePadGetFeatureReport() {
 int PS4_SYSV_ABI scePadGetHandle(Libraries::UserService::OrbisUserServiceUserId userId, s32 type,
                                  s32 index) {
     if (!g_initialized) {
-        return ORBIS_PAD_ERROR_NOT_INITIALIZED;
+        LOG_WARNING(Lib_Pad, "scePadGetHandle before scePadInit; enabling pad");
+        g_initialized = true;
     }
     if (userId == -1) {
         return ORBIS_PAD_ERROR_DEVICE_NO_HANDLE;
     }
     auto it = pad_handle_map.find({userId, type, index});
     if (it == pad_handle_map.end()) {
-        return ORBIS_PAD_ERROR_DEVICE_NO_HANDLE;
+        LOG_INFO(Lib_Pad, "GetHandle auto-open user_id={} type={} index={}", userId, type, index);
+        const s32 opened = scePadOpen(userId, type, index, nullptr);
+        if (opened < 0) {
+            LOG_WARNING(Lib_Pad, "GetHandle auto-open failed: {}", opened);
+            return ORBIS_PAD_ERROR_DEVICE_NO_HANDLE;
+        }
+        return opened;
     }
     s32 pad_handle = it->second;
     LOG_DEBUG(Lib_Pad, "called, userid: {}, out pad handle: {}", userId, pad_handle);
@@ -309,8 +353,11 @@ int PS4_SYSV_ABI scePadMbusTerm() {
 
 int PS4_SYSV_ABI scePadOpen(Libraries::UserService::OrbisUserServiceUserId userId, s32 type,
                             s32 index, const OrbisPadOpenParam* pParam) {
+    LOG_INFO(Lib_Pad, "scePadOpen user_id={} type={} index={} initialized={}", userId, type, index,
+             g_initialized);
     if (!g_initialized) {
-        return ORBIS_PAD_ERROR_NOT_INITIALIZED;
+        LOG_WARNING(Lib_Pad, "scePadOpen before scePadInit; enabling pad");
+        g_initialized = true;
     }
     if (userId < 0) {
         return ORBIS_DEVICE_SERVICE_ERROR_INVALID_USER;
@@ -492,6 +539,7 @@ int ProcessStates(s32 handle, OrbisPadData* pData, Input::GameController& contro
 
 int PS4_SYSV_ABI scePadRead(s32 handle, OrbisPadData* pData, s32 num) {
     LOG_TRACE(Lib_Pad, "called");
+    handle = EnsurePadHandle(handle);
     int connected_count = 0;
     bool connected = false;
     std::vector<Input::State> states(64);
@@ -526,7 +574,12 @@ int PS4_SYSV_ABI scePadReadHistory() {
 }
 
 int PS4_SYSV_ABI scePadReadState(s32 handle, OrbisPadData* pData) {
-    LOG_TRACE(Lib_Pad, "handle: {}", handle);
+    static bool logged_once = false;
+    if (!logged_once) {
+        LOG_INFO(Lib_Pad, "handle: {}", handle);
+        logged_once = true;
+    }
+    handle = EnsurePadHandle(handle);
     auto it = handle_to_controller_map.find(handle);
     if (it == handle_to_controller_map.end()) {
         return ORBIS_PAD_ERROR_INVALID_HANDLE;

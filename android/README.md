@@ -3,30 +3,10 @@
 The Android app is scaffolded with the `create-android@0.1.0` multi-module
 template in `android/BachataS4`.
 
-## Prerequisites
-
-- JDK 17
-- Android SDK 37
-- Android NDK 29.0.14206865
-- CMake
-- Ninja
-- Node.js 18 or newer
-
-## Build
-
-```sh
-git submodule update --init --recursive --jobs 8
-runtime/scripts/build-shadps4-x86_64.sh
-runtime/scripts/build-box64-host.sh
-node runtime/scripts/package-runtime.mjs
-node runtime/tests/verify-runtime.mjs runtime/locks/components.lock.json
-cd android/BachataS4
-./gradlew test lintDebug assemblePlaystoreDebug
-cd ../..
-node runtime/tests/verify-apk-runtime.mjs android/BachataS4/app/build/outputs/apk/playstore/debug/app-playstore-debug.apk
-```
-
-The Gradle build packages existing runtime assets; it does not generate them. Always build and verify the managed runtime first.
+This directory is the APK source for Bachata S4. Build it from the repository
+root with the runtime build scripts (`runtime/scripts`) and the Gradle wrapper
+here. The Gradle build packages existing runtime assets; it does not generate
+them.
 
 ## Runtime settings
 

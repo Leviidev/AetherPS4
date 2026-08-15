@@ -3,7 +3,9 @@
 
 #include "common/assert.h"
 #include "common/div_ceil.h"
+#include "common/logging/log.h"
 #include "shader_recompiler/backend/spirv/spirv_emit_context.h"
+#include "shader_recompiler/clip_cull.h"
 #include "shader_recompiler/frontend/fetch_shader.h"
 #include "shader_recompiler/runtime_info.h"
 #include "video_core/buffer_cache/buffer_cache.h"
@@ -12,6 +14,7 @@
 #include <fmt/format.h>
 
 #include <numbers>
+#include <span>
 #include <string_view>
 
 namespace Shader::Backend::SPIRV {
@@ -543,24 +546,35 @@ void EmitContext::DefineInputs() {
 }
 
 void EmitContext::DefineVertexBlock() {
-    const std::array<Id, 8> zero{f32_zero_value, f32_zero_value, f32_zero_value, f32_zero_value,
-                                 f32_zero_value, f32_zero_value, f32_zero_value, f32_zero_value};
     output_position = DefineVariable(F32[4], spv::BuiltIn::Position, spv::StorageClass::Output);
     const bool needs_clip_distance_emulation = l_stage == LogicalStage::Vertex &&
                                                stage == Stage::Vertex &&
                                                profile.needs_clip_distance_emulation;
-    const auto has_clip_distance_outputs = info.stores.GetAny(IR::Attribute::ClipDistance);
-    if (has_clip_distance_outputs && !needs_clip_distance_emulation) {
-        const Id type{TypeArray(F32[1], ConstU32(8U))};
-        const Id initializer{ConstantComposite(type, zero)};
-        clip_distances = DefineVariable(type, spv::BuiltIn::ClipDistance, spv::StorageClass::Output,
-                                        initializer);
+    const u32 used_clip = info.stores.UsedCount(IR::Attribute::ClipDistance);
+    const u32 used_cull = info.stores.UsedCount(IR::Attribute::CullDistance);
+    const auto arrays = SelectClipCullArrays(
+        used_clip, used_cull, profile.max_clip_distances, profile.max_cull_distances,
+        profile.max_combined_clip_and_cull_distances, used_clip != 0 && !needs_clip_distance_emulation,
+        used_cull != 0 && profile.supports_shader_cull_distance);
+    clip_distance_count = arrays.clip_size;
+    cull_distance_count = arrays.cull_size;
+    if (arrays.clip_size < used_clip || arrays.cull_size < used_cull) {
+        LOG_WARNING(Render_Recompiler,
+                    "Clamped clip/cull arrays used={}/{} emitted={}/{} combined_limit={}", used_clip,
+                    used_cull, arrays.clip_size, arrays.cull_size,
+                    profile.max_combined_clip_and_cull_distances);
     }
-    if (info.stores.GetAny(IR::Attribute::CullDistance)) {
-        const Id type{TypeArray(F32[1], ConstU32(8U))};
-        const Id initializer{ConstantComposite(type, zero)};
-        cull_distances = DefineVariable(type, spv::BuiltIn::CullDistance, spv::StorageClass::Output,
-                                        initializer);
+    const auto define_distance_array = [&](u32 size, spv::BuiltIn builtin) {
+        const Id type{TypeArray(F32[1], ConstU32(size))};
+        boost::container::static_vector<Id, 8> zeros(size, f32_zero_value);
+        const Id initializer{ConstantComposite(type, std::span<const Id>(zeros.data(), zeros.size()))};
+        return DefineVariable(type, builtin, spv::StorageClass::Output, initializer);
+    };
+    if (arrays.clip_size != 0) {
+        clip_distances = define_distance_array(arrays.clip_size, spv::BuiltIn::ClipDistance);
+    }
+    if (arrays.cull_size != 0) {
+        cull_distances = define_distance_array(arrays.cull_size, spv::BuiltIn::CullDistance);
     }
     if (info.stores.GetAny(IR::Attribute::PointSize)) {
         output_point_size =

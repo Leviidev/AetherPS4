@@ -15,6 +15,13 @@ data class InstallManifest(
     val installedAtMs: Long,
     val requiredFiles: List<String>,
     val bytesTotal: Long,
+    val overlays: List<OverlayRecord> = emptyList(),
+)
+
+data class OverlayRecord(
+    val contentId: String?,
+    val sourceUri: String,
+    val appliedAtMs: Long,
 )
 
 object InstallManifestIo {
@@ -60,6 +67,10 @@ object InstallManifestIo {
             append("installedAtMs=").append(manifest.installedAtMs).append('\n')
             append("requiredFiles=").append(files).append('\n')
             append("bytesTotal=").append(manifest.bytesTotal).append('\n')
+            val ov = manifest.overlays.joinToString(",") { o ->
+                escape((o.contentId.orEmpty()) + "@" + o.appliedAtMs + "|" + o.sourceUri)
+            }
+            append("overlays=").append(ov).append('\n')
         }
     }
 
@@ -75,6 +86,23 @@ object InstallManifestIo {
             ?.map { it.trim() }
             ?.filter { it.isNotEmpty() }
             ?: listOf("eboot.bin", "sce_sys/param.sfo")
+        val overlays = map["overlays"]
+            ?.split(',')
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?.map { entry ->
+                val at = entry.indexOf('@')
+                val pipe = entry.indexOf('|', startIndex = (at + 1).coerceAtLeast(0))
+                if (at < 0 || pipe < 0 || pipe <= at) {
+                    OverlayRecord(null, unescape(entry), 0L)
+                } else {
+                    val cid = unescape(entry.substring(0, at)).takeIf { it.isNotBlank() }
+                    val ts = unescape(entry.substring(at + 1, pipe)).toLongOrNull() ?: 0L
+                    val uri = unescape(entry.substring(pipe + 1))
+                    OverlayRecord(cid, uri, ts)
+                }
+            }
+            ?: emptyList()
         return InstallManifest(
             version = map["version"]?.toIntOrNull() ?: 1,
             status = map["status"] ?: error("missing status"),
@@ -85,6 +113,7 @@ object InstallManifestIo {
             installedAtMs = map["installedAtMs"]?.toLongOrNull() ?: 0L,
             requiredFiles = required,
             bytesTotal = map["bytesTotal"]?.toLongOrNull() ?: 0L,
+            overlays = overlays,
         )
     }
 

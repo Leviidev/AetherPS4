@@ -293,6 +293,71 @@ class ContentImporterTest {
         assertEquals(0L, progressEvents[1].second)
     }
 
+    @Test
+    fun overlayStagingMergesFilesIntoExistingGame() = runTest {
+        // Base game pre-installed.
+        val dest = File(temporaryFolder.root, "games/CUSA07023").apply { mkdirs() }
+        File(dest, "eboot.bin").writeText("base-eboot")
+        File(dest, "sce_sys").mkdirs()
+        File(dest, "sce_sys/param.sfo").writeText("base-sfo")
+
+        // Staging tree from an update PKG (no eboot; overwrites param.sfo; adds a file).
+        val staging = File(temporaryFolder.root, "games/.import-batch-1").apply { mkdirs() }
+        File(staging, "sce_sys").mkdirs()
+        File(staging, "sce_sys/param.sfo").writeText("updated-sfo")
+        File(staging, "patch.dat").writeText("patch-data")
+
+        val result = importerFor(ByteArray(0)).overlayStaging(
+            gameId = "CUSA07023",
+            stagingDir = staging,
+            contentId = "EP9000-CUSA07023_00-UPDT",
+            sourceUri = "content://upd",
+        )
+
+        assertEquals(2, result.filesMerged)
+        // Overwritten file:
+        assertEquals("updated-sfo", File(dest, "sce_sys/param.sfo").readText())
+        // Added file:
+        assertEquals("patch-data", File(dest, "patch.dat").readText())
+        // Base eboot preserved (staging had none):
+        assertEquals("base-eboot", File(dest, "eboot.bin").readText())
+    }
+
+    @Test
+    fun overlayStagingFailsWhenBaseGameMissing() = runTest {
+        val staging = File(temporaryFolder.root, "games/.import-batch-2").apply { mkdirs() }
+        File(staging, "sce_sys").mkdirs()
+        File(staging, "sce_sys/param.sfo").writeText("sfo")
+
+        val error = assertImportException {
+            importerFor(ByteArray(0)).overlayStaging(
+                gameId = "CUSA99999",
+                stagingDir = staging,
+                contentId = null,
+                sourceUri = "content://x",
+            )
+        }
+        assertEquals(RuntimeErrorCode.CONTENT_INVALID, error.code)
+    }
+
+    @Test
+    fun overlayStagingRejectsEscapingStagingDir() = runTest {
+        val dest = File(temporaryFolder.root, "games/CUSA07023").apply { mkdirs() }
+        File(dest, "eboot.bin").writeText("x")
+        // Staging dir lives OUTSIDE gamesDir → requireInside(gamesDir, staging) trips.
+        val outside = File(temporaryFolder.root, "outside").apply { mkdirs() }
+        File(outside, "x.txt").writeText("x")
+        val error = assertImportException {
+            importerFor(ByteArray(0)).overlayStaging(
+                gameId = "CUSA07023",
+                stagingDir = outside,
+                contentId = null,
+                sourceUri = "content://x",
+            )
+        }
+        assertEquals(RuntimeErrorCode.CONTENT_INVALID, error.code)
+    }
+
     private fun importerFor(bytes: ByteArray): ContentImporter =
         ContentImporter(
             filesDir = temporaryFolder.root,

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <exception>
 #include <ranges>
 
 #include "common/hash.h"
@@ -306,6 +307,10 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
         .needs_unorm_fixup = instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,
         .needs_clip_distance_emulation = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary,
         .supports_shader_stencil_export = instance_.IsShaderStencilExportSupported(),
+        .supports_shader_cull_distance = instance_.IsShaderCullDistanceSupported(),
+        .max_clip_distances = instance_.GetMaxClipDistances(),
+        .max_cull_distances = instance_.GetMaxCullDistances(),
+        .max_combined_clip_and_cull_distances = instance_.GetMaxCombinedClipAndCullDistances(),
     };
     WarmUp();
 
@@ -327,9 +332,28 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline() {
         LOG_INFO(Render_Vulkan, "Compiling graphics pipeline {:#x}", pipeline_hash);
 
         GraphicsPipeline::SerializationSupport sdata{};
-        it.value() = std::make_unique<GraphicsPipeline>(
-            instance, scheduler, desc_heap, profile, graphics_key, *pipeline_cache, infos,
-            runtime_infos, fetch_shader, modules, sdata, false);
+        try {
+            if (const auto* vs = infos[u32(Shader::LogicalStage::Vertex)]) {
+                LOG_INFO(Render_Vulkan,
+                         "Pipeline {:#x} resources vs buf={} img={} samp={} fetch={}",
+                         pipeline_hash, vs->buffers.size(), vs->images.size(), vs->samplers.size(),
+                         fetch_shader ? fetch_shader->attributes.size() : 0);
+            }
+            if (const auto* fs = infos[u32(Shader::LogicalStage::Fragment)]) {
+                LOG_INFO(Render_Vulkan, "Pipeline {:#x} resources fs buf={} img={} samp={}",
+                         pipeline_hash, fs->buffers.size(), fs->images.size(),
+                         fs->samplers.size());
+            }
+            it.value() = std::make_unique<GraphicsPipeline>(
+                instance, scheduler, desc_heap, profile, graphics_key, *pipeline_cache, infos,
+                runtime_infos, fetch_shader, modules, sdata, false);
+        } catch (const std::exception& ex) {
+            LOG_ERROR(Render_Vulkan, "Graphics pipeline {:#x} compile failed: {}", pipeline_hash,
+                      ex.what());
+            it.value().reset();
+            fetch_shader.reset();
+            return nullptr;
+        }
 
         RegisterPipelineData(graphics_key, pipeline_hash, sdata);
         ++num_new_pipelines;

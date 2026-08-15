@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
+#include <cstring>
+#include <mutex>
+
 #include <boost/preprocessor/stringize.hpp>
 
 #include "common/assert.h"
@@ -10,6 +14,7 @@
 #include "core/debug_state.h"
 #include "core/emulator_settings.h"
 #include "core/libraries/kernel/process.h"
+#include "common/logging/log.h"
 #include "core/libraries/videoout/driver.h"
 #include "core/memory.h"
 #include "core/platform.h"
@@ -20,6 +25,20 @@
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 
 namespace AmdGpu {
+
+static void MaybeRecordVideoOutLabelLock(Libraries::VideoOut::VideoOutPort* vo_port, u64* address,
+                                         const void* data, u32 data_size) {
+    if (vo_port == nullptr || address == nullptr || !vo_port->IsVoLabel(address)) {
+        return;
+    }
+    u64 value = 0;
+    std::memcpy(&value, data, std::min<size_t>(data_size, sizeof(value)));
+    if (value != 1) {
+        return;
+    }
+    std::scoped_lock lock{vo_port->port_mutex};
+    vo_port->flip_labels.RecordGpuLock(vo_port->LabelIndex(address));
+}
 
 static const char* dcb_task_name{"DCB_TASK"};
 static const char* ccb_task_name{"CCB_TASK"};
@@ -785,6 +804,7 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 const u32 data_size = (header->type3.count.Value() - 2) * 4;
                 u64* address = write_data->Address<u64*>();
                 if (!write_data->wr_one_addr.Value()) {
+                    MaybeRecordVideoOutLabelLock(vo_port, address, write_data->data, data_size);
                     std::memcpy(address, write_data->data, data_size);
                 } else {
                     UNREACHABLE();
@@ -852,6 +872,12 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 const u64* wait_addr = wait_reg_mem->Address<u64*>();
                 if (vo_port->IsVoLabel(wait_addr) &&
                     num_submits == mapped_queues[GfxQueueId].submits.size()) {
+                    if (!wait_reg_mem->Test(regs.reg_array)) {
+                        LOG_WARNING(Render_Vulkan,
+                                    "VO label wait addr={:#x} value={:#x} ref={:#x} index={}",
+                                    reinterpret_cast<uintptr_t>(wait_addr), *wait_addr,
+                                    wait_reg_mem->ref, vo_port->LabelIndex(wait_addr));
+                    }
                     vo_port->WaitVoLabel([&] { return wait_reg_mem->Test(regs.reg_array); });
                     break;
                 }
@@ -1194,6 +1220,8 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
             ASSERT(write_data->dst_sel.Value() == 2 || write_data->dst_sel.Value() == 5);
             const u32 data_size = (header->type3.count.Value() - 2) * 4;
             if (!write_data->wr_one_addr.Value()) {
+                MaybeRecordVideoOutLabelLock(vo_port, write_data->Address<u64*>(),
+                                             write_data->data, data_size);
                 std::memcpy(write_data->Address<void*>(), write_data->data, data_size);
             } else {
                 UNREACHABLE();

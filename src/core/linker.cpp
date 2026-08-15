@@ -386,6 +386,11 @@ Linker::GuestFunctionResult Linker::RunGuestFunction(VAddr entry,
     const auto& state = std::get<GuestExecutionState>(result);
     if (state.StopReason != GuestStopReason::Halted ||
         state.Rip < returnAddress || state.Rip >= returnAddress + 0x1000) {
+        LOG_CRITICAL(Core_Linker,
+                     "FEX guest function did not halt at return veneer entry={:#x} rip={:#x} "
+                     "last_rip={:#x} rsp={:#x} stop={} return={:#x}",
+                     entry, state.Rip, state.LastRip, state.Rsp,
+                     static_cast<int>(state.StopReason), returnAddress);
         return GuestExecutionFailure{GuestExecutionStage::Execute, EPROTO};
     }
     return state.Gpr[0];

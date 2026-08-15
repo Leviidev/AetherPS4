@@ -148,6 +148,9 @@ set(IMGUI_MEMORY_TEST_SOURCES
 
 set(GUEST_MEMORY_VALIDATION_TEST_SOURCES
     core/test_guest_memory_validation_cache.cpp
+    core/test_pthread_stack_placement.cpp
+    core/test_mouse_open_param.cpp
+    core/test_flip_label_tracker.cpp
 )
 
 set(LIBC_MSPACE_TEST_SOURCES

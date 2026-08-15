@@ -3,6 +3,8 @@
 
 #include "core/libraries/font/fontft_internal.h"
 
+#include "core/guest_cpu/guest_callback.h"
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -2681,6 +2683,46 @@ static std::optional<FontObjSidecar> TakeFontObjSidecar(const FontObj* obj) {
     return out;
 }
 
+// Guest allocator bridge. The FreeType memory callbacks and the library stubs
+// receive guest function pointers (alloc/dealloc/realloc) through the font
+// memory interface. On x86_64 these can be called directly, but under FEX the
+// pointers address translated guest code and must be dispatched through the
+// guest-callback bridge instead.
+static void* CallGuestAlloc(GuestAllocFn fn, void* ctx, u32 size) {
+#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
+    if (Core::GuestCpu::IsGuestFunctionAddress(reinterpret_cast<const void*>(fn))) {
+        const std::array<u64, 2> args{reinterpret_cast<u64>(ctx), static_cast<u64>(size)};
+        return reinterpret_cast<void*>(Core::GuestCpu::RunGuestFunctionOrAbort(
+            reinterpret_cast<const void*>(fn), args, "fontft alloc"));
+    }
+#endif
+    return fn(ctx, size);
+}
+
+static void CallGuestFree(GuestFreeFn fn, void* ctx, void* p) {
+#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
+    if (Core::GuestCpu::IsGuestFunctionAddress(reinterpret_cast<const void*>(fn))) {
+        const std::array<u64, 2> args{reinterpret_cast<u64>(ctx), reinterpret_cast<u64>(p)};
+        Core::GuestCpu::RunGuestFunctionOrAbort(
+            reinterpret_cast<const void*>(fn), args, "fontft free");
+        return;
+    }
+#endif
+    fn(ctx, p);
+}
+
+static void* CallGuestRealloc(GuestReallocFn fn, void* ctx, void* p, u32 size) {
+#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
+    if (Core::GuestCpu::IsGuestFunctionAddress(reinterpret_cast<const void*>(fn))) {
+        const std::array<u64, 3> args{reinterpret_cast<u64>(ctx), reinterpret_cast<u64>(p),
+                                      static_cast<u64>(size)};
+        return reinterpret_cast<void*>(Core::GuestCpu::RunGuestFunctionOrAbort(
+            reinterpret_cast<const void*>(fn), args, "fontft realloc"));
+    }
+#endif
+    return fn(ctx, p, size);
+}
+
 static void* FtAlloc(FT_Memory memory, long size) {
     if (!memory || size <= 0) {
         return nullptr;
@@ -2690,7 +2732,7 @@ static void* FtAlloc(FT_Memory memory, long size) {
         return nullptr;
     }
     const auto alloc_fn = reinterpret_cast<GuestAllocFn>(ctx->alloc_vtbl[0]);
-    return alloc_fn ? alloc_fn(ctx->alloc_ctx, static_cast<u32>(size)) : nullptr;
+    return alloc_fn ? CallGuestAlloc(alloc_fn, ctx->alloc_ctx, static_cast<u32>(size)) : nullptr;
 }
 
 static void FtFree(FT_Memory memory, void* block) {
@@ -2703,7 +2745,7 @@ static void FtFree(FT_Memory memory, void* block) {
     }
     const auto free_fn = reinterpret_cast<GuestFreeFn>(ctx->alloc_vtbl[1]);
     if (free_fn) {
-        free_fn(ctx->alloc_ctx, block);
+        CallGuestFree(free_fn, ctx->alloc_ctx, block);
     }
 }
 
@@ -2717,7 +2759,7 @@ static void* FtRealloc(FT_Memory memory, long cur_size, long new_size, void* blo
     }
     const auto realloc_fn = reinterpret_cast<GuestReallocFn>(ctx->alloc_vtbl[2]);
     if (realloc_fn) {
-        return realloc_fn(ctx->alloc_ctx, block, static_cast<u32>(new_size));
+        return CallGuestRealloc(realloc_fn, ctx->alloc_ctx, block, static_cast<u32>(new_size));
     }
 
     if (new_size <= 0) {
@@ -2808,7 +2850,7 @@ s32 PS4_SYSV_ABI LibraryInitStub(const void* memory, void* library) {
     void** alloc_vtbl =
         reinterpret_cast<void**>(const_cast<Libraries::Font::OrbisFontMemInterface*>(mem->iface));
 
-    auto* ctx = static_cast<FtLibraryCtx*>(alloc_fn(alloc_ctx, sizeof(FtLibraryCtx)));
+    auto* ctx = static_cast<FtLibraryCtx*>(CallGuestAlloc(alloc_fn, alloc_ctx, sizeof(FtLibraryCtx)));
     if (!ctx) {
         return ORBIS_FONT_ERROR_ALLOCATION_FAILED;
     }
@@ -2816,9 +2858,9 @@ s32 PS4_SYSV_ABI LibraryInitStub(const void* memory, void* library) {
     ctx->alloc_ctx = alloc_ctx;
     ctx->alloc_vtbl = alloc_vtbl;
 
-    FT_Memory ft_mem = static_cast<FT_Memory>(alloc_fn(alloc_ctx, sizeof(FT_MemoryRec_)));
+    FT_Memory ft_mem = static_cast<FT_Memory>(CallGuestAlloc(alloc_fn, alloc_ctx, sizeof(FT_MemoryRec_)));
     if (!ft_mem) {
-        free_fn(alloc_ctx, ctx);
+        CallGuestFree(free_fn, alloc_ctx, ctx);
         return ORBIS_FONT_ERROR_ALLOCATION_FAILED;
     }
     std::memset(ft_mem, 0, sizeof(*ft_mem));
@@ -2831,8 +2873,8 @@ s32 PS4_SYSV_ABI LibraryInitStub(const void* memory, void* library) {
     FT_Library ft_lib = nullptr;
     const FT_Error ft_err = FT_New_Library(ft_mem, &ft_lib);
     if (ft_err != 0 || !ft_lib) {
-        free_fn(alloc_ctx, ft_mem);
-        free_fn(alloc_ctx, ctx);
+        CallGuestFree(free_fn, alloc_ctx, ft_mem);
+        CallGuestFree(free_fn, alloc_ctx, ctx);
         return ORBIS_FONT_ERROR_ALLOCATION_FAILED;
     }
     FT_Add_Default_Modules(ft_lib);
@@ -2901,10 +2943,10 @@ s32 PS4_SYSV_ABI LibraryTermStub(void* library) {
         ctx->ft_lib = nullptr;
     }
     if (ctx->ft_memory) {
-        free_fn(alloc_ctx, ctx->ft_memory);
+        CallGuestFree(free_fn, alloc_ctx, ctx->ft_memory);
         ctx->ft_memory = nullptr;
     }
-    free_fn(alloc_ctx, ctx);
+    CallGuestFree(free_fn, alloc_ctx, ctx);
     lib->fontset_registry = nullptr;
     return ORBIS_OK;
 }
@@ -3006,7 +3048,7 @@ s32 PS4_SYSV_ABI LibraryOpenFontMemoryStub(void* library, u32 mode, const void* 
     auto* ctx = static_cast<FtLibraryCtx*>(lib->fontset_registry);
     if (!ctx || !ctx->ft_lib) {
         if (owned_data) {
-            free_fn(alloc_ctx, owned_data);
+            CallGuestFree(free_fn, alloc_ctx, owned_data);
         }
         return ORBIS_FONT_ERROR_INVALID_LIBRARY;
     }
@@ -3078,7 +3120,7 @@ s32 PS4_SYSV_ABI LibraryOpenFontMemoryStub(void* library, u32 mode, const void* 
     }
     if (ft_err != 0 || !face) {
         if (owned_data) {
-            free_fn(alloc_ctx, owned_data);
+            CallGuestFree(free_fn, alloc_ctx, owned_data);
         }
         if (mode == 1) {
             return ORBIS_FONT_ERROR_NO_SUPPORT_FORMAT;
@@ -3091,11 +3133,11 @@ s32 PS4_SYSV_ABI LibraryOpenFontMemoryStub(void* library, u32 mode, const void* 
 
     (void)FT_Select_Charmap(face, FT_ENCODING_UNICODE);
 
-    auto* obj = static_cast<FontObj*>(alloc_fn(alloc_ctx, sizeof(FontObj)));
+    auto* obj = static_cast<FontObj*>(CallGuestAlloc(alloc_fn, alloc_ctx, sizeof(FontObj)));
     if (!obj) {
         FT_Done_Face(face);
         if (owned_data) {
-            free_fn(alloc_ctx, owned_data);
+            CallGuestFree(free_fn, alloc_ctx, owned_data);
         }
         return ORBIS_FONT_ERROR_ALLOCATION_FAILED;
     }
@@ -3161,7 +3203,7 @@ s32 PS4_SYSV_ABI LibraryCloseFontObjStub(void* fontObj, u32 /*flags*/) {
         obj->ft_face = nullptr;
     }
     if (owned_data && free_fn) {
-        free_fn(ctx->alloc_ctx, owned_data);
+        CallGuestFree(free_fn, ctx->alloc_ctx, owned_data);
     }
     if (free_fn) {
         FontObj* next = obj->next;
@@ -3172,7 +3214,7 @@ s32 PS4_SYSV_ABI LibraryCloseFontObjStub(void* fontObj, u32 /*flags*/) {
         } else {
             obj->prev->next = next;
         }
-        free_fn(ctx->alloc_ctx, obj);
+        CallGuestFree(free_fn, ctx->alloc_ctx, obj);
         return ORBIS_OK;
     }
     return ORBIS_FONT_ERROR_FATAL;

@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "common/assert.h"
+#include "common/logging/log.h"
 #include "core/libraries/kernel/threads/pthread.h"
+#include "core/libraries/kernel/threads/pthread_stack_placement.h"
 #include "core/libraries/kernel/threads/thread_state.h"
 #include "core/memory.h"
 
@@ -75,6 +77,18 @@ int ThreadState::CreateStack(PthreadAttr* attr) {
         return 0;
     }
 
+    auto* memory = Core::Memory::Instance();
+    VAddr stackaddr;
+    int ret;
+    if constexpr (kPlacePthreadStackInGuestSafeRange) {
+        // Auto-place from DEFAULT_MAPPING_BASE (0x200000000). The usrstack
+        // region overlaps Android host stacks and is not 1:1 under FEX.
+        thread_list_lock.unlock();
+        stackaddr = 0;
+        ret = memory->MapMemory(reinterpret_cast<void**>(&stackaddr), 0,
+                                stacksize + guardsize, Core::MemoryProt::CpuReadWrite,
+                                Core::MemoryMapFlags::NoFlags, Core::VMAType::Stack);
+    } else {
     /* Allocate a stack from usrstack. */
     if (last_stack == 0) {
         static constexpr VAddr UsrStack = 0x7EFFF8000ULL;
@@ -82,7 +96,7 @@ int ThreadState::CreateStack(PthreadAttr* attr) {
     }
 
     /* Allocate a new stack. */
-    VAddr stackaddr = last_stack - stacksize - guardsize;
+    stackaddr = last_stack - stacksize - guardsize;
 
     /*
      * Even if stack allocation fails, we don't want to try to
@@ -98,10 +112,10 @@ int ThreadState::CreateStack(PthreadAttr* attr) {
 
     /* Map the stack and guard page together, and split guard
        page from allocated space: */
-    auto* memory = Core::Memory::Instance();
-    int ret = memory->MapMemory(reinterpret_cast<void**>(&stackaddr), stackaddr,
-                                stacksize + guardsize, Core::MemoryProt::CpuReadWrite,
-                                Core::MemoryMapFlags::NoFlags, Core::VMAType::Stack);
+    ret = memory->MapMemory(reinterpret_cast<void**>(&stackaddr), stackaddr,
+                            stacksize + guardsize, Core::MemoryProt::CpuReadWrite,
+                            Core::MemoryMapFlags::NoFlags, Core::VMAType::Stack);
+    }
     ASSERT_MSG(ret == 0, "Unable to map stack memory");
 
     if (guardsize != 0) {
@@ -111,6 +125,10 @@ int ThreadState::CreateStack(PthreadAttr* attr) {
 
     stackaddr += guardsize;
     attr->stackaddr_attr = (void*)stackaddr;
+    ASSERT_MSG(!PthreadStackOverlapsHost(stackaddr, stacksize),
+               "pthread stack {:#x}+{:#x} overlaps host usrstack", stackaddr, stacksize);
+    LOG_INFO(Kernel_Pthread, "mapped stack={:#x} size={:#x} guard={:#x} fex_safe={}", stackaddr,
+             stacksize, guardsize, kPlacePthreadStackInGuestSafeRange);
 
     if (attr->stackaddr_attr != nullptr) {
         std::memset(attr->stackaddr_attr, 0, stacksize);

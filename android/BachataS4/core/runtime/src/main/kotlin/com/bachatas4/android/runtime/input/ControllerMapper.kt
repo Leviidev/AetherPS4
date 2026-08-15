@@ -51,6 +51,7 @@ class ControllerMapper(
         private val AXES = mapOf(
             0 to "left_x", 1 to "left_y", 11 to "right_x", 14 to "right_y",
             17 to "left_trigger", 18 to "right_trigger",
+            15 to "hat_x", 16 to "hat_y",
         )
     }
 }

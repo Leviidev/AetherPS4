@@ -146,6 +146,25 @@ class GameRepository @Inject constructor(
         gameDao.updateLastLaunched(id, System.currentTimeMillis())
     }
 
+    /**
+     * Re-resolve metadata from on-disk param.sfo and bump importedAtMs after an
+     * overlay install. No-op if the game row is missing.
+     */
+    suspend fun touchGame(gameId: String) {
+        val entity = gameDao.getById(gameId) ?: return
+        val sfoFile = GameIconPaths.paramSfo(context.filesDir, entity.relativePath)
+        val sfo = if (sfoFile.isFile) {
+            runCatching { ParamSfoReader.parse(sfoFile.readBytes()) }.getOrNull()
+        } else null
+        gameDao.updateMetadata(
+            id = gameId,
+            title = sfo?.title?.takeIf { it.isNotBlank() } ?: entity.title,
+            subtitle = sfo?.subtitle ?: entity.subtitle,
+            detail = sfo?.detail ?: entity.detail,
+            importedAtMs = System.currentTimeMillis(),
+        )
+    }
+
     suspend fun deleteGame(id: String): Boolean {
         val game = gameDao.getById(id) ?: return false
         val gamesRoot = context.filesDir.resolve("games").canonicalFile

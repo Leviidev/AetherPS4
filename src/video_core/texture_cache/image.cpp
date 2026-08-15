@@ -387,8 +387,9 @@ void Image::Upload(std::span<const vk::BufferImageCopy> upload_copies, vk::Buffe
         .imageMemoryBarrierCount = static_cast<u32>(image_barriers.size()),
         .pImageMemoryBarriers = image_barriers.data(),
     });
-    // Provenance for late DEVICE_LOST dig: FHD 0x7f8000 copy_buffer_to_image.
-    LOG_WARNING(Render_Vulkan,
+    // Provenance for late DEVICE_LOST digs. Keep this below normal release verbosity because
+    // uploads happen many times per frame.
+    LOG_TRACE(Render_Vulkan,
                 "COPY_BUFFER_TO_IMAGE_PROV srcBuffer={:#x} offset={:#x} size={:#x} "
                 "dstImage={:#x} tick={} copies={} width={} height={} guestSize={:#x} "
                 "path=Image::Upload",

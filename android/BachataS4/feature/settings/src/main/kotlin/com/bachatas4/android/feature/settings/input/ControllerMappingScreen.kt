@@ -1,11 +1,9 @@
 package com.bachatas4.android.feature.settings.input
 
-import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,28 +11,42 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.bachatas4.android.designsystem.BachataBanner
 import com.bachatas4.android.designsystem.BachataPanel
 import com.bachatas4.android.designsystem.BachataPrimaryButton
 import com.bachatas4.android.designsystem.theme.BachataPalette
-import com.bachatas4.android.runtime.input.ControllerProfile
+import com.bachatas4.android.runtime.input.GamepadInputManager
 import com.bachatas4.android.runtime.settings.ProfileScope
+
+// Diagram zones in gamepad-nav traversal order.
+private val DIAGRAM_CONTROLS = listOf(
+    "l2", "l1", "r1", "r2",
+    "l3", "dpad_up", "dpad_left", "dpad_right", "dpad_down",
+    "share", "ps", "touchpad", "options",
+    "triangle", "square", "circle", "cross", "r3",
+)
 
 @Composable
 fun ControllerMappingScreen(
@@ -45,224 +57,195 @@ fun ControllerMappingScreen(
     LaunchedEffect(scope) { viewModel.load(scope) }
     val state by viewModel.state.collectAsState()
     val profile = state.profiles[state.slot]
-    
+
+    var focusedControl by remember { mutableStateOf<String?>(null) }
+    var finetuneOpen by rememberSaveable { mutableStateOf(false) }
+
+    // Gamepad navigation: D-pad moves focus across diagram zones, cross captures, circle backs out.
+    DisposableEffect(state.slot) {
+        GamepadInputManager.registerNavListener { event ->
+            if (!event.pressed) return@registerNavListener false
+            when (event.control) {
+                "dpad_right" -> {
+                    val idx = DIAGRAM_CONTROLS.indexOf(focusedControl)
+                    focusedControl = DIAGRAM_CONTROLS[(idx + 1).coerceIn(0, DIAGRAM_CONTROLS.lastIndex)]
+                    true
+                }
+                "dpad_left" -> {
+                    val idx = DIAGRAM_CONTROLS.indexOf(focusedControl)
+                    focusedControl = DIAGRAM_CONTROLS[(idx - 1).coerceIn(0, DIAGRAM_CONTROLS.lastIndex)]
+                    true
+                }
+                "dpad_up" -> { finetuneOpen = false; true }
+                "dpad_down" -> { finetuneOpen = true; true }
+                "cross" -> {
+                    focusedControl?.let { viewModel.capture(it) }
+                    true
+                }
+                "circle" -> { onBack(); true }
+                else -> false
+            }
+        }
+        onDispose { GamepadInputManager.unregisterNavListener() }
+    }
+
     Column(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            (0..3).forEach { slot ->
-                item {
-                    SubTab(
-                        label = "Player ${slot + 1}",
-                        selected = state.slot == slot,
-                        onClick = { viewModel.selectSlot(slot) }
-                    )
-                }
-            }
-        }
-
-        BachataPanel(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            color = BachataPalette.RaisedSurface
-        ) {
-            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = "Controller Mapping",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = BachataPalette.Primary,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "Device: ${profile.device?.fallbackName ?: "Any connected controller"}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = BachataPalette.Secondary
-                )
-            }
-        }
-
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            item {
-                BachataPrimaryButton(onClick = { viewModel.autoMap() }) {
-                    Text("Auto-Map")
-                }
-            }
-            item {
-                BachataPrimaryButton(onClick = viewModel::captureSequential) {
-                    Text("Capture All")
-                }
-            }
-            item {
-                TextButton(onClick = viewModel::clear) {
-                    Text("Clear Mappings")
-                }
-            }
-        }
-
-        BachataPanel(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            color = BachataPalette.Surface
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(24.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Vibration", color = BachataPalette.Primary, style = MaterialTheme.typography.bodyMedium)
-                    Spacer(modifier = Modifier.weight(1f))
-                    Switch(profile.vibrationEnabled, viewModel::setVibration)
-                }
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Motion Controls", color = BachataPalette.Primary, style = MaterialTheme.typography.bodyMedium)
-                    Spacer(modifier = Modifier.weight(1f))
-                    Switch(profile.motionEnabled, viewModel::setMotion)
-                }
-            }
-        }
-
-        state.captureQueue.firstOrNull()?.let { target ->
-            BachataPanel(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                color = Color(0xFF1E3A5F)
-            ) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(
-                        text = "Press input for: $target",
-                        color = Color(0xFFD2E8FF),
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Text(
-                        text = "Press a button or move a stick on your controller",
-                        color = Color(0xFF8AB4F8),
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    TextButton(onClick = { viewModel.cancelCapture() }) {
-                        Text("Cancel", color = Color(0xFF8AB4F8))
-                    }
-                }
-            }
-        }
-
-        state.conflict?.let { conflict ->
-            BachataPanel(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                color = Color(0xFF3A2B18)
-            ) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(
-                        text = "Input already maps ${conflict.existing}. Replace?",
-                        color = Color(0xFFFFDDB5),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        BachataPrimaryButton(onClick = viewModel::replaceConflict) {
-                            Text("Replace")
-                        }
-                        TextButton(onClick = viewModel::cancelConflict) {
-                            Text("Cancel")
-                        }
-                    }
-                }
-            }
-        }
-
-        LazyColumn(
-            modifier = Modifier.fillMaxWidth().weight(1f),
-            contentPadding = PaddingValues(bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            item {
-                Text(
-                    text = "Button Assignments",
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = BachataPalette.Primary
-                )
-            }
-            items(ControllerProfile.LOGICAL_CONTROLS.toList().sorted()) { control ->
-                val binding = profile.bindings[control]
-                BachataPanel(
-                    modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth(),
-                    color = BachataPalette.Surface
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(
-                                text = control,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = BachataPalette.Primary,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = if (binding != null) "${binding.kind.name} ${binding.code}" else "Unmapped",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (binding != null) BachataPalette.Accent else BachataPalette.Secondary
-                            )
-                        }
-                        BachataPrimaryButton(
-                            onClick = { viewModel.capture(control) }
-                        ) {
-                            Text("Remap")
-                        }
-                    }
-                }
-            }
-        }
-
+        // --- Action bar ---
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            TextButton(onClick = onBack) {
-                Text("Back")
+            BachataPrimaryButton(onClick = { viewModel.autoMap(useHatDpad = true) }, modifier = Modifier.weight(1f)) {
+                Text("Auto-Map")
             }
+            BachataPrimaryButton(onClick = { viewModel.captureSequential() }, modifier = Modifier.weight(1f)) {
+                Text("Capture All")
+            }
+            TextButton(onClick = { viewModel.clear() }) { Text("Clear") }
+        }
+
+        // --- Capture banner ---
+        val captureTarget = state.captureQueue.firstOrNull()
+        if (captureTarget != null) {
+            val total = state.captureQueue.size
+            BachataBanner(
+                title = "Press input for: $captureTarget",
+                subtitle = if (total > 1) "${total} remaining · Press a button or move a stick" else "Press a button or move a stick",
+                containerColor = BachataPalette.Info,
+                titleColor = BachataPalette.InfoText,
+                subtitleColor = BachataPalette.InfoSubtle,
+                actions = { TextButton(onClick = { viewModel.cancelCapture() }) { Text("Cancel") } },
+            )
+        }
+
+        // --- Conflict banner ---
+        val conflict = state.conflict
+        if (conflict != null) {
+            BachataBanner(
+                title = "Input already maps ${conflict.existing}",
+                subtitle = "Replace ${conflict.existing} with ${conflict.target}?",
+                containerColor = BachataPalette.Warning,
+                titleColor = BachataPalette.WarningText,
+                subtitleColor = BachataPalette.WarningText,
+                actions = {
+                    BachataPrimaryButton(onClick = { viewModel.replaceConflict() }) { Text("Replace") }
+                    TextButton(onClick = { viewModel.cancelConflict() }) { Text("Cancel") }
+                },
+            )
+        }
+
+        // --- Visual gamepad diagram ---
+        GamepadDiagram(
+            profile = profile,
+            capturingControl = captureTarget,
+            focusedControl = focusedControl,
+            onCapture = { viewModel.capture(it) },
+        )
+
+        // --- Fine-tune section ---
+        TextButton(
+            onClick = { finetuneOpen = !finetuneOpen },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (finetuneOpen) "▼ Fine-Tune" else "▶ Fine-Tune", color = BachataPalette.Secondary)
+        }
+
+        if (finetuneOpen) {
+            FineTunePanel(
+                profile = profile,
+                onDeadZone = viewModel::setDeadZone,
+                onTriggerThreshold = viewModel::setTriggerThreshold,
+                onInvert = viewModel::setInvert,
+                onVibration = viewModel::setVibration,
+                onMotion = viewModel::setMotion,
+            )
+        }
+
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun FineTunePanel(
+    profile: com.bachatas4.android.runtime.input.ControllerProfile,
+    onDeadZone: (Float) -> Unit,
+    onTriggerThreshold: (Float) -> Unit,
+    onInvert: (String, Boolean) -> Unit,
+    onVibration: (Boolean) -> Unit,
+    onMotion: (Boolean) -> Unit,
+) {
+    BachataPanel(
+        modifier = Modifier.fillMaxWidth(),
+        color = BachataPalette.Surface,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            // Stick dead zone
+            SectionLabel("Stick Dead Zone")
+            Slider(
+                value = profile.deadZone,
+                onValueChange = onDeadZone,
+                valueRange = 0f..0.5f,
+            )
+            Text("%.2f".format(profile.deadZone), color = BachataPalette.Secondary, style = MaterialTheme.typography.labelSmall)
+
+            // Trigger threshold
+            SectionLabel("Trigger Threshold")
+            Slider(
+                value = profile.triggerThreshold,
+                onValueChange = onTriggerThreshold,
+                valueRange = 0f..1f,
+            )
+            Text("%.2f".format(profile.triggerThreshold), color = BachataPalette.Secondary, style = MaterialTheme.typography.labelSmall)
+
+            // Axis inversion
+            SectionLabel("Invert Axes")
+            InvertToggle("Left Stick X", "left_x", profile.invertAxes, onInvert)
+            InvertToggle("Left Stick Y", "left_y", profile.invertAxes, onInvert)
+            InvertToggle("Right Stick X", "right_x", profile.invertAxes, onInvert)
+            InvertToggle("Right Stick Y", "right_y", profile.invertAxes, onInvert)
+
+            // Toggles
+            SectionLabel("Other")
+            ToggleRow("Vibration", profile.vibrationEnabled, onVibration)
+            ToggleRow("Motion Controls", profile.motionEnabled, onMotion)
         }
     }
 }
 
 @Composable
-private fun SubTab(label: String, selected: Boolean, onClick: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .clickable(onClick = onClick)
-            .padding(vertical = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+private fun SectionLabel(text: String) {
+    Text(text, color = BachataPalette.Primary, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+}
+
+@Composable
+private fun InvertToggle(label: String, control: String, invertAxes: Set<String>, onInvert: (String, Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = label,
-            color = if (selected) BachataPalette.Primary else BachataPalette.Secondary,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Box(
-            modifier = Modifier
-                .width(48.dp)
-                .height(2.dp)
-                .background(if (selected) BachataPalette.Accent else Color.Transparent)
-        )
+        Text(label, color = BachataPalette.Primary)
+        Switch(checked = control in invertAxes, onCheckedChange = { onInvert(control, it) })
+    }
+}
+
+@Composable
+private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, color = BachataPalette.Primary)
+        Switch(checked = checked, onCheckedChange = onChange)
     }
 }

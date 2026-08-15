@@ -394,6 +394,23 @@ public:
         return features.shaderClipDistance;
     }
 
+    /// Returns true if shaders can declare the CullDistance attribute
+    bool IsShaderCullDistanceSupported() const {
+        return features.shaderCullDistance;
+    }
+
+    u32 GetMaxClipDistances() const {
+        return properties.limits.maxClipDistances;
+    }
+
+    u32 GetMaxCullDistances() const {
+        return properties.limits.maxCullDistances;
+    }
+
+    u32 GetMaxCombinedClipAndCullDistances() const {
+        return properties.limits.maxCombinedClipAndCullDistances;
+    }
+
     /// Returns the maximim viewport width.
     u32 GetMaxViewportWidth() const {
         return properties.limits.maxViewportDimensions[0];

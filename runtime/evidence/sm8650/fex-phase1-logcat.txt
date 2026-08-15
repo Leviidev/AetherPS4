@@ -1,2 +1,0 @@
---------- beginning of main
-07-16 11:12:20.095  3185  3210 I BachataFexGuestHarness: FEXCORE_GUEST_ENGINE_OK revision=f2b679f6028ce1c38875233aecfcf5d3f8ebecec gpr=ok rflags=ok xmm=ok bridge=ok threads=ok tls=ok invalidation=ok teardown=ok

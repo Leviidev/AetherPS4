@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -71,6 +73,43 @@ fun BachataPanel(
         shape = RoundedCornerShape(12.dp),
         content = content,
     )
+}
+
+/**
+ * Status banner with title, optional subtitle, and trailing action slot.
+ * Use [BachataPalette.Info] / [Warning] / [Success] / [Error] for the container color.
+ */
+@Composable
+fun BachataBanner(
+    title: String,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    containerColor: Color = BachataPalette.Info,
+    titleColor: Color = BachataPalette.InfoText,
+    subtitleColor: Color = BachataPalette.InfoSubtle,
+    actions: @Composable RowScope.() -> Unit = {},
+) {
+    BachataPanel(
+        modifier = modifier.fillMaxWidth(),
+        color = containerColor,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, color = titleColor, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                if (subtitle != null) {
+                    Text(subtitle, color = subtitleColor, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            if (actions !== {}) {
+                Spacer(Modifier.width(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), content = actions)
+            }
+        }
+    }
 }
 
 @Composable

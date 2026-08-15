@@ -373,6 +373,23 @@ enum class AnisoRatio : u64 {
     Sixteen,
 };
 
+/// GCN TEX max_aniso is 3 bits. 0-4 are 1/2/4/8/16. 5-7 are reserved; treat as 16.
+[[nodiscard]] constexpr float AnisoRatioToFloat(AnisoRatio ratio) noexcept {
+    switch (ratio) {
+    case AnisoRatio::One:
+        return 1.0f;
+    case AnisoRatio::Two:
+        return 2.0f;
+    case AnisoRatio::Four:
+        return 4.0f;
+    case AnisoRatio::Eight:
+        return 8.0f;
+    case AnisoRatio::Sixteen:
+    default:
+        return 16.0f;
+    }
+}
+
 enum class DepthCompare : u64 {
     Never = 0,
     Less = 1,
@@ -478,20 +495,7 @@ struct Sampler {
     }
 
     float MaxAniso() const {
-        switch (max_aniso.Value()) {
-        case AnisoRatio::One:
-            return 1.0f;
-        case AnisoRatio::Two:
-            return 2.0f;
-        case AnisoRatio::Four:
-            return 4.0f;
-        case AnisoRatio::Eight:
-            return 8.0f;
-        case AnisoRatio::Sixteen:
-            return 16.0f;
-        default:
-            UNREACHABLE();
-        }
+        return AnisoRatioToFloat(max_aniso.Value());
     }
 };
 

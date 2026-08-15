@@ -5,6 +5,7 @@
 
 #include "common/debug.h"
 #include "common/polyfill_thread.h"
+#include "core/libraries/videoout/flip_label_tracker.h"
 #include "core/libraries/videoout/video_out.h"
 
 #include <condition_variable>
@@ -35,6 +36,14 @@ struct VideoOutPort {
     int prev_index = -1;
     bool is_open = false;
     bool is_hdr = false;
+    FlipLabelTracker flip_labels;
+
+    s32 LabelIndex(const u64* address) const {
+        if (!IsVoLabel(address)) {
+            return -1;
+        }
+        return static_cast<s32>(address - &buffer_labels[0]);
+    }
 
     s32 FindFreeGroup() const {
         s32 index = 0;
@@ -90,7 +99,8 @@ public:
     int ChangeBufferAttribute(VideoOutPort* port, s32 bufferIndex,
                               const BufferAttribute* attribute);
 
-    bool SubmitFlip(VideoOutPort* port, s32 index, s64 flip_arg, bool is_eop = false);
+    bool SubmitFlip(VideoOutPort* port, s32 index, s64 flip_arg, bool is_eop = false,
+                    u64 lock_generation = FlipLabelTracker::kInvalidGeneration);
 
 private:
     struct Request {
@@ -99,6 +109,7 @@ private:
         s64 flip_arg;
         s32 index;
         bool eop;
+        u64 lock_generation;
 
         operator bool() const noexcept {
             return frame != nullptr;
@@ -108,8 +119,10 @@ private:
     void Flip(const Request& req);
     void DrawBlankFrame(); // Video port out not open
     void DrawLastFrame();  // Used when there is no flip request
-    void SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_arg, bool is_eop = false);
+    void SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_arg, bool is_eop,
+                            u64 lock_generation);
     void PresentThread(std::stop_token token);
+    void ApplyDueLabelRetirement();
 
     std::mutex mutex;
     VideoOutPort main_port{};

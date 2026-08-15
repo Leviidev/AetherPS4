@@ -1322,7 +1322,8 @@ else()
 endif()
 
 target_compile_definitions(shadps4 PRIVATE IMGUI_USER_CONFIG="imgui/imgui_config.h")
-target_compile_definitions(Dear_ImGui PRIVATE IMGUI_USER_CONFIG="${PROJECT_SOURCE_DIR}/src/imgui/imgui_config.h")
+target_include_directories(Dear_ImGui PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_compile_definitions(Dear_ImGui PRIVATE IMGUI_USER_CONFIG="imgui/imgui_config.h")
 
 if (ENABLE_DISCORD_RPC)
     target_compile_definitions(shadps4 PRIVATE ENABLE_DISCORD_RPC)

@@ -268,9 +268,6 @@ fun TouchLayoutEditorScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            TextButton(onClick = onBack) {
-                Text("Back")
-            }
             Spacer(modifier = Modifier.weight(1f))
             TextButton(onClick = viewModel::inherit) {
                 Text("Inherit Global")

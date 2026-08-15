@@ -13,6 +13,17 @@ object BachataPalette {
     val Secondary = Color(0xFF8B8D94)
     val Accent = Color(0xFFE8A33D)
     val OnAccent = Color(0xFF1A1206)
+
+    /** Status banner colors — replaces ad-hoc 0xFF literals scattered across screens. */
+    val Info = Color(0xFF1E3A5F)
+    val InfoText = Color(0xFFD2E8FF)
+    val InfoSubtle = Color(0xFF8AB4F8)
+    val Warning = Color(0xFF3A2B18)
+    val WarningText = Color(0xFFFFDDB5)
+    val Success = Color(0xFF213D21)
+    val SuccessText = Color(0xFFB5E8B5)
+    val Error = Color(0xFF3D2121)
+    val ErrorText = Color(0xFFE8B5B5)
 }
 
 private val BachataColors = darkColorScheme(

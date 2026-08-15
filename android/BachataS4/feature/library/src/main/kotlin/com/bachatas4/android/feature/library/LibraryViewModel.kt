@@ -3,6 +3,7 @@ package com.bachatas4.android.feature.library
 import androidx.lifecycle.ViewModel
 import com.bachatas4.android.model.Game
 import com.bachatas4.android.runtime.input.GamepadInputManager
+import com.bachatas4.android.runtime.input.NavControllerEvent
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -26,6 +27,8 @@ class LibraryViewModel @Inject constructor() : ViewModel() {
     val openSettings: SharedFlow<String> = openSettingsRequest
     private val launchRequest = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val launch: SharedFlow<String> = launchRequest
+    private val toggleOrientationRequest = MutableSharedFlow<Unit>(extraBufferCapacity = 4)
+    val toggleOrientation: SharedFlow<Unit> = toggleOrientationRequest
 
     fun setGames(games: List<Game>) {
         val sorted = sortGames(games)
@@ -81,51 +84,69 @@ class LibraryViewModel @Inject constructor() : ViewModel() {
         mutableState.value = mutableState.value.copy(showDetailsGameId = id)
     }
 
-    fun attachNavListener() {
-        GamepadInputManager.registerNavListener { event ->
-            val currentState = mutableState.value
-            val detailsId = currentState.showDetailsGameId
-            if (detailsId != null) {
-                when {
-                    event.control == "cross" && event.pressed -> {
-                        launchRequest.tryEmit(detailsId)
-                        true
-                    }
-                    event.control == "circle" && event.pressed -> {
-                        showDetails(null)
-                        true
-                    }
-                    event.control == "square" && event.pressed -> {
-                        showDetails(null)
-                        openSettingsRequest.tryEmit(detailsId)
-                        true
-                    }
-                    event.pressed -> true
-                    else -> false
+    fun handleNavEvent(event: NavControllerEvent): Boolean {
+        val currentState = mutableState.value
+        val detailsId = currentState.showDetailsGameId
+        if (detailsId != null) {
+            return when {
+                event.control == "cross" && event.pressed -> {
+                    launchRequest.tryEmit(detailsId)
+                    true
                 }
-            } else {
-                when {
-                    event.control == "dpad_left" && event.pressed -> { navigatePrev(); true }
-                    event.control == "dpad_right" && event.pressed -> { navigateNext(); true }
-                    event.control == "dpad_up" && event.pressed -> { navigateUp(); true }
-                    event.control == "dpad_down" && event.pressed -> { navigateDown(); true }
-                    event.control == "cross" && event.pressed -> {
-                        currentState.selectedGameId?.let { launchRequest.tryEmit(it) }
-                        true
-                    }
-                    event.control == "square" && event.pressed -> {
-                        currentState.selectedGameId?.let { id ->
-                            if (id != "__import_card__") {
-                                showDetails(id)
-                            }
-                        }
-                        true
-                    }
-                    event.control == "circle" && event.pressed -> true
-                    else -> false
+                event.control == "circle" && event.pressed -> {
+                    showDetails(null)
+                    true
                 }
+                event.control == "square" && event.pressed -> {
+                    showDetails(null)
+                    openSettingsRequest.tryEmit(detailsId)
+                    true
+                }
+                event.control == "share" && event.pressed -> true
+                event.pressed -> true
+                else -> false
             }
         }
+        return when {
+            event.control == "dpad_left" && event.pressed -> {
+                navigatePrev()
+                true
+            }
+            event.control == "dpad_right" && event.pressed -> {
+                navigateNext()
+                true
+            }
+            event.control == "dpad_up" && event.pressed -> {
+                navigateUp()
+                true
+            }
+            event.control == "dpad_down" && event.pressed -> {
+                navigateDown()
+                true
+            }
+            event.control == "cross" && event.pressed -> {
+                currentState.selectedGameId?.let { launchRequest.tryEmit(it) }
+                true
+            }
+            event.control == "square" && event.pressed -> {
+                currentState.selectedGameId?.let { id ->
+                    if (id != "__import_card__") {
+                        showDetails(id)
+                    }
+                }
+                true
+            }
+            event.control == "share" && event.pressed -> {
+                toggleOrientationRequest.tryEmit(Unit)
+                true
+            }
+            event.control == "circle" && event.pressed -> true
+            else -> false
+        }
+    }
+
+    fun attachNavListener() {
+        GamepadInputManager.registerNavListener { event -> handleNavEvent(event) }
     }
 
     override fun onCleared() {

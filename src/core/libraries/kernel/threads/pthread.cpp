@@ -667,6 +667,74 @@ int PS4_SYSV_ABI posix_pthread_setcancelstate(PthreadCancelState state,
     return 0;
 }
 
+enum class PthreadCancelType : u32 {
+    Deferred = 0,
+    Asynchronous = 1,
+};
+
+int PS4_SYSV_ABI posix_pthread_setcanceltype(PthreadCancelType type,
+                                             PthreadCancelType* oldtype) {
+    Pthread* curthread = g_curthread;
+    const bool oldval = curthread->cancel_async;
+    switch (type) {
+    case PthreadCancelType::Deferred:
+        curthread->cancel_async = false;
+        break;
+    case PthreadCancelType::Asynchronous:
+        curthread->cancel_async = true;
+        TestCancel(curthread);
+        break;
+    default:
+        return POSIX_EINVAL;
+    }
+
+    if (oldtype) {
+        *oldtype = oldval ? PthreadCancelType::Asynchronous : PthreadCancelType::Deferred;
+    }
+    return 0;
+}
+
+int PS4_SYSV_ABI posix_pthread_cancel(PthreadT thread) {
+    if (thread == nullptr) {
+        return POSIX_ESRCH;
+    }
+
+    auto* thread_state = ThrState::Instance();
+    if (int ret = thread_state->FindThread(thread, false); ret != 0) {
+        return ret;
+    }
+
+    /*
+     * Mark a pending cancellation on the target thread. Per POSIX, the actual
+     * exit happens at the next cancellation point (deferred) or immediately if
+     * the thread set asynchronous mode. We do not forcibly unwind the target
+     * here; we only arm the flag and kick it out of any cond/sleep wait so its
+     * wait loop can observe ShouldCancel() and run pthread_exit itself.
+     */
+    thread->cancel_pending = true;
+    const bool async = thread->cancel_async;
+    const bool will_sleep = thread->will_sleep;
+    thread->lock.unlock();
+
+    if (will_sleep) {
+        /* Release one wakeup token so a cond/sleep wait returns spuriously and
+         * the wait loop re-checks ShouldCancel(). */
+        thread->wake_sema.release();
+    }
+
+    if (async) {
+        /* Asynchronous cancellation: a pure flag is insufficient because the
+         * target may be blocked in a non-cancel-point wait. For threads already
+         * running on the host this is handled by their next instruction check;
+         * for blocked threads the wake_sema release above covers cond waits. */
+    }
+    return 0;
+}
+
+int PS4_SYSV_ABI scePthreadCancel(PthreadT thread) {
+    return posix_pthread_cancel(thread);
+}
+
 int Pthread::SetAffinity(const Cpuset* cpuset) {
     const auto processor_count = std::thread::hardware_concurrency();
     if (processor_count < 8) {
@@ -785,6 +853,8 @@ void RegisterThread(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("OxhIB8LB-PQ", "libScePosix", 1, "libkernel", posix_pthread_create);
     LIB_FUNCTION("Jmi+9w9u0E4", "libScePosix", 1, "libkernel", posix_pthread_create_name_np);
     LIB_FUNCTION("lZzFeSxPl08", "libScePosix", 1, "libkernel", posix_pthread_setcancelstate);
+    LIB_FUNCTION("2dEhvvjlq30", "libScePosix", 1, "libkernel", posix_pthread_setcanceltype);
+    LIB_FUNCTION("0D4-FVvEikw", "libScePosix", 1, "libkernel", posix_pthread_cancel);
     LIB_FUNCTION("a2P9wYGeZvc", "libScePosix", 1, "libkernel", posix_pthread_setprio);
     LIB_FUNCTION("9vyP6Z7bqzc", "libScePosix", 1, "libkernel", posix_pthread_rename_np);
     LIB_FUNCTION("FIs3-UQT9sg", "libScePosix", 1, "libkernel", posix_pthread_getschedparam);
@@ -798,6 +868,8 @@ void RegisterThread(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("OxhIB8LB-PQ", "libkernel", 1, "libkernel", posix_pthread_create);
     LIB_FUNCTION("Jmi+9w9u0E4", "libkernel", 1, "libkernel", posix_pthread_create_name_np);
     LIB_FUNCTION("lZzFeSxPl08", "libkernel", 1, "libkernel", posix_pthread_setcancelstate);
+    LIB_FUNCTION("2dEhvvjlq30", "libkernel", 1, "libkernel", posix_pthread_setcanceltype);
+    LIB_FUNCTION("0D4-FVvEikw", "libkernel", 1, "libkernel", posix_pthread_cancel);
     LIB_FUNCTION("CBNtXOoef-E", "libkernel", 1, "libkernel", posix_sched_get_priority_max);
     LIB_FUNCTION("m0iS6jNsXds", "libkernel", 1, "libkernel", posix_sched_get_priority_min);
     LIB_FUNCTION("Xs9hdiD7sAA", "libkernel", 1, "libkernel", posix_pthread_setschedparam);
@@ -830,6 +902,7 @@ void RegisterThread(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("HoLVWNanBBc", "libkernel", 1, "libkernel", posix_getpid);
     LIB_FUNCTION("rcrVFJsQWRY", "libkernel", 1, "libkernel", ORBIS(scePthreadGetaffinity));
     LIB_FUNCTION("bt3CTBKmGyI", "libkernel", 1, "libkernel", ORBIS(scePthreadSetaffinity));
+    LIB_FUNCTION("qBDmpCyGssE", "libkernel", 1, "libkernel", scePthreadCancel);
 }
 
 } // namespace Libraries::Kernel

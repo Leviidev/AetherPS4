@@ -15,6 +15,8 @@ int PS4_SYSV_ABI fex_libc_cxa_guard_acquire(u64* guard_object);
 void PS4_SYSV_ABI fex_libc_cxa_guard_release(u64* guard_object);
 void PS4_SYSV_ABI fex_libc_cxa_guard_abort(u64* guard_object);
 
+int PS4_SYSV_ABI fex_libc_cxa_atexit(void (*func)(void*), void* arg, void* dso_handle);
+
 void RegisterFexLibcCxaAliases(Core::Loader::SymbolsResolver* sym);
 
 } // namespace Libraries::LibcInternal

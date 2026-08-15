@@ -79,10 +79,21 @@ int PS4_SYSV_ABI sceMouseMbusInit() {
 
 int PS4_SYSV_ABI sceMouseOpen(Libraries::UserService::OrbisUserServiceUserId userId, s32 type,
                               s32 index, OrbisMouseOpenParam* pParam) {
-    LOG_WARNING(Lib_Mouse, "(DUMMY) called, uid: {}, type: {}, index: {}", userId, type, index);
+    OrbisMouseOpenParam default_param{};
+    pParam = const_cast<OrbisMouseOpenParam*>(ResolveMouseOpenParam(pParam, default_param));
+    LOG_WARNING(Lib_Mouse, "(DUMMY) called, uid: {}, type: {}, index: {}, flag: {}", userId, type,
+                index, static_cast<u32>(pParam->flag));
     auto u = UserManagement.GetUserByID(userId);
-    if (!u || !pParam || (u8)pParam->flag > 1 || index < 0 || index > 1) {
-        LOG_ERROR(Lib_Mouse, "invalid argument");
+    if (!u) {
+        LOG_ERROR(Lib_Mouse, "invalid argument: unknown user {}", userId);
+        return ORBIS_MOUSE_ERROR_INVALID_ARG;
+    }
+    if (index < 0 || index > 1) {
+        LOG_ERROR(Lib_Mouse, "invalid argument: index {}", index);
+        return ORBIS_MOUSE_ERROR_INVALID_ARG;
+    }
+    if (static_cast<u8>(pParam->flag) > 1) {
+        LOG_ERROR(Lib_Mouse, "invalid argument: flag {}", static_cast<u32>(pParam->flag));
         return ORBIS_MOUSE_ERROR_INVALID_ARG;
     }
     if (pParam->flag == MouseOpenBehaviour::Merged && index != 0) {

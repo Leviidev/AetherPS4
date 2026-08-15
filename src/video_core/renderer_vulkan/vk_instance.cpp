@@ -209,6 +209,11 @@ bool Instance::CreateDevice() {
                           vk::PhysicalDeviceWorkgroupMemoryExplicitLayoutFeaturesKHR,
                           vk::PhysicalDeviceImage2DViewOf3DFeaturesEXT>();
     features = feature_chain.get().features;
+    LOG_INFO(Render_Vulkan, "GPU_ClipCull: clip={} cull={} combined={} featClip={} featCull={}",
+             properties.limits.maxClipDistances, properties.limits.maxCullDistances,
+             properties.limits.maxCombinedClipAndCullDistances,
+             static_cast<bool>(features.shaderClipDistance),
+             static_cast<bool>(features.shaderCullDistance));
 
     const vk::StructureChain properties_chain = physical_device.getProperties2<
         vk::PhysicalDeviceProperties2, vk::PhysicalDeviceVulkan11Properties,
@@ -406,6 +411,7 @@ bool Instance::CreateDevice() {
                 .shaderStorageImageExtendedFormats = features.shaderStorageImageExtendedFormats,
                 .shaderStorageImageMultisample = features.shaderStorageImageMultisample,
                 .shaderClipDistance = features.shaderClipDistance,
+                .shaderCullDistance = features.shaderCullDistance,
                 .shaderFloat64 = features.shaderFloat64,
                 .shaderInt64 = features.shaderInt64,
                 .shaderInt16 = features.shaderInt16,

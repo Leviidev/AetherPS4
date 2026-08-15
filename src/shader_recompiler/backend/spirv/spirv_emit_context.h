@@ -261,6 +261,8 @@ public:
     Id sample_index{};
     Id clip_distances{};
     Id cull_distances{};
+    u32 clip_distance_count{};
+    u32 cull_distance_count{};
 
     Id patch_vertices{};
     Id output_tess_level_outer{};

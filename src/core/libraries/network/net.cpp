@@ -827,11 +827,14 @@ int PS4_SYSV_ABI sceNetEpollWait(OrbisNetId epollid, OrbisNetEpollEvent* events,
     LOG_DEBUG(Lib_Net, "called, epollid = {} ({}), maxevents = {}, timeout = {}", epollid,
               epoll->name, maxevents, timeout);
 
-    int sockets_waited_on = (epoll->events.size() - epoll->async_resolutions.size()) > 0;
+    const bool sockets_waited_on = epoll->events.size() > epoll->async_resolutions.size();
+    // Linux permits waiting on an empty epoll set. Preserve the guest timeout in that case;
+    // returning immediately turns an empty blocking wait into a CPU-burning poll loop.
+    const bool should_wait = sockets_waited_on || epoll->async_resolutions.empty();
 
     std::vector<epoll_event> native_events{static_cast<size_t>(maxevents)};
     int result = ORBIS_OK;
-    if (sockets_waited_on) {
+    if (should_wait) {
 #ifdef __linux__
         const timespec epoll_timeout{.tv_sec = timeout / 1000000,
                                      .tv_nsec = (timeout % 1000000) * 1000};

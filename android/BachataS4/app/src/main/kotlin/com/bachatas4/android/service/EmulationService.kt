@@ -335,7 +335,12 @@ class EmulationService : Service() {
             val encoder = ControllerFrameEncoder()
             val controllerOutput = clientSocket.outputStream
             val writeLock = Any()
+            val lastButtons = LongArray(4)
             val sink: (Int, ControllerSnapshot) -> Unit = { slot, snapshot ->
+                if (snapshot.buttons != lastButtons[slot]) {
+                    lastButtons[slot] = snapshot.buttons
+                    sessionLog.info("Input", "slot=$slot buttons=${snapshot.buttons}")
+                }
                 encoder.encode(slot, snapshot)?.let { frame ->
                     runCatching {
                         synchronized(writeLock) {

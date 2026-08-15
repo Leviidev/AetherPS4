@@ -80,4 +80,32 @@ class ImportManagerTest {
         assertFalse(ImportManager.isBusy())
         assertTrue(ImportManager.tryBeginImport())
     }
+
+    @Test
+    fun batchSelectedIsBusy() {
+        ImportManager.update(ImportProgress.BatchSelected("CUSA07023", "Bloodborne", 3))
+        assertTrue(ImportManager.isBusy())
+    }
+
+    @Test
+    fun batchExtractingIsBusy() {
+        ImportManager.update(
+            ImportProgress.BatchExtracting(1, 3, 500L, 1000L, "update.pkg", "Bloodborne"),
+        )
+        assertTrue(ImportManager.isBusy())
+    }
+
+    @Test
+    fun batchInstalledIsNotBusy() {
+        ImportManager.update(ImportProgress.BatchInstalled("CUSA07023", "Bloodborne", 3))
+        assertFalse(ImportManager.isBusy())
+    }
+
+    @Test
+    fun batchFailedIsNotBusy() {
+        ImportManager.update(
+            ImportProgress.BatchFailed(InstallErrorCode.MALFORMED_PACKAGE, "mismatch", 2, 3),
+        )
+        assertFalse(ImportManager.isBusy())
+    }
 }

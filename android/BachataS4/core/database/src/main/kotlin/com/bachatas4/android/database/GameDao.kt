@@ -37,6 +37,18 @@ interface GameDao {
     @Query("UPDATE games SET title = :title WHERE id = :id")
     suspend fun updateTitle(id: String, title: String): Int
 
+    @Query(
+        "UPDATE games SET title = :title, subtitle = :subtitle, detail = :detail, " +
+            "importedAtMs = :importedAtMs WHERE id = :id",
+    )
+    suspend fun updateMetadata(
+        id: String,
+        title: String,
+        subtitle: String?,
+        detail: String?,
+        importedAtMs: Long,
+    ): Int
+
     @Query("UPDATE games SET lastLaunchedAtMs = :timestamp WHERE id = :id")
     suspend fun updateLastLaunched(id: String, timestamp: Long): Int
 

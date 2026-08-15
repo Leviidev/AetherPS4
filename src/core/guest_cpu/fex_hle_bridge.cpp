@@ -66,7 +66,12 @@ Fex::EngineResult<bool> HleGuestBridge::Invoke(HleCallFrame& frame) {
         Report(failure);
         return Fex::EngineFailure{Fex::EngineStage::Bridge, failure.error};
     }
-    const auto trace_index = HleTraceCount.fetch_add(1, std::memory_order_relaxed);
+    // Tracing is intentionally bounded. Avoid a contended read-modify-write on every HLE call
+    // after the trace window has filled; hot polling APIs can cross this bridge millions of times.
+    auto trace_index = HleTraceCount.load(std::memory_order_relaxed);
+    if (trace_index < HleTraceLimit) {
+        trace_index = HleTraceCount.fetch_add(1, std::memory_order_relaxed);
+    }
     const bool trace = trace_index < HleTraceLimit;
     if (trace) {
         std::fprintf(stderr,

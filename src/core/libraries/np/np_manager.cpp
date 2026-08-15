@@ -20,6 +20,9 @@
 #include "core/tls.h"
 #include "core/user_manager.h"
 #include "np_handler.h"
+#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
+#include "core/guest_cpu/guest_callback.h"
+#endif
 
 namespace Libraries::Np::NpManager {
 
@@ -811,6 +814,20 @@ static s32 UnregisterStateCallbackAById(s32 callback_id) {
     return ORBIS_OK;
 }
 
+template <typename Fn, typename... Args>
+static void InvokeNpStateGuestCallback(Fn func, std::string_view label, Args... args) {
+    if (func == nullptr) {
+        return;
+    }
+#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
+    if (Core::GuestCpu::IsGuestFunctionAddress(reinterpret_cast<const void*>(func))) {
+        Core::GuestCpu::RunGuestFunctionOrAbort(reinterpret_cast<const void*>(func), label, args...);
+        return;
+    }
+#endif
+    func(args...);
+}
+
 static void DispatchPendingNpStateCallbacks() {
     std::deque<PendingNpStateEvent> pending_events;
     LegacyNpStateCallback legacy_callback{};
@@ -826,25 +843,22 @@ static void DispatchPendingNpStateCallbacks() {
     }
 
     for (auto& event : pending_events) {
-        if (legacy_callback.func != nullptr) {
-            legacy_callback.func(event.user_id, event.state,
-                                 event.has_np_id ? &event.np_id : nullptr,
-                                 legacy_callback.userdata);
-        }
+        OrbisNpId* np_id = event.has_np_id ? &event.np_id : nullptr;
+        LOG_INFO(Lib_NpManager, "dispatch np state user={} state={} has_cb={}", event.user_id,
+                 static_cast<u32>(event.state), legacy_callback.func != nullptr);
+        InvokeNpStateGuestCallback(legacy_callback.func, "sceNpStateCallback", event.user_id,
+                                   event.state, np_id, legacy_callback.userdata);
 
         for (const auto& entry : callbacks) {
-            if (!entry.in_use) {
+            if (!entry.in_use || entry.func == nullptr) {
                 continue;
             }
-
-            if (entry.func != nullptr) {
-                entry.func(event.user_id, event.state, entry.userdata);
-            }
+            InvokeNpStateGuestCallback(entry.func, "sceNpStateCallbackA", event.user_id,
+                                       event.state, entry.userdata);
         }
 
-        if (NpStateCbForNp.func != nullptr) {
-            NpStateCbForNp.func(event.user_id, event.state, NpStateCbForNp.userdata);
-        }
+        InvokeNpStateGuestCallback(NpStateCbForNp.func, "sceNpStateCallbackForToolkit",
+                                   event.user_id, event.state, NpStateCbForNp.userdata);
     }
 }
 

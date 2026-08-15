@@ -61,9 +61,13 @@ struct IrqController {
         auto& ctx = irq_contexts.try_emplace(irq).first->second;
 
         std::unique_lock lock{ctx.m_lock};
-        ASSERT_MSG(ctx.persistent_handlers.find(uid) == ctx.persistent_handlers.cend(),
-                   "The handler is already registered!");
-        ctx.persistent_handlers.emplace(uid, handler);
+        // Guest titles (e.g. SnowRunner) re-add the same GPU equeue event after the
+        // first flip. Real kqueue EV_ADD replaces; asserting here aborts as exit 133.
+        if (ctx.persistent_handlers.contains(uid)) {
+            LOG_DEBUG(Core, "IRQ handler replaced: irq={} uid={}",
+                      magic_enum::enum_name(irq), uid);
+        }
+        ctx.persistent_handlers[uid] = std::move(handler);
     }
 
     void Unregister(InterruptId irq, void* uid) {

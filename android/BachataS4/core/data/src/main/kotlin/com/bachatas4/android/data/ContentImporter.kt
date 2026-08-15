@@ -34,6 +34,11 @@ data class ContentImportResult(
     val sha256: String,
 )
 
+data class OverlayResult(
+    val filesMerged: Int,
+    val bytesMerged: Long,
+)
+
 data class ContentTreeEntry(
     val relativePath: String,
     val sourceUri: String,
@@ -310,6 +315,44 @@ class ContentImporter(
         digest: MessageDigest,
     ): Long {
         return copyUri(request.sourceUri, payload, digest)
+    }
+
+    /**
+     * Merge [stagingDir] into the existing games/<gameId>/ folder, overwriting files.
+     * Does NOT delete the destination tree and does NOT require eboot.bin in staging
+     * (update/DLC PKGs may omit it). The destination must already exist (base game
+     * installed).
+     */
+    suspend fun overlayStaging(
+        gameId: String,
+        stagingDir: File,
+        contentId: String?,
+        sourceUri: String,
+    ): OverlayResult = withContext(Dispatchers.IO) {
+        validateGameId(gameId)
+        val gamesDir = File(filesDir, "games").canonicalFile
+        val dest = File(gamesDir, gameId).canonicalFile
+        val staging = stagingDir.canonicalFile
+        requireInside(gamesDir, dest)
+        requireInside(gamesDir, staging)
+        if (!dest.isDirectory) {
+            throw ContentImportException(RuntimeErrorCode.CONTENT_INVALID, "Base game not installed")
+        }
+
+        var files = 0
+        var bytes = 0L
+        staging.walkTopDown().forEach { file ->
+            if (!file.isFile) return@forEach
+            val rel = file.relativeTo(staging).path
+            val target = File(dest, rel).canonicalFile
+            requireInside(dest, target)
+            target.parentFile?.mkdirs()
+            coroutineContext.ensureActive()
+            file.copyTo(target, overwrite = true)
+            files++
+            bytes += file.length()
+        }
+        OverlayResult(files, bytes)
     }
 
     private suspend fun copyUri(

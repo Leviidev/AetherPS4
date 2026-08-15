@@ -18,12 +18,22 @@ class ControllerBindingResolver {
 
     fun snapshot(profile: ControllerProfile, values: Map<PhysicalBinding, Float>): ControllerSnapshot {
         fun value(control: String): Float {
-            val raw = profile.bindings[control]?.let { values[it] } ?: 0f
+            val binding = profile.bindings[control]
+            val raw = binding?.let { values[it] } ?: 0f
             val dead = if (control.endsWith("_x") || control.endsWith("_y")) raw.takeUnless { abs(it) < profile.deadZone } ?: 0f else raw
             return if (control in profile.invertAxes) -dead else dead
         }
+        fun buttonActive(control: String): Boolean {
+            val binding = profile.bindings[control] ?: return false
+            val v = values[binding] ?: 0f
+            return when (binding.direction) {
+                AxisDirection.NEGATIVE -> v <= -BUTTON_THRESHOLD
+                AxisDirection.POSITIVE -> v >= BUTTON_THRESHOLD
+                AxisDirection.BOTH -> v >= BUTTON_THRESHOLD
+            }
+        }
         var buttons = 0L
-        BUTTON_BITS.forEach { (control, bit) -> if (value(control) >= 0.5f) buttons = buttons or bit }
+        BUTTON_BITS.forEach { (control, bit) -> if (buttonActive(control)) buttons = buttons or bit }
         val leftTrigger = value("left_trigger").coerceIn(0f, 1f)
         val rightTrigger = value("right_trigger").coerceIn(0f, 1f)
         if (leftTrigger >= profile.triggerThreshold || value("l2") >= 0.5f) buttons = buttons or Ps4Button.L2
@@ -42,6 +52,7 @@ class ControllerBindingResolver {
         expected.descriptor == actual.descriptor && expected.vendorId == actual.vendorId && expected.productId == actual.productId
 
     private companion object {
+        const val BUTTON_THRESHOLD = 0.5f
         val BUTTON_BITS = mapOf(
             "cross" to Ps4Button.CROSS, "circle" to Ps4Button.CIRCLE, "square" to Ps4Button.SQUARE, "triangle" to Ps4Button.TRIANGLE,
             "l1" to Ps4Button.L1, "r1" to Ps4Button.R1, "l3" to Ps4Button.L3, "r3" to Ps4Button.R3,

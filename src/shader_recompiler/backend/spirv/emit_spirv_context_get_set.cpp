@@ -239,9 +239,15 @@ void EmitSetAttribute(EmitContext& ctx, IR::Attribute attr, Id value, u32 elemen
         return op_store(
             ctx.OpAccessChain(ctx.output_f32, ctx.output_position, ctx.ConstU32(element)));
     case IR::Attribute::ClipDistance:
+        if (!Sirit::ValidId(ctx.clip_distances) || element >= ctx.clip_distance_count) {
+            return;
+        }
         return op_store(
             ctx.OpAccessChain(ctx.output_f32, ctx.clip_distances, ctx.ConstU32(element)));
     case IR::Attribute::CullDistance:
+        if (!Sirit::ValidId(ctx.cull_distances) || element >= ctx.cull_distance_count) {
+            return;
+        }
         return op_store(
             ctx.OpAccessChain(ctx.output_f32, ctx.cull_distances, ctx.ConstU32(element)));
     case IR::Attribute::PointSize:

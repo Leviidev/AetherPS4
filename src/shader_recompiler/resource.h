@@ -7,6 +7,7 @@
 #include "shader_recompiler/ir/type.h"
 #include "video_core/amdgpu/resource.h"
 
+#include <boost/container/small_vector.hpp>
 #include <boost/container/static_vector.hpp>
 
 namespace Shader {
@@ -14,7 +15,7 @@ namespace Shader {
 static constexpr u32 NUM_USER_DATA_REGS = 16;
 static constexpr u32 NUM_IMAGES = 64;
 static constexpr u32 NUM_BUFFERS = 40;
-static constexpr u32 NUM_SAMPLERS = 16;
+static constexpr u32 NUM_SAMPLERS = 32;
 static constexpr u32 NUM_FMASKS = 8;
 
 enum class BufferType : u32 {
@@ -129,7 +130,7 @@ struct ImageResource {
                    : 1;
     }
 };
-using ImageResourceList = boost::container::static_vector<ImageResource, NUM_IMAGES>;
+using ImageResourceList = boost::container::small_vector<ImageResource, NUM_IMAGES>;
 
 struct SamplerResource {
     u32 sharp_idx;
@@ -143,7 +144,7 @@ struct SamplerResource {
                                  : info.template ReadUdSharp<AmdGpu::Sampler>(sharp_idx);
     }
 };
-using SamplerResourceList = boost::container::static_vector<SamplerResource, NUM_SAMPLERS>;
+using SamplerResourceList = boost::container::small_vector<SamplerResource, NUM_SAMPLERS>;
 
 struct FMaskResource {
     u32 sharp_idx;

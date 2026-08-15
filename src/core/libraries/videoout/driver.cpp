@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <atomic>
+#include <optional>
 
 #include "common/assert.h"
 #include "common/debug.h"
@@ -76,6 +77,7 @@ void VideoOutDriver::Close(s32 handle) {
     main_port.is_open = false;
     main_port.flip_rate = 0;
     main_port.prev_index = -1;
+    main_port.flip_labels.ResetAll();
 
     // Clear port information
     std::memset(main_port.buffer_labels.data(), 0, sizeof(main_port.buffer_labels));
@@ -177,6 +179,7 @@ int VideoOutDriver::RegisterBuffers(VideoOutPort* port, s32 startIndex, void* co
 
         // Reset flip label also when registering buffer
         port->buffer_labels[startIndex + i] = 0;
+        port->flip_labels.ResetBuffer(static_cast<s32>(startIndex + i));
         port->SignalVoLabel();
 
         presenter->RegisterVideoOutSurface(group, address);
@@ -195,11 +198,13 @@ int VideoOutDriver::UnregisterBuffers(VideoOutPort* port, s32 attributeIndex) {
     auto& group = port->groups[attributeIndex];
     group.is_occupied = false;
 
-    for (auto& buffer : port->buffer_slots) {
+    for (s32 i = 0; i < static_cast<s32>(port->buffer_slots.size()); ++i) {
+        auto& buffer = port->buffer_slots[i];
         if (buffer.group_index != attributeIndex) {
             continue;
         }
         buffer.group_index = -1;
+        port->flip_labels.ResetBuffer(i);
     }
 
     return ORBIS_OK;
@@ -291,10 +296,19 @@ void VideoOutDriver::Flip(const Request& req) {
     // Reset prev flip label
     if (port->prev_index != -1) {
         port->buffer_labels[port->prev_index] = 0;
+        {
+            std::scoped_lock lock{port->port_mutex};
+            port->flip_labels.CancelRetirementForIndex(port->prev_index);
+        }
         port->SignalVoLabel();
     }
     // save to prev buf index
     port->prev_index = req.index;
+    if (req.eop && req.lock_generation != FlipLabelTracker::kInvalidGeneration && req.index >= 0) {
+        std::scoped_lock lock{port->port_mutex};
+        port->flip_labels.ScheduleRetirement(req.index, req.lock_generation,
+                                             port->vblank_status.count + 1);
+    }
 }
 
 void VideoOutDriver::DrawBlankFrame() {
@@ -310,7 +324,7 @@ void VideoOutDriver::DrawLastFrame() {
 }
 
 bool VideoOutDriver::SubmitFlip(VideoOutPort* port, s32 index, s64 flip_arg,
-                                bool is_eop /*= false*/) {
+                                bool is_eop /*= false*/, u64 lock_generation) {
     if (submit_traces.fetch_add(1, std::memory_order_relaxed) < 32) {
         LOG_INFO(Lib_VideoOut,
                  "BACHATA_FLIP_TRACE stage=driver_submit index={} arg={} eop={} pending={}", index,
@@ -338,16 +352,17 @@ bool VideoOutDriver::SubmitFlip(VideoOutPort* port, s32 index, s64 flip_arg,
                          "BACHATA_FLIP_TRACE stage=gpu_dispatch index={} arg={} eop={}", index,
                          flip_arg, is_eop);
             }
-            SubmitFlipInternal(port, index, flip_arg, is_eop);
+            SubmitFlipInternal(port, index, flip_arg, is_eop, lock_generation);
         });
     } else {
-        SubmitFlipInternal(port, index, flip_arg, is_eop);
+        SubmitFlipInternal(port, index, flip_arg, is_eop, lock_generation);
     }
 
     return true;
 }
 
-void VideoOutDriver::SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_arg, bool is_eop) {
+void VideoOutDriver::SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_arg, bool is_eop,
+                                        u64 lock_generation) {
     if (internal_traces.fetch_add(1, std::memory_order_relaxed) < 32) {
         LOG_INFO(Lib_VideoOut,
                  "BACHATA_FLIP_TRACE stage=prepare_enter index={} arg={} eop={}", index, flip_arg,
@@ -376,6 +391,7 @@ void VideoOutDriver::SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_
         .flip_arg = flip_arg,
         .index = index,
         .eop = is_eop,
+        .lock_generation = lock_generation,
     });
     if (queue_traces.load(std::memory_order_relaxed) <= 32) {
         LOG_INFO(Lib_VideoOut,
@@ -414,6 +430,7 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
 
         // Check if it's time to take a request.
         auto& vblank_status = main_port.vblank_status;
+        ApplyDueLabelRetirement();
         if (vblank_status.count % (main_port.flip_rate + 1) == 0) {
             const auto request = receive_request();
             if (!request) {
@@ -461,6 +478,20 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
 
         timer.End();
     }
+}
+
+void VideoOutDriver::ApplyDueLabelRetirement() {
+    std::optional<s32> index;
+    {
+        std::scoped_lock lock{main_port.port_mutex};
+        index = main_port.flip_labels.ConsumeDueRetirement(main_port.vblank_status.count);
+    }
+    if (!index.has_value()) {
+        return;
+    }
+    main_port.buffer_labels[*index] = 0;
+    main_port.SignalVoLabel();
+    LOG_INFO(Lib_VideoOut, "retired scanout label index={}", *index);
 }
 
 } // namespace Libraries::VideoOut

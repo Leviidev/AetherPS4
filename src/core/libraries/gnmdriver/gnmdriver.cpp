@@ -126,7 +126,7 @@ static inline bool IsValidEventType(Platform::InterruptId id) {
 }
 
 s32 PS4_SYSV_ABI sceGnmAddEqEvent(OrbisKernelEqueue eq, u64 id, void* udata) {
-    LOG_TRACE(Lib_GnmDriver, "called");
+    LOG_TRACE(Lib_GnmDriver, "eq={:#x} id={:#x} udata={}", eq, id, udata);
 
     auto equeue = GetEqueue(eq);
     if (!equeue) {

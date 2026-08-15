@@ -1,2 +1,0 @@
---------- beginning of main
-07-15 20:32:19.913 30517 30531 I BachataFexSmoke: FEXCORE_SMOKE_OK revision=f2b679f6028ce1c38875233aecfcf5d3f8ebecec gpr=ok stack=ok fp=ok threads=ok tls=ok callback=ok invalidation=ok

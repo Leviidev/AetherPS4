@@ -22,7 +22,9 @@
 #include "core/ipc/ipc.h"
 #include "core/loader/elf.h"
 #include "core/user_settings.h"
+#include "common/singleton.h"
 #include "emulator.h"
+#include "input/controller.h"
 #include "imgui/big_picture/big_picture.h"
 #ifdef ENABLE_BACHATA_RUNTIME
 #include "platform/bachata/runtime_client.h"
@@ -294,6 +296,11 @@ int main(int argc, char* argv[]) {
     // Desktop input discovery logs in player one during its first controller scan. The
     // Android runtime bypasses that scan, so bootstrap the same user-service login event.
     UserManagement.LoginUser(UserManagement.GetUserByPlayerIndex(1), 1);
+    if (auto* user = UserManagement.GetUserByPlayerIndex(1)) {
+        auto* controllers = Common::Singleton<Input::GameControllers>::Instance();
+        (*controllers)[0]->user_id = user->user_id;
+        (*controllers)[0]->ConnectController(nullptr);
+    }
 #endif
 
     // Initialize key manager

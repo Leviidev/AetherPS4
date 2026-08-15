@@ -57,6 +57,34 @@ sealed interface ImportProgress {
     data class Installed(val gameId: String, val title: String) : ImportProgress
 
     data class Failed(val code: InstallErrorCode, val message: String) : ImportProgress
+
+    data class BatchSelected(
+        val gameId: String,
+        val gameTitle: String,
+        val packageCount: Int,
+    ) : ImportProgress
+
+    data class BatchExtracting(
+        val index: Int,
+        val total: Int,
+        val bytesCopied: Long,
+        val totalBytes: Long,
+        val currentFile: String,
+        val gameTitle: String,
+    ) : ImportProgress
+
+    data class BatchInstalled(
+        val gameId: String,
+        val title: String,
+        val count: Int,
+    ) : ImportProgress
+
+    data class BatchFailed(
+        val code: InstallErrorCode,
+        val message: String,
+        val completedCount: Int,
+        val totalCount: Int,
+    ) : ImportProgress
 }
 
 object ImportManager {
@@ -64,11 +92,15 @@ object ImportManager {
     const val ACTION_CANCEL = "com.bachatas4.android.action.CANCEL_IMPORT"
     const val ACTION_SUBMIT_PASSCODE = "com.bachatas4.android.action.SUBMIT_PASSCODE"
     const val ACTION_CONFIRM_PKG_COPY = "com.bachatas4.android.action.CONFIRM_PKG_COPY"
+    const val ACTION_IMPORT_PKGS = "com.bachatas4.android.action.IMPORT_PKGS"
     const val EXTRA_URI = "source_uri"
     const val EXTRA_MODE = "import_mode"
     const val EXTRA_PASSCODE = "passcode"
+    const val EXTRA_GAME_ID = "game_id"
+    const val EXTRA_URIS = "source_uris" // String ArrayList extra
     const val MODE_FOLDER = "folder"
     const val MODE_PKG = "pkg"
+    const val MODE_PKG_BATCH = "pkg-batch"
     const val SERVICE_CLASS = "com.bachatas4.android.service.ImportService"
 
     private val _progress = MutableStateFlow<ImportProgress>(ImportProgress.Idle)
@@ -79,6 +111,8 @@ object ImportManager {
             is ImportProgress.Idle,
             is ImportProgress.Installed,
             is ImportProgress.Failed,
+            is ImportProgress.BatchInstalled,
+            is ImportProgress.BatchFailed,
             -> false
             else -> true
         }

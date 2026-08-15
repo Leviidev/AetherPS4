@@ -440,6 +440,9 @@ result
 /runtime/build/
 /runtime/sources/
 
+# Local release provenance records (private; see docs/RELEASE_PROCESS.md)
+/release-manifests/
+
 .cxx
 
 # Large local guest pins (optional; package-runtime uses if present)

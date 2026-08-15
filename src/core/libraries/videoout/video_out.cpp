@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <atomic>
+#include <mutex>
 
 #include "common/assert.h"
 #include "common/elf_info.h"
@@ -382,7 +383,12 @@ s32 sceVideoOutSubmitEopFlip(s32 handle, u32 buf_id, u32 mode, s64 flip_arg, voi
                        "Out of order flip IRQ: index={} label={} prev_index={} pending={}", buf_id,
                        port->buffer_labels[buf_id], port->prev_index,
                        port->flip_status.flip_pending_num);
-            const auto result = driver->SubmitFlip(port, buf_id, flip_arg, true);
+            u64 lock_generation = FlipLabelTracker::kInvalidGeneration;
+            {
+                std::scoped_lock lock{port->port_mutex};
+                lock_generation = port->flip_labels.Generation(static_cast<s32>(buf_id));
+            }
+            const auto result = driver->SubmitFlip(port, buf_id, flip_arg, true, lock_generation);
             ASSERT_MSG(result, "EOP flip submission failed");
         });
 

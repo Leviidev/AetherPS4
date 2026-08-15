@@ -336,6 +336,12 @@ void SetupCapabilities(const Info& info, const Profile& profile, const RuntimeIn
                info.stores.GetAny(IR::Attribute::ViewportIndex)) {
         ctx.AddCapability(spv::Capability::MultiViewport);
     }
+    if (Sirit::ValidId(ctx.clip_distances)) {
+        ctx.AddCapability(spv::Capability::ClipDistance);
+    }
+    if (Sirit::ValidId(ctx.cull_distances)) {
+        ctx.AddCapability(spv::Capability::CullDistance);
+    }
     if (info.uses_dma) {
         ctx.AddCapability(spv::Capability::PhysicalStorageBufferAddresses);
         ctx.AddExtension("SPV_KHR_physical_storage_buffer");

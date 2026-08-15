@@ -24,7 +24,9 @@ elif [[ "$(git -C "$dest" remote get-url origin)" != "$url" ]]; then
   exit 1
 fi
 
-git -C "$dest" fetch --depth 1 origin "$revision"
+if ! git -C "$dest" cat-file -e "$revision^{commit}" >/dev/null 2>&1; then
+  git -C "$dest" fetch --depth 1 origin "$revision"
+fi
 git -C "$dest" checkout --detach --force "$revision"
 git -C "$dest" clean -fd
 test "$(git -C "$dest" rev-parse HEAD)" = "$revision"

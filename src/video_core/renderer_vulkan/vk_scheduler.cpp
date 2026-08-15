@@ -10,6 +10,8 @@
 
 namespace Vulkan {
 
+constexpr u64 MAX_IN_FLIGHT_SUBMISSIONS = 8;
+
 std::mutex Scheduler::submit_mutex;
 
 Scheduler::Scheduler(const Instance& instance)
@@ -107,6 +109,7 @@ void Scheduler::Finish() {
     SubmitInfo info{};
     SubmitExecution(info);
     Wait(presubmit_tick);
+    PopPendingOperations();
 }
 
 void Scheduler::Wait(u64 tick) {
@@ -119,7 +122,9 @@ void Scheduler::Wait(u64 tick) {
 }
 
 void Scheduler::PopPendingOperations() {
-    master_semaphore.Refresh();
+    // SubmitExecution's in-flight limit periodically advances the cached GPU tick. Querying the
+    // timeline semaphore here makes Turnip enter a blocking ioctl on every submission, defeating
+    // that batching. Only reclaim objects already proven idle; Finish() drains after its wait.
     while (!pending_ops.empty() && master_semaphore.IsFree(pending_ops.front().gpu_tick)) {
         pending_ops.front().callback();
         pending_ops.pop();
@@ -150,6 +155,9 @@ void Scheduler::AllocateWorkerCommandBuffers() {
 void Scheduler::SubmitExecution(SubmitInfo& info) {
     std::scoped_lock lk{submit_mutex};
     const u64 signal_value = master_semaphore.NextTick();
+    if (signal_value > MAX_IN_FLIGHT_SUBMISSIONS) {
+        master_semaphore.Wait(signal_value - MAX_IN_FLIGHT_SUBMISSIONS);
+    }
 
 #if TRACY_GPU_ENABLED
     auto* profiler_ctx = instance.GetProfilerContext();
@@ -192,7 +200,6 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
     auto submit_result = instance.GetGraphicsQueue().submit(submit_info, info.fence);
     ASSERT_MSG(submit_result != vk::Result::eErrorDeviceLost, "Device lost during submit");
 
-    master_semaphore.Refresh();
     AllocateWorkerCommandBuffers();
 
     // Apply pending operations

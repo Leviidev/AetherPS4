@@ -52,6 +52,10 @@ struct Profile {
     bool needs_unorm_fixup{};
     bool needs_clip_distance_emulation{};
     bool supports_shader_stencil_export{};
+    bool supports_shader_cull_distance{true};
+    u32 max_clip_distances{8};
+    u32 max_cull_distances{8};
+    u32 max_combined_clip_and_cull_distances{8};
 };
 
 } // namespace Shader

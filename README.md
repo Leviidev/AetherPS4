@@ -46,8 +46,6 @@ SPDX-License-Identifier: GPL-2.0-or-later
   ·
   <a href="https://github.com/JICA98/Bachata-S4/releases">Releases</a>
   ·
-  <a href="documents/android-building.md">Build guide</a>
-  ·
   <a href="https://github.com/JICA98/Bachata-S4-Compatibility">Compatibility data</a>
 </p>
 
@@ -245,9 +243,6 @@ The exact driver name, version, build, and source must be recorded in compatibil
 reports. A filename, Vulkan API version, Android version, or GPU model is not a substitute
 for the actual Turnip version.
 
-See [`documents/android-building.md`](documents/android-building.md) for the maintained
-runtime and packaging rules.
-
 ---
 
 ## Compatibility data architecture
@@ -312,35 +307,11 @@ A useful report includes:
 
 ## Build from source
 
-The maintained instructions are in
-**[`documents/android-building.md`](documents/android-building.md)**. Use that guide as the
-source of truth because the runtime and Android toolchain evolve quickly.
-
-Current high-level requirements include:
-
-- Linux or WSL2 x86-64
-- JDK 17+ and Node.js 20+
-- Android SDK platform/build-tools 37
-- Android NDK `30.0.14904198`
-- CMake `3.22.1`
-- Ninja
-- Debian/Ubuntu runtime build dependencies
-
-High-level build flow:
-
-```bash
-git submodule update --init --recursive --jobs 8
-
-runtime/scripts/build-runtime-debian.sh
-node runtime/tests/verify-runtime.mjs runtime/locks/components.lock.json
-node runtime/tests/verify-no-bundled-turnip.mjs runtime/build/rootfs
-
-cd android/BachataS4
-./gradlew clean test lintDebug assemblePlaystoreDebug
-```
-
-Do not copy commands from old releases or third-party guides without checking the
-maintained Android build document.
+This repository contains the source corresponding to published builds. The
+Gradle project under `android/BachataS4` and the build scripts under
+`runtime/scripts` are the sources of truth. The runtime is packaged before the
+APK; the Gradle build packages existing runtime assets and does not generate
+them.
 
 ---
 
@@ -367,8 +338,6 @@ kernel/HLE behavior, graphics, audio, input, runtime packaging, or Android integ
   [github.com/JICA98/Bachata-S4/issues](https://github.com/JICA98/Bachata-S4/issues)
 - **Compatibility data and report pull requests:**  
   [github.com/JICA98/Bachata-S4-Compatibility](https://github.com/JICA98/Bachata-S4-Compatibility)
-- **Android/runtime build guide:**  
-  [`documents/android-building.md`](documents/android-building.md)
 - **Contributing guide:**  
   [`CONTRIBUTING.md`](CONTRIBUTING.md)
 - **Upstream emulator:**  

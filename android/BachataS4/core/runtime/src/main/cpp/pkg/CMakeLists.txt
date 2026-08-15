@@ -15,6 +15,13 @@ target_compile_options(bachata_pkg PRIVATE -fexceptions -frtti)
 if(ANDROID_ABI STREQUAL "arm64-v8a")
     target_compile_options(bachata_pkg PRIVATE -march=armv8-a+crypto)
 endif()
+# Force -O2 on the PKG extract/crypto hot path regardless of CMake build type.
+# AGP compiles native code at the clang default (-O0) for the debug variant;
+# the XTS-AES / PFSC inflate / parallel extract loop is ~5-10x slower
+# unoptimized — a debug APK imports a base-game PKG at ~200 MB/s instead of
+# ~1-2 GB/s. The last -O flag wins, so this overrides the toolchain -O0.
+# Mirrors the unconditional -O2 in winlator/CMakeLists.txt.
+target_compile_options(bachata_pkg PRIVATE -O2)
 find_library(log-lib log)
 find_library(z-lib z)
 target_link_libraries(bachata_pkg PRIVATE ${log-lib} ${z-lib})

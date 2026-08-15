@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <bit>
 #include <span>
 #include <vector>
 #include <boost/container/static_vector.hpp>
@@ -96,6 +97,11 @@ struct Info : InfoPersistent {
 
         u32 NumComponents(IR::Attribute attrib) const {
             return 4;
+        }
+
+        u32 UsedCount(IR::Attribute attrib) const {
+            const unsigned bits = flags[Index(attrib)];
+            return bits == 0 ? 0u : static_cast<u32>(std::bit_width(bits));
         }
 
         static size_t Index(IR::Attribute attrib) {

@@ -27,8 +27,6 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.input.pointer.changedToDown
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.bachatas4.android.designsystem.theme.BachataPalette
 import com.bachatas4.android.runtime.input.ControllerSnapshot
@@ -37,6 +35,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import android.graphics.Rect
 import android.content.Context
+import android.view.MotionEvent
 import android.view.View
 import android.graphics.Canvas as AndroidCanvas
 import androidx.compose.ui.viewinterop.AndroidView
@@ -53,41 +52,50 @@ fun FixedControllerOverlay(
     DisposableEffect(state) {
         onDispose { state.cancelAll(); onSnapshot(ControllerSnapshot.Neutral) }
     }
+    fun applyMotion(event: MotionEvent, viewWidth: Int, viewHeight: Int): Boolean {
+        if (viewWidth <= 0 || viewHeight <= 0) return false
+        val scaleX = viewWidth / TouchControllerState.LogicalWidth
+        val scaleY = viewHeight / TouchControllerState.LogicalHeight
+        fun logicalX(index: Int) = event.getX(index) / scaleX
+        fun logicalY(index: Int) = event.getY(index) / scaleY
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                val index = event.actionIndex
+                state.pointerDown(event.getPointerId(index).toLong(), logicalX(index), logicalY(index))
+            }
+            MotionEvent.ACTION_MOVE -> {
+                for (index in 0 until event.pointerCount) {
+                    state.pointerMove(event.getPointerId(index).toLong(), logicalX(index), logicalY(index))
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
+                state.pointerUp(event.getPointerId(event.actionIndex).toLong())
+            }
+            MotionEvent.ACTION_CANCEL -> state.cancelAll()
+            else -> return false
+        }
+        val snap = state.snapshot()
+        snapshot = snap
+        onSnapshot(snap)
+        return true
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         AndroidView(
-            modifier = Modifier.fillMaxSize().pointerInput(layout) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val scaleX = size.width / TouchControllerState.LogicalWidth
-                        val scaleY = size.height / TouchControllerState.LogicalHeight
-                        event.changes.forEach { change ->
-                            val x = change.position.x / scaleX
-                            val y = change.position.y / scaleY
-                            when {
-                                change.changedToDown() -> state.pointerDown(change.id.value, x, y)
-                                !change.pressed -> state.pointerUp(change.id.value)
-                                else -> state.pointerMove(change.id.value, x, y)
-                            }
-                            change.consume()
-                        }
-                        val snap = state.snapshot()
-                        snapshot = snap
-                        onSnapshot(snap)
-                    }
-                }
-            },
+            modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
                 GlassOverlayView(ctx).apply {
                     this.layout = layout
                     this.snapshot = snapshot
                     this.faded = faded
+                    this.onMotion = { event -> applyMotion(event, width, height) }
                 }
             },
             update = { view ->
                 view.layout = layout
                 view.snapshot = snapshot
                 view.faded = faded
+                view.onMotion = { event -> applyMotion(event, view.width, view.height) }
                 view.invalidate()
             }
         )
@@ -136,6 +144,11 @@ private class GlassOverlayView(context: Context) : View(context) {
     var layout: TouchLayout = TouchLayout()
     var snapshot: ControllerSnapshot = ControllerSnapshot.Neutral
     var faded: Boolean = false
+    var onMotion: ((MotionEvent) -> Boolean)? = null
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        return onMotion?.invoke(event) == true || super.onTouchEvent(event)
+    }
 
     override fun onDraw(canvas: AndroidCanvas) {
         super.onDraw(canvas)

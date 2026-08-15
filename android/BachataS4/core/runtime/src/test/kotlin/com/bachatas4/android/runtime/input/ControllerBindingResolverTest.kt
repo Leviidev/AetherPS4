@@ -38,4 +38,39 @@ class ControllerBindingResolverTest {
             resolver.assignSlots(List(5) { ControllerProfile() }, emptyList())
         }
     }
+
+    @Test
+    fun hatNegativeDirectionMapsToDpadUp() {
+        val hatY = PhysicalBinding(PhysicalBindingKind.AXIS, 16, AxisDirection.NEGATIVE)
+        val profile = ControllerProfile(device = null, bindings = mapOf("dpad_up" to hatY))
+        val snapshot = resolver.snapshot(profile, mapOf(hatY to -1f))
+        assertTrue(snapshot.buttons and Ps4Button.UP != 0L)
+    }
+
+    @Test
+    fun hatPositiveDirectionMapsToDpadDown() {
+        val hatY = PhysicalBinding(PhysicalBindingKind.AXIS, 16, AxisDirection.POSITIVE)
+        val profile = ControllerProfile(device = null, bindings = mapOf("dpad_down" to hatY))
+        val snapshot = resolver.snapshot(profile, mapOf(hatY to 1f))
+        assertTrue(snapshot.buttons and Ps4Button.DOWN != 0L)
+    }
+
+    @Test
+    fun hatDirectionDoesNotFireOnWrongSign() {
+        val hatYNeg = PhysicalBinding(PhysicalBindingKind.AXIS, 16, AxisDirection.NEGATIVE)
+        val profile = ControllerProfile(device = null, bindings = mapOf("dpad_up" to hatYNeg))
+        // Positive value on a NEGATIVE-direction binding should NOT activate the button.
+        val snapshot = resolver.snapshot(profile, mapOf(hatYNeg to 1f))
+        assertTrue(snapshot.buttons and Ps4Button.UP == 0L)
+    }
+
+    @Test
+    fun bothDirectionUsesPositiveThresholdOnly() {
+        val axis = PhysicalBinding(PhysicalBindingKind.AXIS, 0, AxisDirection.BOTH)
+        val profile = ControllerProfile(device = null, bindings = mapOf("cross" to axis))
+        // Positive fires
+        assertTrue(resolver.snapshot(profile, mapOf(axis to 0.8f)).buttons and Ps4Button.CROSS != 0L)
+        // Negative does not (BOTH = legacy behavior, only checks >= threshold)
+        assertTrue(resolver.snapshot(profile, mapOf(axis to -0.8f)).buttons and Ps4Button.CROSS == 0L)
+    }
 }

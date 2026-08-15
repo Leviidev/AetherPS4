@@ -28,7 +28,10 @@ import com.bachatas4.android.data.InstallCleanup
 import com.bachatas4.android.data.InstallErrorCode
 import com.bachatas4.android.data.InstallJob
 import com.bachatas4.android.data.InstallJobStore
+import com.bachatas4.android.data.InstallManifest
+import com.bachatas4.android.data.InstallManifestIo
 import com.bachatas4.android.data.InstallValidator
+import com.bachatas4.android.data.OverlayRecord
 import com.bachatas4.android.data.ParamSfoReader
 import com.bachatas4.android.data.PkgKeyStore
 import com.bachatas4.android.model.RuntimeErrorCode
@@ -99,6 +102,31 @@ class ImportService : Service() {
                 Log.i(TAG, "pkg copy confirmed by user")
                 copyConfirmWaiter?.complete(true)
                 return START_NOT_STICKY
+            }
+            ImportManager.ACTION_IMPORT_PKGS -> {
+                val gameId = intent.getStringExtra(ImportManager.EXTRA_GAME_ID)
+                val uris = intent.getStringArrayListExtra(ImportManager.EXTRA_URIS)
+                if (gameId.isNullOrBlank() || uris.isNullOrEmpty()) {
+                    Log.e(TAG, "batch import missing game id or uris")
+                    ImportManager.update(
+                        ImportProgress.Failed(InstallErrorCode.SOURCE_INACCESSIBLE, "Missing batch import parameters"),
+                    )
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
+                Log.i(TAG, "batch import start gameId=$gameId count=${uris.size}")
+                if (importJob?.isActive == true) {
+                    Log.w(TAG, "import already running — ignore batch request")
+                    return START_NOT_STICKY
+                }
+                if (!ImportManager.tryBeginImport("", ImportManager.MODE_PKG_BATCH)) {
+                    ImportManager.reset()
+                    if (!ImportManager.tryBeginImport("", ImportManager.MODE_PKG_BATCH)) {
+                        Log.w(TAG, "import slot busy — abort batch")
+                        return START_NOT_STICKY
+                    }
+                }
+                importJob = scope.launch { runPkgBatchImport(gameId, uris) }
             }
             ImportManager.ACTION_IMPORT -> {
                 val uriString = intent.getStringExtra(ImportManager.EXTRA_URI) ?: run {
@@ -627,6 +655,257 @@ class ImportService : Service() {
             copyConfirmWaiter = null
             if (ImportManager.isBusy()) ImportManager.reset()
             Log.i(TAG, "pkg import finished completed=$completed (stopSelf)")
+            stopSelf()
+        }
+    }
+
+    /**
+     * Batch install of update/DLC PKGs over an already-installed base game.
+     *
+     * Two passes:
+     *  - Pass 1: probe every PKG, validate each TITLE_ID matches [gameId], sum
+     *    sizes, single storage gate. Aborts before any extraction if any PKG is
+     *    for a different title.
+     *  - Pass 2: extract each PKG to its own staging dir, overlay the files into
+     *    the live game folder (overwriting), then rewrite install.manifest v2.
+     *
+     * Reuses [isOpenFdSeekable], [copyPkgToLocalCache], [extractWithProgress],
+     * and the [passcodeWaiter]/[copyConfirmWaiter] gates from the single-PKG path.
+     */
+    private suspend fun runPkgBatchImport(gameId: String, uris: List<String>) {
+        Log.i(TAG, "pkg batch start gameId=$gameId count=${uris.size}")
+        updateNotification("Preparing batch install…", indeterminate = true)
+        val jobId = UUID.randomUUID().toString()
+        val gamesDir = File(filesDir, "games").canonicalFile
+        val dest = File(gamesDir, gameId).canonicalFile
+
+        var completedCount = 0
+        val overlays = mutableListOf<OverlayRecord>()
+        val stagings = mutableListOf<File>()
+        val cacheFiles = mutableListOf<File>()
+        try {
+            // Base game must exist and be launchable.
+            if (!dest.isDirectory || !GameInstallVerifier.canLaunch(filesDir, "games/$gameId")) {
+                ImportManager.update(
+                    ImportProgress.BatchFailed(InstallErrorCode.BASE_MISSING, "Base game not installed", 0, uris.size),
+                )
+                return
+            }
+            val baseGame = gameRepository.getGame(gameId)
+            val baseTitle = baseGame?.title ?: gameId
+            ImportManager.update(
+                ImportProgress.BatchSelected(gameId, baseTitle, uris.size),
+            )
+
+            // --- PASS 1: probe every PKG, validate TITLE_ID, sum sizes ---
+            val probed = mutableListOf<Pair<String, PkgProbeResult>>() // uri -> probe
+            var sumExtractBytes = 0L
+            for (uriString in uris) {
+                coroutineContext.ensureActive()
+                val uri = Uri.parse(uriString)
+                runCatching {
+                    contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                val probe = contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+                    val seekable = isOpenFdSeekable(descriptor)
+                    Log.i(TAG, "batch probe fd=${descriptor.fd} seekable=$seekable")
+                    withContext(Dispatchers.IO) { PkgExtractor.nativeProbe(descriptor.fd) }
+                } ?: run {
+                    ImportManager.update(
+                        ImportProgress.BatchFailed(InstallErrorCode.SOURCE_INACCESSIBLE, "Cannot open $uriString", 0, uris.size),
+                    )
+                    return
+                }
+                if (probe.status == PkgStatus.ERROR) {
+                    ImportManager.update(
+                        ImportProgress.BatchFailed(
+                            InstallValidator.mapProbeError(probe.message),
+                            probe.message ?: "Invalid package",
+                            0,
+                            uris.size,
+                        ),
+                    )
+                    return
+                }
+                val titleId = probe.titleHint?.trim().orEmpty()
+                if (!titleId.equals(gameId, ignoreCase = true)) {
+                    ImportManager.update(
+                        ImportProgress.BatchFailed(
+                            InstallErrorCode.MALFORMED_PACKAGE,
+                            "PKG TITLE_ID '$titleId' does not match '$gameId'",
+                            0,
+                            uris.size,
+                        ),
+                    )
+                    return
+                }
+                probed.add(uriString to probe)
+                sumExtractBytes += (probe.pfsImageSize.takeIf { it > 0 } ?: probe.packageSize).coerceAtLeast(0L)
+            }
+
+            // Single storage gate.
+            val margin = maxOf(STORAGE_MARGIN_BYTES, sumExtractBytes / 20L)
+            val required = sumExtractBytes + margin
+            val free = filesDir.usableSpace
+            Log.i(TAG, "pkg batch storage required=$required free=$free")
+            InstallValidator.checkStorage(required, free)?.let { code ->
+                ImportManager.update(
+                    ImportProgress.BatchFailed(code, "Need ${formatBytes(required)} free, have ${formatBytes(free)}", 0, uris.size),
+                )
+                return
+            }
+
+            // --- PASS 2: extract + overlay each PKG in order ---
+            for ((index, pair) in probed.withIndex()) {
+                val (uriString, probe) = pair
+                coroutineContext.ensureActive()
+                val displayName = probe.titleHint?.ifBlank { null } ?: probe.contentId.ifBlank { "PKG" }
+                val staging = File(gamesDir, ".import-batch-$jobId-$index").canonicalFile
+                stagings += staging
+                staging.mkdirs()
+                Log.i(TAG, "pkg batch staging=${staging.absolutePath}")
+
+                // Extract (reuses the seekable-vs-cache + passcode-candidate logic).
+                val uri = Uri.parse(uriString)
+                val packageBytes = probe.packageSize.coerceAtLeast(0L)
+                val safFdSeekable = contentResolver.openFileDescriptor(uri, "r")?.use { isOpenFdSeekable(it) } ?: false
+                val extractPfd: ParcelFileDescriptor = if (safFdSeekable) {
+                    contentResolver.openFileDescriptor(uri, "r") ?: error("Cannot reopen PKG for batch extract")
+                } else {
+                    val cacheDir = File(filesDir, "pkg-cache").canonicalFile
+                    cacheDir.mkdirs()
+                    val cacheFile = File(cacheDir, "batch-$jobId-$index.pkg").canonicalFile
+                    cacheFiles += cacheFile
+                    Log.i(TAG, "pkg batch cache copy dest=${cacheFile.absolutePath} size=$packageBytes")
+                    copyPkgToLocalCache(uri, cacheFile, displayName, packageBytes)
+                    ParcelFileDescriptor.open(cacheFile, ParcelFileDescriptor.MODE_READ_ONLY)
+                }
+
+                var usedPasscode: String? = null
+                val candidates = buildList {
+                    add(null)
+                    pkgKeyStore.getPasscode(probe.contentId)?.let { add(it) }
+                    add("00000000000000000000000000000000")
+                }.distinct()
+
+                extractPfd.use { pfd ->
+                    val fd = pfd.fd
+                    var extractStatus = PkgStatus.ERROR
+                    for (candidate in candidates) {
+                        val result = withContext(Dispatchers.IO) {
+                            extractWithProgress(fd, staging, candidate, displayName)
+                        }
+                        extractStatus = result.status
+                        if (result.status == PkgStatus.OK) {
+                            usedPasscode = candidate
+                            break
+                        }
+                        if (result.status == PkgStatus.CANCELLED) throw CancellationException("cancelled")
+                        if (result.status != PkgStatus.NEED_PASSCODE) {
+                            error(result.message ?: "PKG extract failed")
+                        }
+                    }
+                    if (extractStatus != PkgStatus.OK) {
+                        Log.i(TAG, "pkg batch need user passcode contentId=${probe.contentId}")
+                        ImportManager.update(ImportProgress.NeedPasscode(probe.contentId, probe.titleHint))
+                        updateNotification("Passcode required", indeterminate = true)
+                        val waiter = CompletableDeferred<String?>()
+                        passcodeWaiter = waiter
+                        val userCode = waiter.await()
+                        passcodeWaiter = null
+                        if (userCode.isNullOrBlank()) throw CancellationException("cancelled")
+                        val result = withContext(Dispatchers.IO) {
+                            extractWithProgress(fd, staging, userCode, displayName)
+                        }
+                        if (result.status == PkgStatus.CANCELLED) throw CancellationException("cancelled")
+                        if (result.status != PkgStatus.OK) {
+                            error(result.message ?: "Wrong passcode or extract failed")
+                        }
+                        usedPasscode = userCode
+                    }
+                }
+
+                ImportManager.update(
+                    ImportProgress.BatchExtracting(
+                        index = index,
+                        total = probed.size,
+                        bytesCopied = 0L,
+                        totalBytes = packageBytes,
+                        currentFile = displayName,
+                        gameTitle = baseTitle,
+                    ),
+                )
+
+                contentImporter.overlayStaging(
+                    gameId = gameId,
+                    stagingDir = staging,
+                    contentId = probe.contentId,
+                    sourceUri = uriString,
+                )
+                overlays += OverlayRecord(probe.contentId, uriString, System.currentTimeMillis())
+
+                if (!usedPasscode.isNullOrBlank() &&
+                    usedPasscode != "00000000000000000000000000000000" &&
+                    probe.contentId.isNotBlank()
+                ) {
+                    pkgKeyStore.putPasscode(probe.contentId, usedPasscode)
+                }
+
+                staging.deleteRecursively()
+                stagings -= staging
+                completedCount++
+            }
+
+            // --- Rewrite manifest with overlays ---
+            val existing = InstallManifestIo.read(dest) ?: InstallManifest(
+                status = InstallManifestIo.STATUS_INSTALLED,
+                gameId = gameId,
+                contentId = null,
+                mode = ImportManager.MODE_PKG,
+                sourceUri = "",
+                installedAtMs = System.currentTimeMillis(),
+                requiredFiles = GameInstallVerifier.REQUIRED_FILES,
+                bytesTotal = 0L,
+            )
+            InstallManifestIo.write(
+                dest,
+                existing.copy(
+                    version = 2,
+                    overlays = existing.overlays + overlays,
+                    installedAtMs = System.currentTimeMillis(),
+                ),
+            )
+
+            gameRepository.touchGame(gameId)
+            ImportManager.update(
+                ImportProgress.BatchInstalled(gameId, baseTitle, overlays.size),
+            )
+            notifyDone("$baseTitle: ${overlays.size} package(s) installed")
+        } catch (failure: Throwable) {
+            if (failure is CancellationException) throw failure
+            Log.e(TAG, "pkg batch failed", failure)
+            ImportManager.update(
+                ImportProgress.BatchFailed(
+                    code = when (failure) {
+                        is ContentImportException -> when (failure.code) {
+                            RuntimeErrorCode.CONTENT_INVALID -> InstallErrorCode.MALFORMED_PACKAGE
+                            RuntimeErrorCode.CONTENT_PERMISSION_LOST -> InstallErrorCode.PERMISSION_LOST
+                            else -> InstallErrorCode.UNKNOWN
+                        }
+                        else -> InstallErrorCode.UNKNOWN
+                    },
+                    message = failure.message ?: "Batch install failed",
+                    completedCount = completedCount,
+                    totalCount = uris.size,
+                ),
+            )
+        } finally {
+            stagings.forEach { runCatching { it.deleteRecursively() } }
+            cacheFiles.forEach { runCatching { it.delete() } }
+            passcodeWaiter = null
+            copyConfirmWaiter = null
+            if (ImportManager.isBusy()) ImportManager.reset()
+            Log.i(TAG, "pkg batch finished completed=$completedCount/${uris.size}")
             stopSelf()
         }
     }

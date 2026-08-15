@@ -6,6 +6,7 @@
 #include <mutex>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
 #include "common/logging/log.h"
 #include "core/libraries/libc_internal/libc_internal_cxa.h"
@@ -17,6 +18,23 @@ namespace {
 std::mutex GuardMutex;
 std::condition_variable GuardCondition;
 std::unordered_map<u64*, std::thread::id> GuardOwners;
+
+/*
+ * __cxa_atexit registrations. A C++ guest registers static-object destructors
+ * through this entry point with (func, arg, dso_handle). Per the Itanium C++
+ * ABI the callbacks for a DSO run in reverse registration order when
+ * __cxa_finalize(dso_handle) is called or at process exit. On the PS4 the
+ * game process is terminated by the host (no orderly exit), so simply
+ * accepting the registration is enough to satisfy module start; we keep the
+ * table so a future __cxa_finalize implementation can drain it.
+ */
+struct CxaAtexitEntry {
+    void (*func)(void*);
+    void* arg;
+    void* dso_handle;
+};
+std::mutex AtexitMutex;
+std::vector<CxaAtexitEntry> AtexitEntries;
 
 u8* GuardBytes(u64* guard_object) {
     return reinterpret_cast<u8*>(guard_object);
@@ -77,10 +95,35 @@ void PS4_SYSV_ABI fex_libc_cxa_guard_abort(u64* guard_object) {
     GuardCondition.notify_all();
 }
 
+int PS4_SYSV_ABI fex_libc_cxa_atexit(void (*func)(void*), void* arg, void* dso_handle) {
+    /* __cxa_atexit is invoked by C++ static-object initializers in guest
+     * modules to register their destructor. Return 0 to accept the
+     * registration; the table is retained for a future __cxa_finalize. */
+    if (func == nullptr) {
+        return -1;
+    }
+    {
+        std::lock_guard lock{AtexitMutex};
+        AtexitEntries.push_back({func, arg, dso_handle});
+    }
+    LOG_TRACE(Lib_LibcInternal, "registered __cxa_atexit func={} arg={} dso={}",
+              fmt::ptr(reinterpret_cast<void*>(func)), arg, dso_handle);
+    return 0;
+}
+
 void RegisterFexLibcCxaAliases(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("3GPpjQdAMTw", "libc", 1, "libc", fex_libc_cxa_guard_acquire);
     LIB_FUNCTION("9rAeANT2tyE", "libc", 1, "libc", fex_libc_cxa_guard_release);
     LIB_FUNCTION("2emaaluWzUw", "libc", 1, "libc", fex_libc_cxa_guard_abort);
+    // FEX adapter looks up C++ runtime symbols under libSceLibcInternal.
+    LIB_FUNCTION("3GPpjQdAMTw", "libSceLibcInternal", 1, "libSceLibcInternal",
+                 fex_libc_cxa_guard_acquire);
+    LIB_FUNCTION("9rAeANT2tyE", "libSceLibcInternal", 1, "libSceLibcInternal",
+                 fex_libc_cxa_guard_release);
+    LIB_FUNCTION("2emaaluWzUw", "libSceLibcInternal", 1, "libSceLibcInternal",
+                 fex_libc_cxa_guard_abort);
+    LIB_FUNCTION("tsvEmnenz48", "libSceLibcInternal", 1, "libSceLibcInternal",
+                 fex_libc_cxa_atexit);
 }
 
 } // namespace Libraries::LibcInternal
