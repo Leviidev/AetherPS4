@@ -711,10 +711,27 @@ struct AddressSpace::Impl {
         system_managed_base = virtual_base;
         system_reserved_base = reinterpret_cast<u8*>(SYSTEM_RESERVED_MIN);
         user_base = reinterpret_cast<u8*>(USER_MIN);
-#elif defined(__APPLE__) && defined(ARCH_X86_64)
+#elif defined(__APPLE__) && (defined(ARCH_X86_64) || TARGET_OS_IPHONE)
         // On ARM64 Macs, we run into limitations due to the commpage from 0xFC0000000 - 0xFFFFFFFFF
         // and the GPU carveout region from 0x1000000000 - 0x6FFFFFFFFF. Because this creates gaps
         // in the available virtual memory region, we map memory space using three distinct parts.
+        //
+        // This same three-separate-mmaps approach is also required on iOS (ARM64), for an
+        // unrelated reason: without this branch, iOS ARM64 falls through to the generic #else
+        // below, which does ONE combined mmap(virtual_size, no MAP_FIXED) and then computes
+        // system_reserved_base/user_base as *offsets* from that single base using
+        // SYSTEM_RESERVED_MIN/USER_MIN literally -- constants sized for the desktop platforms'
+        // multi-terabyte layout, not for iOS's deliberately shrunk ~1GB/~1GB/~16GB windows (see
+        // the SYSTEM_MANAGED_MAX comment above). USER_MIN - SYSTEM_MANAGED_MIN alone is ~68GB,
+        // dwarfing the ~19GB actually reserved -- so user_base ended up ~68GB past the end of
+        // the real mapping, in memory nothing had ever reserved at all. Confirmed on-device:
+        // this is exactly why Rocket League's very first large ("user"-region) allocation
+        // failed with ENOMEM regardless of request size, chunked or not -- the address itself
+        // was never valid. iOS has no equivalent of FreeBSD's "can't stand MAP_FIXED" problem
+        // (every Impl::Map call already uses MAP_FIXED without issue), so there's no reason to
+        // take the offset-based fallback here at all -- placing each of the three windows at
+        // its own literal, absolute address (like desktop Apple/x86_64 already does) sidesteps
+        // the bad-offset math entirely.
         system_managed_base =
             reinterpret_cast<u8*>(mmap(reinterpret_cast<void*>(SYSTEM_MANAGED_MIN),
                                        system_managed_size, protection_flags, map_flags, -1, 0));
@@ -760,7 +777,7 @@ struct AddressSpace::Impl {
                  fmt::ptr(user_base + user_size - 1));
 
         const VAddr system_managed_addr = reinterpret_cast<VAddr>(system_managed_base);
-        const VAddr system_reserved_addr = reinterpret_cast<VAddr>(system_managed_base);
+        const VAddr system_reserved_addr = reinterpret_cast<VAddr>(system_reserved_base);
         const VAddr user_addr = reinterpret_cast<VAddr>(user_base);
         m_free_regions.insert({system_managed_addr, system_managed_addr + system_managed_size});
         m_free_regions.insert({system_reserved_addr, system_reserved_addr + system_reserved_size});
