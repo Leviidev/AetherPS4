@@ -21,6 +21,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <shared_mutex>
@@ -222,6 +223,25 @@ public:
   FEXCore::Utils::WritePriorityMutex::Mutex& GetCodeInvalidationMutex() override {
     return CodeInvalidationMutex;
   }
+
+  // ClearCodeCache's NewCodeBuffer=false path (physically reusing an already-granted JIT
+  // buffer in place, an iOS-only workaround for StikDebug's external BreakpointJIT mechanism
+  // failing on a session's 3rd+ fresh-allocation request) clears the calling thread's own L1/L2
+  // lookup caches and the shared L3 cache/block-links, but has no visibility into any *other*
+  // guest thread's independent L1/L2 cache -- those are owned per-thread by application-level
+  // code above this file (AetherPS4::Fex::GuestEngine, which tracks every live
+  // InternalThreadState), not by anything FEXCore's own core keeps a list of. A stale L1/L2 hit
+  // on another thread bypasses CodeInvalidationMutex and CompileBlock entirely (fast-path
+  // lookups only ever consult L1/L2, per this file's "backends only check L1 and L2, not L3"
+  // invariant) and branches straight into now-reused, differently-contented memory -- confirmed
+  // on-device as a distinct fault signature from every other issue fixed today ("not tracked --
+  // not inside any currently-live JIT allocation" -- i.e. genuinely wrong content at a
+  // still-valid-looking address, not an alias mixup). Set by GuestEngine at setup so
+  // ClearCodeCache can invoke it (passing the calling thread so its already-cleared cache isn't
+  // redundantly touched) instead of leaving other threads' caches to only self-correct on their
+  // own next CompileBlock call, which may never come if a thread is mostly just executing
+  // already-cached code.
+  std::function<void(FEXCore::Core::InternalThreadState* CallingThread)> OnBufferReusedInPlace;
 
   void ConfigureAOTGen(FEXCore::Core::InternalThreadState* Thread, fextl::set<uint64_t>* ExternalBranches, uint64_t SectionMaxAddress) override;
 

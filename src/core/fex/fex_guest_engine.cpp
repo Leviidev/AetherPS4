@@ -18,6 +18,15 @@
 #include <FEXCore/Utils/ArchHelpers/Arm64.h>
 #include <FEXCore/Utils/LogManager.h>
 
+// Internal (non-public-API) header, needed for ContextImpl's full definition -- specifically
+// its OnBufferReusedInPlace member (see that member's own comment, Context.h) that this file
+// registers a callback into below, since only application-level code here tracks every live
+// guest thread (Threads, Impl::Threads below) at all; FEXCore's own core keeps no such list.
+#include "Interface/Context/Context.h"
+// InternalThreadState only forward-declares LookupCache; need the full type for
+// AcquireWriteLock()/ClearThreadLocalCaches() in the OnBufferReusedInPlace callback below.
+#include "Interface/Core/LookupCache.h"
+
 #include <sys/mman.h>
 #include <unistd.h>
 #ifdef __APPLE__
@@ -1916,6 +1925,29 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
   impl->Context->EnableExitOnHLT();
   if (!impl->Context->InitCore()) {
     return fail(Failure(EngineStage::Context, EIO));
+  }
+
+  // See OnBufferReusedInPlace's own comment (Context.h) for the full story: on iOS, filling
+  // the JIT code cache clears and reuses the same already-granted buffer in place (rather than
+  // allocating a fresh one, which fails on a session's 3rd+ such request) -- and while the
+  // calling thread's own fast-path lookup cache gets cleared as part of that, sibling guest
+  // threads' independent caches don't, since FEXCore's own core has no list of them to reach.
+  // This is the one place that list (Threads, below) actually exists, so wire it in here.
+  {
+    auto* rawImpl = impl.get();
+    static_cast<FEXCore::Context::ContextImpl*>(impl->Context.get())->OnBufferReusedInPlace =
+        [rawImpl](FEXCore::Core::InternalThreadState* CallingThread) {
+          std::scoped_lock lk {rawImpl->ThreadsMutex};
+          for (auto* t : rawImpl->Threads) {
+            if (t->Native == nullptr || t->Native == CallingThread) {
+              // The calling thread's own L1/L2 was already cleared as part of the same
+              // ClearCodeCache call that invoked this callback.
+              continue;
+            }
+            auto cacheLock = t->Native->LookupCache->AcquireWriteLock();
+            t->Native->LookupCache->ClearThreadLocalCaches(cacheLock);
+          }
+        };
   }
 
   return std::unique_ptr<GuestEngine> {new GuestEngine {std::move(impl)}};

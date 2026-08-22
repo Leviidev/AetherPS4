@@ -1300,6 +1300,7 @@ if (ENABLE_FEX_GUEST_CPU)
         "${FEXCORE_GUEST_CPU_BUILD_DIR}/generated"
         "${FEXCORE_GUEST_CPU_SOURCE_DIR}/Source/Tools/CommonTools"
         "${FEXCORE_GUEST_CPU_BUILD_DIR}/FEXCore/Source"
+        "${FEXCORE_GUEST_CPU_SOURCE_DIR}/FEXCore/Source"
         "${FEXCORE_GUEST_CPU_SOURCE_DIR}/FEXCore/include"
         "${FEXCORE_GUEST_CPU_BUILD_DIR}/include"
         "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/unordered_dense/include"
@@ -1598,6 +1599,7 @@ if (ENABLE_SHADPS4_IOS_LIB)
             "${FEXCORE_GUEST_CPU_BUILD_DIR}/generated"
             "${FEXCORE_GUEST_CPU_SOURCE_DIR}/Source/Tools/CommonTools"
             "${FEXCORE_GUEST_CPU_BUILD_DIR}/FEXCore/Source"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/FEXCore/Source"
             "${FEXCORE_GUEST_CPU_SOURCE_DIR}/FEXCore/include"
             "${FEXCORE_GUEST_CPU_BUILD_DIR}/include"
             "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/unordered_dense/include"
@@ -1617,6 +1619,7 @@ if (ENABLE_SHADPS4_IOS_LIB)
             FEXCORE_HAS_PRESERVE_ALL_ATTR=1
             FEX_DISABLE_TELEMETRY=1
             FEX_HAS_PRESERVE_ALL_ATTR=1
+            ARCHITECTURE_arm64=1
         )
         target_compile_options(shadps4_ios PRIVATE
             "-DFEXCORE_PRESERVE_ALL_ATTR=__attribute__((preserve_all))"

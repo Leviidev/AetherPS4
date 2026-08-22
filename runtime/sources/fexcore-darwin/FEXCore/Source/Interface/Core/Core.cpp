@@ -514,6 +514,13 @@ void ContextImpl::ClearCodeCache(FEXCore::Core::InternalThreadState* Thread, boo
     std::unique_lock inval_lock {CodeInvalidationMutex};
     auto lk = Thread->LookupCache->AcquireWriteLock();
     Thread->LookupCache->ClearCache(lk);
+    // Still inside the exclusive lock's window here, so any other thread that might attempt
+    // to compile (and so update its own L1/L2 from this now-current L3 state) stays blocked
+    // until this returns -- see OnBufferReusedInPlace's own comment (Context.h) for why other
+    // threads' independent L1/L2 caches need to be reached at all.
+    if (OnBufferReusedInPlace) {
+      OnBufferReusedInPlace(Thread);
+    }
   }
   Allocator::VirtualDontNeed(Thread->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE);
 }
