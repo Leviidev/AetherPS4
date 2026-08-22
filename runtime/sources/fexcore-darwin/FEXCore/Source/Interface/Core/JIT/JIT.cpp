@@ -1155,23 +1155,24 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
       SetCursorOffset(CodeBuffers.LatestOffset);
       Align16B();
       if ((GetCursorOffset() + TempSize) > CurrentCodeBuffer->UsableSize()) {
-#if defined(__APPLE__) && TARGET_OS_IPHONE
-        // NewCodeBuffer=true (the default) requests a brand new dual-mapped allocation from
-        // StikDebug's external BreakpointJIT mechanism every time the cache fills. Confirmed
-        // on-device: even after capping every such request at a proven-working 16MB (see
-        // CPUBackend.cpp's iOS override of MAX_CODE_SIZE), the *third* JIT buffer allocation
-        // of a session still crashed inside that external call before it could even return --
-        // same failure regardless of request size, meaning it's StikDebug's own mechanism
-        // running out of some per-session capacity for handling further distinct grant
-        // requests, not a size problem. NewCodeBuffer=false clears the lookup caches and
-        // reuses the SAME already-granted buffer in place instead of ever asking for another
-        // one, which avoids the failure entirely at the cost of losing all previously
-        // compiled code on every clear (a normal, already-supported FEXCore eviction mode,
-        // just not the one exercised by default here).
-        CTX->ClearCodeCache(ThreadState, false);
-#else
+        // Reverted: NewCodeBuffer=false (reuse the existing buffer in place instead of
+        // allocating a fresh one) was tried here to work around StikDebug's external
+        // BreakpointJIT mechanism failing on a session's 3rd+ JIT buffer allocation. It
+        // avoided that crash, but created a worse failure on-device: something elsewhere
+        // (a direct block-link patched into other, non-evicted code, or a stale LookupCache
+        // entry -- not yet isolated) still holds addresses pointing into the reused region
+        // from before the reuse. Once that region's physical content gets overwritten by
+        // new compiled code, re-taking that stale reference lands on now-unrelated bytes,
+        // which this codebase's own writable/executable-alias fault recovery
+        // (TryRecoverJitAliasFault, fex_guest_engine.cpp) can transiently "fix" the alias
+        // of but not the content of -- so the same handful of addresses re-fault
+        // indefinitely (confirmed on-device: 7 million+ recoveries across only 8 distinct
+        // addresses in one session, no crash, no progress, just an unbounded loop). A clean
+        // crash with a debuggable log beats a silent infinite hang, so this reverts to
+        // always allocating a fresh buffer (NewCodeBuffer's true default) until reuse-in-
+        // place can be made to also invalidate every stale cross-reference into the region
+        // being reused, not just its own LookupCache entries.
         CTX->ClearCodeCache(ThreadState);
-#endif
       }
 
       CodeBuffers.LatestOffset = GetCursorOffset();
