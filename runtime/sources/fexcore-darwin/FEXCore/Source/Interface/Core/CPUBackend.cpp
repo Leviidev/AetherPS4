@@ -351,7 +351,29 @@ namespace CPU {
       // Keep a reference to the old code buffer to delay deallocation
       SignalHandlerCodeBuffers.push_back(std::move(CodeBuffer));
     } else {
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+      // Dropping CodeBuffer here (the caller's only remaining reference, since CurrentCodeBuffer
+      // already points at the new buffer) runs its destructor immediately, unmapping the
+      // physical pages -- vs. on other platforms, correctly assuming that once
+      // SignalHandlerRefCounter is 0 nothing else could still reference this buffer. That
+      // assumption doesn't hold here: on iOS every guest thread shares this one
+      // StikDebug-count-limited JIT buffer (see this file's own MAX_CODE_SIZE comment above),
+      // so another thread can be mid-execution of a direct branch into memory this same instant
+      // decides to evict, with no barrier forcing it to have already observed the delink this
+      // eviction just performed (ClearCache/JIT.cpp) before the unmap actually happens.
+      // Confirmed on-device: a crash with exactly that signature (jump to an address the
+      // allocator's own tracking table no longer recognizes at all, "not tracked -- not inside
+      // any currently-live JIT allocation") persisted even after delinking + full cross-thread
+      // cache invalidation were both verified working correctly. Keep a short grace-period
+      // history instead of freeing on the spot -- bounded, so this doesn't grow forever.
+      static constexpr size_t kRetainedBufferCount = 3;
+      SignalHandlerCodeBuffers.push_back(std::move(CodeBuffer));
+      while (SignalHandlerCodeBuffers.size() > kRetainedBufferCount) {
+        SignalHandlerCodeBuffers.erase(SignalHandlerCodeBuffers.begin());
+      }
+#else
       SignalHandlerCodeBuffers.clear();
+#endif
     }
   }
 
