@@ -1,0 +1,4 @@
+module AetherPS4 {
+header "AetherPS4-Swift.h"
+export *
+}

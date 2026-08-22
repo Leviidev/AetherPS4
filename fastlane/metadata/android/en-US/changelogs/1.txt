@@ -1,0 +1,5 @@
+Initial F-Droid release.
+
+• Android frontend for shadPS4 on ARM64
+• F-Droid flavor downloads the managed runtime on first setup
+• Vulkan, controls, and library management support

@@ -1,0 +1,113 @@
+# Simulator can't handle self-modifying code
+Test_SelfModifyingCode/Delinking.asm
+Test_SelfModifyingCode/DifferentBlock.asm
+Test_SelfModifyingCode/SameBlock.asm
+
+# Simulator can't do wfe
+Test_Primary/Pause.asm
+
+# Simulator can't handle `mrs x0, nzcv`
+Test_SecondaryModRM/Reg_7_1.asm
+
+# Simulator can't handle unaligned accesses
+Test_Primary/Primary_01_Atomic16.asm
+Test_Primary/Primary_01_Atomic32.asm
+Test_Primary/Primary_01_Atomic64.asm
+Test_Primary/Primary_09_Atomic16.asm
+Test_Primary/Primary_09_Atomic32.asm
+Test_Primary/Primary_09_Atomic64.asm
+Test_Primary/Primary_23_Atomic16.asm
+Test_Primary/Primary_23_Atomic32.asm
+Test_Primary/Primary_23_Atomic64.asm
+Test_Primary/Primary_29_Atomic16.asm
+Test_Primary/Primary_29_Atomic32.asm
+Test_Primary/Primary_29_Atomic64.asm
+Test_Primary/Primary_31_Atomic16.asm
+Test_Primary/Primary_31_Atomic32.asm
+Test_Primary/Primary_31_Atomic64.asm
+Test_Primary/Primary_87_Atomic16.asm
+Test_Primary/Primary_87_Atomic32.asm
+Test_Primary/Primary_87_Atomic64.asm
+Test_Primary/Primary_FF_0_Atomic16.asm
+Test_Primary/Primary_FF_0_Atomic32.asm
+Test_Primary/Primary_FF_0_Atomic64.asm
+Test_Primary/Primary_FF_1_Atomic16.asm
+Test_Primary/Primary_FF_1_Atomic32.asm
+Test_Primary/Primary_FF_1_Atomic64.asm
+Test_Atomics/adc_atomic16.asm
+Test_Atomics/adc_atomic32.asm
+Test_Atomics/adc_atomic64.asm
+Test_Atomics/sbb_atomic16.asm
+Test_Atomics/sbb_atomic32.asm
+Test_Atomics/sbb_atomic64.asm
+Test_Atomics/neg_atomic16.asm
+Test_Atomics/neg_atomic32.asm
+Test_Atomics/neg_atomic64.asm
+Test_Atomics/not_atomic16.asm
+Test_Atomics/not_atomic32.asm
+Test_Atomics/not_atomic64.asm
+
+Test_PrimaryGroup/3_F7_02_2.asm
+Test_PrimaryGroup/3_F7_02_3.asm
+Test_PrimaryGroup/3_F7_03_2.asm
+
+Test_TwoByte/0F_B0_3.asm
+Test_TwoByte/0F_B0_4.asm
+Test_TwoByte/0F_B0_5.asm
+Test_TwoByte/0F_B0_6.asm
+Test_TwoByte/0F_B0_7.asm
+Test_TwoByte/0F_C0_Atomic16.asm
+Test_TwoByte/0F_C0_Atomic32.asm
+Test_TwoByte/0F_C0_Atomic64.asm
+
+Test_Secondary/09_XX_01_8.asm
+Test_Secondary/09_XX_01_9.asm
+Test_Secondary/09_XX_01_12.asm
+Test_Secondary/09_XX_01_13.asm
+Test_Secondary/09_XX_01_15.asm
+Test_Secondary/09_XX_01_18.asm
+Test_Secondary/09_XX_01_19.asm
+
+# Simulator doesn't handle rounding mode changes
+Test_Secondary/15_XX_2.asm
+Test_X87_F64/FLDCW_F64.asm
+Test_H0F3A/66_08.asm
+Test_H0F3A/66_09.asm
+Test_H0F3A/66_0A.asm
+Test_H0F3A/66_0B.asm
+Test_OpSize/66_5B.asm
+Test_VEX/vcvtpd2dq_inexact.asm
+Test_VEX/vcvtps2dq_inexact.asm
+Test_VEX/vldmxcsr.asm
+Test_VEX/vroundpd.asm
+Test_VEX/vroundps.asm
+Test_VEX/vroundsd.asm
+Test_VEX/vroundss.asm
+Test_VEX/vcvtps2ph_rtne.asm
+Test_VEX/vcvtps2ph_rd.asm
+Test_VEX/vcvtps2ph_ru.asm
+Test_VEX/vcvtps2ph_trunc.asm
+Test_VEX/vcvtps2ph_rtne_mxcsr.asm
+Test_VEX/vcvtps2ph_rd_mxcsr.asm
+Test_VEX/vcvtps2ph_ru_mxcsr.asm
+Test_VEX/vcvtps2ph_trunc_mxcsr.asm
+Test_X87_F64/Rounding_F64.asm
+Test_FEX_bugs/vcvtps2ph_zeroing.asm
+
+# Simulator doesn't support cycle counter reading
+Test_TwoByte/0F_31.asm
+
+# Simulator doesn't support executing a syscall
+Test_Secondary/09_F3_07.asm
+
+# Vixl sim at 256-bit vector width access too much memory with some AVX instructions
+Test_modrm_oob/VEX.asm
+
+# Vixl simulator with 256-bit vector width doesn't always do correct data retention for 128-bit non-AVX operations.
+Test_SSE4a/extrq_imm.asm
+Test_SSE4a/insertq_imm.asm
+Test_SSE4a/extrq_variable.asm
+Test_SSE4a/insertq_variable.asm
+
+# Simulator can't handle long jump through signal handler
+Test_FEX_bugs/CodeBufferOverflow.asm

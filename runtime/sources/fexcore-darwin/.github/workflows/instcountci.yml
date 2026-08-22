@@ -1,0 +1,78 @@
+name: Instruction Count CI run
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
+  BUILD_TYPE: Release
+  CC: clang
+  CXX: clang++
+
+jobs:
+  instcountci_tests:
+    runs-on: ${{ matrix.arch }}
+    strategy:
+      matrix:
+        arch: [[self-hosted, x64], [self-hosted, ARM64]]
+      fail-fast: false
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: '0'
+        fetch-tags: 'true'
+
+    - name: Set runner info
+      run: |
+        echo "runner_label=${{ matrix.arch[1] }}" >> $GITHUB_ENV
+        echo "runner_name=$(hostname)" >> $GITHUB_ENV
+
+    - name: Setup Build Environment
+      uses: ./.github/workflows/setup-env
+
+    - name: Set VIXL_SIM_ENABLED
+      run: |
+        case '${{ matrix.arch[1] }}' in
+          x64) _sim=True ;;
+          ARM64) _sim=False ;;
+        esac
+        echo "VIXL_SIM_ENABLED=$_sim" >> $GITHUB_ENV
+
+    - name: Configure CMake
+      run: |
+        cmake -S . -B build -DCMAKE_BUILD_TYPE=$BUILD_TYPE -G Ninja -DENABLE_VIXL_SIMULATOR=$VIXL_SIM_ENABLED \
+          -DENABLE_VIXL_DISASSEMBLER=True -DENABLE_LTO=False -DENABLE_ASSERTIONS=True -DENABLE_X86_HOST_DEBUG=True
+
+    - name: Build
+      env:
+        FEX_DISABLETELEMETRY: 1
+      run: cmake --build build --target CodeSizeValidation instcountci_test_files
+
+    - name: Instruction Count Tests
+      if: ${{ always() }}
+      uses: ./.github/workflows/test
+      with:
+        target: instcountci_tests
+
+    - name: Update local repo instcount
+      if: ${{ always() }}
+      run: cmake --build build --target instcountci_update_tests
+
+    - name: Check InstCountCI diff
+      if: ${{ always() }}
+      run: git --no-pager diff --exit-code HEAD
+
+    - name: Upload results
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v6
+      timeout-minutes: 1
+      with:
+        name: Results-${{ env.runner_name }}-${{ env.runner_label }}
+        path: results/*.log
+        retention-days: 3

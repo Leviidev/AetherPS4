@@ -1,0 +1,52 @@
+diff --git a/src/libtools/vulkanoverlay.c b/src/libtools/vulkanoverlay.c
+--- a/src/libtools/vulkanoverlay.c
++++ b/src/libtools/vulkanoverlay.c
+@@ -129,6 +129,7 @@ typedef void* (*vulkan_my_t)(void*);
+ #define GO_vFpf(A, B, N)       static void my_##A##_##N(void* a, float b) {F2(A, SIGFMT(B), N);}
+ #define GO_vFpu(A, B, N)       static void my_##A##_##N(void* a, uint32_t b) {F2(A, SIGFMT(B), N);}
+ #define GO_vFpU(A, B, N)       static void my_##A##_##N(void* a, uint64_t b) {F2(A, SIGFMT(B), N);}
++#define GO_vFUpp(A, B, N)      static void my_##A##_##N(uint64_t a, void* b, void* c) {F3(A, SIGFMT(B), N);}
+ #define GO_vFpip(A, B, N)      static void my_##A##_##N(void* a, int b, void* c) {F3(A, SIGFMT(B), N);}
+ #define GO_vFppi(A, B, N)      static void my_##A##_##N(void* a, void* b, int c) {F3(A, SIGFMT(B), N);}
+ #define GO_vFppp(A, B, N)      static void my_##A##_##N(void* a, void* b, void* c) {F3(A, SIGFMT(B), N);}
+@@ -188,6 +189,7 @@ typedef void* (*vulkan_my_t)(void*);
+ #define GO_vFpUuuu(A, B, N)    static void my_##A##_##N(void* a, uint64_t b, uint32_t c, uint32_t d, uint32_t e) {F5(A, SIGFMT(B), N);}
+ #define GO_vFpUUUu(A, B, N)    static void my_##A##_##N(void* a, uint64_t b, uint64_t c, uint64_t d, uint32_t e) {F5(A, SIGFMT(B), N);}
+ #define GO_vFpUUuu(A, B, N)    static void my_##A##_##N(void* a, uint64_t b, uint64_t c, uint32_t d, uint32_t e) {F5(A, SIGFMT(B), N);}
++#define GO_vFpUUUuu(A, B, N)   static void my_##A##_##N(void* a, uint64_t b, uint64_t c, uint64_t d, uint32_t e, uint32_t f) {F6(A, SIGFMT(B), N);}
+ #define GO_vFpuiiii(A, B, N)   static void my_##A##_##N(void* a, uint32_t b, int c, int d, int e, int f) {F6(A, SIGFMT(B), N);}
+ #define GO_vFpupppp(A, B, N)   static void my_##A##_##N(void* a, uint32_t b, void* c, void* d, void* e, void* f) {F6(A, SIGFMT(B), N);}
+ #define GO_vFpppppU(A, B, N)   static void my_##A##_##N(void* a, void* b, void* c, void* d, void* e, uint64_t f) {F6(A, SIGFMT(B), N);}
+diff --git a/src/wrapped/wrappedvulkan_private.h b/src/wrapped/wrappedvulkan_private.h
+--- a/src/wrapped/wrappedvulkan_private.h
++++ b/src/wrapped/wrappedvulkan_private.h
+@@ -951,5 +951,9 @@ GO(vkGetPipelineIndirectDeviceAddressNV, UFpp)
+ GO(vkGetPipelineIndirectMemoryRequirementsNV, vFppp)
+ 
+ // VK_QCOM_tile_properties
++GO(vkCmdBeginPerTileExecutionQCOM, vFpp)
++GO(vkCmdBindTileMemoryQCOM, vFpp)
++GO(vkCmdDispatchTileQCOM, vFpp)
++GO(vkCmdEndPerTileExecutionQCOM, vFpp)
+ GO(vkGetDynamicRenderingTilePropertiesQCOM, iFppp)
+ GO(vkGetFramebufferTilePropertiesQCOM, iFpppp)
+@@ -1147,4 +1151,19 @@ GO(vkGetPhysicalDeviceQueueFamilyDataGraphOpticalFlowImageFormatsARM, iFpupppp)
+ // VK_NV_push_constant_bank
+ // no new functions
+ 
++// Commands introduced after Box64's generated Vulkan wrapper list.
++GO(vkCmdBeginCustomResolveEXT, vFpp)
++GO(vkCmdBuildClusterAccelerationStructureIndirectNV, vFpp)
++GO(vkCmdBuildPartitionedAccelerationStructuresNV, vFpp)
++GO(vkCmdCopyMemoryIndirectKHR, vFpp)
++GO(vkCmdCopyMemoryToImageIndirectKHR, vFpp)
++GO(vkCmdDecompressMemoryEXT, vFpp)
++GO(vkCmdDecompressMemoryIndirectCountEXT, vFpUUUuu)
++GO(vkCmdSetComputeOccupancyPriorityNV, vFpp)
++GO(vkCreateExternalComputeQueueNV, iFpppp)
++GO(vkDestroyExternalComputeQueueNV, vFpUp)
++GO(vkGetClusterAccelerationStructureBuildSizesNV, vFppp)
++GO(vkGetExternalComputeQueueDataNV, vFUpp)
++GO(vkGetPartitionedAccelerationStructuresBuildSizesNV, vFppp)
++
+ // Layer stuffs

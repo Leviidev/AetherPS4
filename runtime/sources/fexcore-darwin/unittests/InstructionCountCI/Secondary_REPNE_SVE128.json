@@ -1,0 +1,25 @@
+{
+  "Features": {
+    "Bitness": 64,
+    "EnabledHostFeatures": [
+      "SVE128",
+      "FRINTTS"
+    ],
+    "DisabledHostFeatures": [
+      "SVE256",
+      "FCMA",
+      "AFP"
+    ]
+  },
+  "Instructions": {
+    "cvtpd2dq xmm0, xmm1": {
+      "ExpectedInstructionCount": 3,
+      "Comment": "0xf2 0x0f 0xe6",
+      "ExpectedArm64ASM": [
+        "frint32x v2.2d, v17.2d",
+        "fcvtzs v2.2d, v2.2d",
+        "xtn v16.2s, v2.2d"
+      ]
+    }
+  }
+}

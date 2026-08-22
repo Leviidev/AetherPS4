@@ -1,0 +1,27 @@
+diff --git a/src/wrapped/wrappedlibc.c b/src/wrapped/wrappedlibc.c
+index a59279e9..9f3290fc 100644
+--- a/src/wrapped/wrappedlibc.c
++++ b/src/wrapped/wrappedlibc.c
+@@ -655,6 +655,13 @@ int EXPORT my___cxa_atexit(x64emu_t* emu, void* p, void* a, void* dso_handle)
+     AddCleanup1Arg(emu, p, a, FindElfAddress(my_context, (uintptr_t)dso_handle));
+     return 0;
+ }
++int EXPORT my___cxa_at_quick_exit(x64emu_t* emu, void* p, void* dso_handle)
++{
++    (void)emu;
++    (void)p;
++    (void)dso_handle;
++    return 0;
++}
+ void EXPORT my___cxa_finalize(x64emu_t* emu, void* p)
+ {
+     if(!p) {
+diff --git a/src/wrapped/wrappedlibc_private.h b/src/wrapped/wrappedlibc_private.h
+index c5a81bd3..e4698ea0 100644
+--- a/src/wrapped/wrappedlibc_private.h
++++ b/src/wrapped/wrappedlibc_private.h
+@@ -208,3 +208,3 @@
+ GOM(__cxa_atexit, iFEppp)
+-//GO(__cxa_at_quick_exit, "/* at_quick_exit has signature iF@ -> */ iF@pp")
++GOM(__cxa_at_quick_exit, iFEpp)
+ GOM(__cxa_finalize, vFEp)

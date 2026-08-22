@@ -1,0 +1,8 @@
+diff --git a/src/emu/entrypoint.c b/src/emu/entrypoint.c
+index 927ac0d1..49648a3e 100644
+--- a/src/emu/entrypoint.c
++++ b/src/emu/entrypoint.c
+@@ -8,2 +8,2 @@
+-#ifdef ANDROID
++#if defined(ANDROID) && !defined(WINLATOR_GLIBC)
+ void EXPORT my___libc_init(x64emu_t* emu, void* raw_args , void (*onexit)(void) , int (*main)(int, char**, char**), void const * const structors )

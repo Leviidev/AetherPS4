@@ -1,0 +1,12 @@
+BachataS4 is a mobile frontend and emulation wrapper for the shadPS4 emulator. It uses box64 and a minimal glibc compatibility layer to execute the emulator natively on ARM64 devices.
+
+Features:
+
+• Open-source PlayStation 4 emulation wrapper
+• Native Vulkan rendering support
+• Integrated X11 server and ALSA sound server components
+• Configurable controls and custom mapping support
+
+The F-Droid build does not bundle the large native runtime. On first launch the app downloads a free software runtime package from the project’s GitHub Releases.
+
+Only use software and content you have the legal right to run.

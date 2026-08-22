@@ -1,0 +1,52 @@
+diff --git a/src/wrapped/wrappedlib_init.h b/src/wrapped/wrappedlib_init.h
+index c8612287..0d76d36f 100644
+--- a/src/wrapped/wrappedlib_init.h
++++ b/src/wrapped/wrappedlib_init.h
+@@ -174,6 +174,13 @@ int FUNC(_init)(library_t* lib, box64context_t* box64)
+ #endif
+     {
+ #ifndef STATICBUILD
++#ifdef CUSTOM_LIBRARY_HANDLE
++        lib->w.lib = CUSTOM_LIBRARY_HANDLE();
++        if (!lib->w.lib) {
++            return -1;
++        }
++        lib->path = box_strdup(MAPNAME(Name));
++#else
+         lib->w.lib = dlopen(MAPNAME(Name), RTLD_LAZY | RTLD_GLOBAL);
+         if(!lib->w.lib) {
+ #ifdef ALTNAME
+@@ -192,6 +199,7 @@ int FUNC(_init)(library_t* lib, box64context_t* box64)
+             } else lib->path = box_strdup(ALTNAME);
+ #endif
+         } else lib->path = box_strdup(MAPNAME(Name));
++#endif
+ #else
+         lib->path = box_strdup(MAPNAME(Name));
+ #endif
+diff --git a/src/wrapped/wrappedvulkan.c b/src/wrapped/wrappedvulkan.c
+index 8d642397..9d7c2940 100644
+--- a/src/wrapped/wrappedvulkan.c
++++ b/src/wrapped/wrappedvulkan.c
+@@ -18,9 +18,20 @@
+ #include "myalign.h"
+ #include "build_info.h"
+ 
+-//extern char* libvulkan;
++static void* OpenBachataVulkan(void) {
++    if (!getenv("BACHATA_VULKAN_DRIVER_DIR")) {
++        return dlopen("libvulkan.so.1", RTLD_LAZY | RTLD_GLOBAL);
++    }
++    void* bridge = dlopen("libbachata_custom_vulkan.so", RTLD_NOW | RTLD_GLOBAL);
++    if (!bridge) {
++        return NULL;
++    }
++    void* (*open_custom_vulkan)(void) = dlsym(bridge, "bachata_open_custom_vulkan");
++    return open_custom_vulkan ? open_custom_vulkan() : NULL;
++}
+ 
+ const char* vulkanName = "libvulkan.so.1";
+ #define LIBNAME vulkan
++#define CUSTOM_LIBRARY_HANDLE OpenBachataVulkan
+ 
+ typedef void(*vFpUp_t)      (void*, uint64_t, void*);

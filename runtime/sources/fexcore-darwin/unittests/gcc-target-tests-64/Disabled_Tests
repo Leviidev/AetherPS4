@@ -1,0 +1,4 @@
+# This relies on SIGPROF which means we need real signal support to handle this
+# Crashes or hangs depending on which runner is running it.
+# Also this has a race with SIGPROF
+mcount_pic.c.gcc-target-test-64

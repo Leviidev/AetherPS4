@@ -1,0 +1,6 @@
+Target dependency graph (3 targets)
+Target 'AllExcludingTests' in project 'Aggregate'
+➜ Explicit dependency on target 'AetherPS4-product' in project 'AetherPS4'
+➜ Explicit dependency on target 'AetherPS4' in project 'AetherPS4'
+Target 'AetherPS4' in project 'AetherPS4' (no dependencies)
+Target 'AetherPS4-product' in project 'AetherPS4' (no dependencies)

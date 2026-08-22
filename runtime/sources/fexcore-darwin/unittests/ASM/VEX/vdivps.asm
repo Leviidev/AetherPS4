@@ -1,0 +1,49 @@
+%ifdef CONFIG
+{
+  "HostFeatures": ["AVX"],
+  "RegData": {
+    "XMM0": ["0x400000003F800000", "0x4080000040400000", "0x400000003F800000", "0x4080000040400000"],
+    "XMM1": ["0x40C0000040A00000", "0x4100000040E00000", "0x40C0000040A00000", "0x4100000040E00000"],
+    "XMM2": ["0x3EAAAAAB3E4CCCCD", "0x3F0000003EDB6DB7", "0x0000000000000000", "0x0000000000000000"],
+    "XMM3": ["0x3EAAAAAB3E4CCCCD", "0x3F0000003EDB6DB7", "0x0000000000000000", "0x0000000000000000"],
+    "XMM4": ["0x3EAAAAAB3E4CCCCD", "0x3F0000003EDB6DB7", "0x3EAAAAAB3E4CCCCD", "0x3F0000003EDB6DB7"],
+    "XMM5": ["0x4040000040A00000", "0x4000000040155555", "0x4040000040A00000", "0x4000000040155555"],
+    "XMM6": ["0x3EAAAAAB3E4CCCCD", "0x3F0000003EDB6DB7", "0x3EAAAAAB3E4CCCCD", "0x3F0000003EDB6DB7"],
+    "XMM7": ["0x4040000040A00000", "0x4000000040155555", "0x4040000040A00000", "0x4000000040155555"]
+  }
+}
+%endif
+
+lea rdx, [rel .data]
+
+vmovapd ymm0, [rdx]
+vmovapd ymm1, [rdx + 32]
+
+; Memory operand
+vdivps xmm2, xmm0, [rdx + 32]
+vdivps ymm4, ymm0, [rdx + 32]
+
+; Register only
+vdivps xmm3, xmm0, xmm1
+vdivps ymm5, ymm1, ymm0
+
+; Some tests for aliasing destination and source vectors
+vmovapd ymm6, ymm0
+vdivps ymm6, ymm6, ymm1
+
+vmovapd ymm7, ymm0
+vdivps ymm7, ymm1, ymm7
+
+hlt
+
+align 32
+.data:
+dq 0x400000003F800000 ; 2, 1
+dq 0x4080000040400000 ; 4, 3
+dq 0x400000003F800000 ; 2, 1
+dq 0x4080000040400000 ; 4, 3
+
+dq 0x40C0000040A00000 ; 6, 5
+dq 0x4100000040E00000 ; 8, 7
+dq 0x40C0000040A00000 ; 6, 5
+dq 0x4100000040E00000 ; 8, 7

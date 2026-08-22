@@ -1,0 +1,108 @@
+# Deploy the compatibility website from the gh-pages branch.
+#
+# Scheduled workflows only run when defined on the default branch, so this
+# dispatcher lives on release-source main. It checks out ONLY the gh-pages
+# branch (website content, never emulator source) and deploys it. It has no
+# push trigger: publishing site content happens on the gh-pages branch and
+# deploys there; this file covers scheduled refreshes and manual redeploys.
+
+name: Deploy website (from gh-pages)
+
+on:
+  schedule:
+    - cron: "41 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: compatibility-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out website content (gh-pages branch only)
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: bachata
+
+      - name: Check out compatibility source data
+        uses: actions/checkout@v4
+        with:
+          repository: JICA98/Bachata-S4-Compatibility
+          ref: main
+          path: compatibility
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate immutable source data
+        working-directory: compatibility
+        run: python3 scripts/validate.py
+
+      - name: Generate compact and per-game indexes
+        working-directory: compatibility
+        run: python3 scripts/build_site_data.py --output generated
+
+      - name: Assemble Pages artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _site
+          cp -a bachata/compatibility-site _site
+          mkdir -p _site/data _site/evidence _site/assets
+          cp bachata/assets/bachata-s4-logo.png _site/assets/bachata-s4-logo.png
+          cp compatibility/generated/site-index.json _site/data/site-index.json
+          cp compatibility/generated/releases.json _site/data/releases.json
+          cp -a compatibility/generated/games _site/data/games
+          (
+            cd compatibility
+            find assets -type f -path '*/screenshots/*' -exec cp --parents '{}' ../_site/evidence/ \;
+          )
+          oversized="$(find _site -type f -size +25M -print -quit)"
+          if [[ -n "$oversized" ]]; then
+            echo "A deployed file exceeds 25 MiB: $oversized" >&2
+            exit 1
+          fi
+          total_kib="$(du -sk _site | awk '{print $1}')"
+          if (( total_kib >= 900000 )); then
+            echo "Pages artifact exceeds the 900 MiB safety budget." >&2
+            exit 1
+          fi
+
+      - name: Verify production ads.txt
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f _site/ads.txt
+          EXPECTED_ADS_TXT='google.com, pub-8704776489115590, DIRECT, f08c47fec0942fa0'
+          ACTUAL_ADS_TXT="$(tr -d '\r' < _site/ads.txt | sed '/^[[:space:]]*$/d')"
+          if [[ "$ACTUAL_ADS_TXT" != "$EXPECTED_ADS_TXT" ]]; then
+            echo "::error::Production ads.txt does not contain the expected AdSense publisher record."
+            exit 1
+          fi
+          echo "ads.txt verified: $ACTUAL_ADS_TXT"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

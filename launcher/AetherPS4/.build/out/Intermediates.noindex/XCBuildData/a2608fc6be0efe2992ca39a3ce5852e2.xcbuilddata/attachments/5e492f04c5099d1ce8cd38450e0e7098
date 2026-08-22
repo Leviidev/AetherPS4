@@ -1,0 +1,139 @@
+{
+  "" : {
+    "diagnostics" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/AetherPS4--59BFF5A891F0D1C7-testable-primary.dia",
+    "emit-module-dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/AetherPS4--59BFF5A891F0D1C7-testable-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/AetherPS4--59BFF5A891F0D1C7-testable-primary-emit-module.dia",
+    "pch" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/AetherPS4--59BFF5A891F0D1C7-testable-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/AetherPS4--59BFF5A891F0D1C7-testable-primary.swiftdeps"
+  },
+  "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/Sources/AetherPS4/AetherPS4App.swift" : {
+    "const-values" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/AetherPS4App.swiftconstvalues",
+    "dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/AetherPS4App.d",
+    "diagnostics" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/AetherPS4App.dia",
+    "index-unit-output-path" : "/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/AetherPS4App.o",
+    "llvm-bc" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/AetherPS4App.bc",
+    "object" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/AetherPS4App.o",
+    "swift-dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/AetherPS4App.swiftdeps",
+    "swiftmodule" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/AetherPS4App~partial.swiftmodule"
+  },
+  "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/Sources/AetherPS4/Models/EmulatorLocator.swift" : {
+    "const-values" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/EmulatorLocator.swiftconstvalues",
+    "dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/EmulatorLocator.d",
+    "diagnostics" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/EmulatorLocator.dia",
+    "index-unit-output-path" : "/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/EmulatorLocator.o",
+    "llvm-bc" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/EmulatorLocator.bc",
+    "object" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/EmulatorLocator.o",
+    "swift-dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/EmulatorLocator.swiftdeps",
+    "swiftmodule" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/EmulatorLocator~partial.swiftmodule"
+  },
+  "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/Sources/AetherPS4/Models/EmulatorProcess.swift" : {
+    "const-values" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/EmulatorProcess.swiftconstvalues",
+    "dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/EmulatorProcess.d",
+    "diagnostics" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/EmulatorProcess.dia",
+    "index-unit-output-path" : "/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/EmulatorProcess.o",
+    "llvm-bc" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/EmulatorProcess.bc",
+    "object" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/EmulatorProcess.o",
+    "swift-dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/EmulatorProcess.swiftdeps",
+    "swiftmodule" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/EmulatorProcess~partial.swiftmodule"
+  },
+  "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/Sources/AetherPS4/Models/Game.swift" : {
+    "const-values" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/Game.swiftconstvalues",
+    "dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/Game.d",
+    "diagnostics" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/Game.dia",
+    "index-unit-output-path" : "/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/Game.o",
+    "llvm-bc" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/Game.bc",
+    "object" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/Game.o",
+    "swift-dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/Game.swiftdeps",
+    "swiftmodule" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/Game~partial.swiftmodule"
+  },
+  "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/Sources/AetherPS4/Models/GameLibrary.swift" : {
+    "const-values" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/GameLibrary.swiftconstvalues",
+    "dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/GameLibrary.d",
+    "diagnostics" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/GameLibrary.dia",
+    "index-unit-output-path" : "/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/GameLibrary.o",
+    "llvm-bc" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/GameLibrary.bc",
+    "object" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/GameLibrary.o",
+    "swift-dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/GameLibrary.swiftdeps",
+    "swiftmodule" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/GameLibrary~partial.swiftmodule"
+  },
+  "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/Sources/AetherPS4/Models/ParamSfoReader.swift" : {
+    "const-values" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/ParamSfoReader.swiftconstvalues",
+    "dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/ParamSfoReader.d",
+    "diagnostics" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/ParamSfoReader.dia",
+    "index-unit-output-path" : "/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/ParamSfoReader.o",
+    "llvm-bc" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/ParamSfoReader.bc",
+    "object" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/ParamSfoReader.o",
+    "swift-dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/ParamSfoReader.swiftdeps",
+    "swiftmodule" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/ParamSfoReader~partial.swiftmodule"
+  },
+  "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/Sources/AetherPS4/Models/PkgExtractorLocator.swift" : {
+    "const-values" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/PkgExtractorLocator.swiftconstvalues",
+    "dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/PkgExtractorLocator.d",
+    "diagnostics" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/PkgExtractorLocator.dia",
+    "index-unit-output-path" : "/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/PkgExtractorLocator.o",
+    "llvm-bc" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/PkgExtractorLocator.bc",
+    "object" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/PkgExtractorLocator.o",
+    "swift-dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/PkgExtractorLocator.swiftdeps",
+    "swiftmodule" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/PkgExtractorLocator~partial.swiftmodule"
+  },
+  "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/Sources/AetherPS4/Views/ConsoleView.swift" : {
+    "const-values" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/ConsoleView.swiftconstvalues",
+    "dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/ConsoleView.d",
+    "diagnostics" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/ConsoleView.dia",
+    "index-unit-output-path" : "/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/ConsoleView.o",
+    "llvm-bc" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/ConsoleView.bc",
+    "object" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/ConsoleView.o",
+    "swift-dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/ConsoleView.swiftdeps",
+    "swiftmodule" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/ConsoleView~partial.swiftmodule"
+  },
+  "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/Sources/AetherPS4/Views/ContentView.swift" : {
+    "const-values" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/ContentView.swiftconstvalues",
+    "dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/ContentView.d",
+    "diagnostics" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/ContentView.dia",
+    "index-unit-output-path" : "/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/ContentView.o",
+    "llvm-bc" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/ContentView.bc",
+    "object" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/ContentView.o",
+    "swift-dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/ContentView.swiftdeps",
+    "swiftmodule" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/ContentView~partial.swiftmodule"
+  },
+  "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/Sources/AetherPS4/Views/GameCardView.swift" : {
+    "const-values" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/GameCardView.swiftconstvalues",
+    "dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/GameCardView.d",
+    "diagnostics" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/GameCardView.dia",
+    "index-unit-output-path" : "/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/GameCardView.o",
+    "llvm-bc" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/GameCardView.bc",
+    "object" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/GameCardView.o",
+    "swift-dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/GameCardView.swiftdeps",
+    "swiftmodule" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/GameCardView~partial.swiftmodule"
+  },
+  "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/Sources/AetherPS4/Views/GameDetailView.swift" : {
+    "const-values" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/GameDetailView.swiftconstvalues",
+    "dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/GameDetailView.d",
+    "diagnostics" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/GameDetailView.dia",
+    "index-unit-output-path" : "/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/GameDetailView.o",
+    "llvm-bc" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/GameDetailView.bc",
+    "object" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/GameDetailView.o",
+    "swift-dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/GameDetailView.swiftdeps",
+    "swiftmodule" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/GameDetailView~partial.swiftmodule"
+  },
+  "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/Sources/AetherPS4/Views/LibraryView.swift" : {
+    "const-values" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/LibraryView.swiftconstvalues",
+    "dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/LibraryView.d",
+    "diagnostics" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/LibraryView.dia",
+    "index-unit-output-path" : "/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/LibraryView.o",
+    "llvm-bc" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/LibraryView.bc",
+    "object" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/LibraryView.o",
+    "swift-dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/LibraryView.swiftdeps",
+    "swiftmodule" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/LibraryView~partial.swiftmodule"
+  },
+  "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/Sources/AetherPS4/Views/SettingsView.swift" : {
+    "const-values" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/SettingsView.swiftconstvalues",
+    "dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/SettingsView.d",
+    "diagnostics" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/SettingsView.dia",
+    "index-unit-output-path" : "/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/SettingsView.o",
+    "llvm-bc" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/SettingsView.bc",
+    "object" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/SettingsView.o",
+    "swift-dependencies" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/SettingsView.swiftdeps",
+    "swiftmodule" : "/Users/davi/Documents/Coding/AetherCore4/Bachata-S4/launcher/AetherPS4/.build/out/Intermediates.noindex/AetherPS4.build/Debug/AetherPS4--59BFF5A891F0D1C7-testable-t.build/Objects-normal/arm64/SettingsView~partial.swiftmodule"
+  }
+}

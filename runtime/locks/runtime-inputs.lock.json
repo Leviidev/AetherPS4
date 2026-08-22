@@ -1,0 +1,182 @@
+{
+  "schemaVersion": 1,
+  "inputs": [
+    {
+      "name": "glibc-2.43+r22+g8362e8ce10b2-2-x86_64.pkg.tar.zst",
+      "url": "https://archive.archlinux.org/packages/g/glibc/glibc-2.43%2Br22%2Bg8362e8ce10b2-2-x86_64.pkg.tar.zst",
+      "sha256": "2c20828b3a571b272697671c90b1e3a8c426d6a7e7fb99a242099373f2710fe1"
+    },
+    {
+      "name": "glibc-2.43+r22+g8362e8ce10b2-2-aarch64.pkg.tar.xz",
+      "url": "https://de3.mirror.archlinuxarm.org/aarch64/core/glibc-2.43+r22+g8362e8ce10b2-2-aarch64.pkg.tar.xz",
+      "sha256": "8fac217e98c6e4342326726b2640ac254e8c82032f06f30bfa13ebbcc4fcb25b"
+    },
+    {
+      "name": "libstdc++-16.1.1+r12+g301eb08fa2c5-1-x86_64.pkg.tar.zst",
+      "url": "https://archive.archlinux.org/packages/l/libstdc%2B%2B/libstdc%2B%2B-16.1.1%2Br12%2Bg301eb08fa2c5-1-x86_64.pkg.tar.zst",
+      "sha256": "5eb8ab787086682875805e7eaad8728e73bad687aba00c9460ecb261c3762aeb"
+    },
+    {
+      "name": "libgcc-16.1.1+r12+g301eb08fa2c5-1-x86_64.pkg.tar.zst",
+      "url": "https://archive.archlinux.org/packages/l/libgcc/libgcc-16.1.1%2Br12%2Bg301eb08fa2c5-1-x86_64.pkg.tar.zst",
+      "sha256": "01fbf0e50872c2f4538ea067f97b143124963e9037ca8eb69cdc8b693779c11b"
+    },
+    {
+      "name": "ca-certificates-mozilla-3.125-1-x86_64.pkg.tar.zst",
+      "url": "https://archive.archlinux.org/packages/c/ca-certificates-mozilla/ca-certificates-mozilla-3.125-1-x86_64.pkg.tar.zst",
+      "sha256": "0fa76c249c0a6c28963f02ae366730a739121585aa1ffbb09b106b7a4fc8f358"
+    },
+    {
+      "name": "cacert-2025-02-25.pem",
+      "url": "https://curl.se/ca/cacert-2025-02-25.pem",
+      "sha256": "50a6277ec69113f00c5fd45f09e8b97a4b3e32daa35d3a95ab30137a55386cef"
+    },
+    {
+      "name": "sdl2-2.30.11-1-x86_64.pkg.tar.zst",
+      "url": "https://archive.archlinux.org/packages/s/sdl2/sdl2-2.30.11-1-x86_64.pkg.tar.zst",
+      "sha256": "7f2b1abdd245c83585d2ccf69d86fc596b87c45c54d59984ab195c403d3ae41f"
+    },
+    {
+      "name": "libx11-1.8.9-1-x86_64.pkg.tar.zst",
+      "url": "https://archive.archlinux.org/packages/l/libx11/libx11-1.8.9-1-x86_64.pkg.tar.zst",
+      "sha256": "ad425488570b8701a9f0bbb606ec5ba94682648659238c21ca765b534a614add"
+    },
+    {
+      "name": "libxext-1.3.7-1-x86_64.pkg.tar.zst",
+      "url": "https://archive.archlinux.org/packages/l/libxext/libxext-1.3.7-1-x86_64.pkg.tar.zst",
+      "sha256": "ac56905dc51bb652eca5f706fd7e7bb7ea81d4e057a236139fc769ce5ea10cf1"
+    },
+    {
+      "name": "libxcursor-1.2.3-1-x86_64.pkg.tar.zst",
+      "url": "https://archive.archlinux.org/packages/l/libxcursor/libxcursor-1.2.3-1-x86_64.pkg.tar.zst",
+      "sha256": "2a90267877c2f5ffe6c41a8ef91e6def3b7720de7b4b2628b329373ce20c1b99"
+    },
+    {
+      "name": "libxrandr-1.5.5-1-x86_64.pkg.tar.zst",
+      "url": "https://archive.archlinux.org/packages/l/libxrandr/libxrandr-1.5.5-1-x86_64.pkg.tar.zst",
+      "sha256": "49d3a3596311477f8ad2e1735dae612013118802822f21ce22886f65103dd899"
+    },
+    {
+      "name": "libxrender-0.9.12-1-x86_64.pkg.tar.zst",
+      "url": "https://archive.archlinux.org/packages/l/libxrender/libxrender-0.9.12-1-x86_64.pkg.tar.zst",
+      "sha256": "fed0389073d5b107074eaab48cefcc2716e607865142cde5b579c8ceeefea142"
+    },
+    {
+      "name": "libxfixes-6.0.2-1-x86_64.pkg.tar.zst",
+      "url": "https://archive.archlinux.org/packages/l/libxfixes/libxfixes-6.0.2-1-x86_64.pkg.tar.zst",
+      "sha256": "d58ab2dbf326e36cf84792fe0dc12c34239ea04ac34159006a566103203db272"
+    },
+    {
+      "name": "libxi-1.8.3-1-x86_64.pkg.tar.zst",
+      "url": "https://archive.archlinux.org/packages/l/libxi/libxi-1.8.3-1-x86_64.pkg.tar.zst",
+      "sha256": "5ac5541f58978a3a5fab08c24f03da43200a7e9b25098e3e6da7bad7a0892cf0"
+    },
+    {
+      "name": "libxss-1.2.5-1-x86_64.pkg.tar.zst",
+      "url": "https://archive.archlinux.org/packages/l/libxss/libxss-1.2.5-1-x86_64.pkg.tar.zst",
+      "sha256": "79fd8fc47e77f479e6e4229a6957f26a6dd549bac7e047bafecdcaf5fde58889"
+    },
+    {
+      "name": "libxcb-1.17.0-1-x86_64.pkg.tar.zst",
+      "url": "https://archive.archlinux.org/packages/l/libxcb/libxcb-1.17.0-1-x86_64.pkg.tar.zst",
+      "sha256": "2b2e7ac64b1d56c08a227c10bcab179605f2773f31db0a8c89f49f4e5b2f1292"
+    },
+    {
+      "name": "libxau-1.0.12-1-x86_64.pkg.tar.zst",
+      "url": "https://archive.archlinux.org/packages/l/libxau/libxau-1.0.12-1-x86_64.pkg.tar.zst",
+      "sha256": "605c8b059c36792f4e0cc235acadf39d0762df6c7878825a1be01a00ae7ea21e"
+    },
+    {
+      "name": "libxdmcp-1.1.5-2-x86_64.pkg.tar.zst",
+      "url": "https://archive.archlinux.org/packages/l/libxdmcp/libxdmcp-1.1.5-2-x86_64.pkg.tar.zst",
+      "sha256": "623c957c2fd4b427a0f5a531da44931f9f66521391ee0bd0e635479947036b65"
+    },
+    {
+      "name": "libxkbcommon-1.11.0-1-x86_64.pkg.tar.zst",
+      "url": "https://archive.archlinux.org/packages/l/libxkbcommon/libxkbcommon-1.11.0-1-x86_64.pkg.tar.zst",
+      "sha256": "6c7206057e97e08812c429106a7f639411d4919ba15c193f0582743dd5b7cfe6"
+    },
+    {
+      "name": "libxss-1.2.5-1-aarch64.pkg.tar.xz",
+      "url": "https://de3.mirror.archlinuxarm.org/aarch64/extra/libxss-1.2.5-1-aarch64.pkg.tar.xz",
+      "sha256": "1ebc34a29420166cb25040bfbff5d6ff732eff92de9cf07fcd92835e7d68bb9c"
+    },
+    {
+      "name": "libxkbcommon-1.13.2-1-aarch64.pkg.tar.xz",
+      "url": "https://de3.mirror.archlinuxarm.org/aarch64/extra/libxkbcommon-1.13.2-1-aarch64.pkg.tar.xz",
+      "sha256": "76b922d87d0af0011072b156464041ec5674f24ff1c78b7e85132fda72c9a7e7"
+    },
+    {
+      "name": "dbus-1.16.2-1-aarch64.pkg.tar.xz",
+      "url": "https://de3.mirror.archlinuxarm.org/aarch64/core/dbus-1.16.2-1-aarch64.pkg.tar.xz",
+      "sha256": "1aa0bc2be4fa083ec0cb678f05223f55b0c8e498351ad781dc4b7a0987b62bcc"
+    },
+    {
+      "name": "systemd-libs-261-1-aarch64.pkg.tar.xz",
+      "url": "https://de3.mirror.archlinuxarm.org/aarch64/core/systemd-libs-261-1-aarch64.pkg.tar.xz",
+      "sha256": "7e7c4c8c169caa36716c67868a1430cf0d346a7653588d4286f91621913ec452"
+    },
+    {
+      "name": "systemd-libs-261-1-x86_64.pkg.tar.zst",
+      "url": "https://archive.archlinux.org/packages/s/systemd-libs/systemd-libs-261-1-x86_64.pkg.tar.zst",
+      "sha256": "78db8c587150fe1feb7ad7d3749e737c994a05c9cfcb597ca3d5cbb05fab014e"
+    },
+    {
+      "name": "util-linux-libs-2.42.2-1-x86_64.pkg.tar.zst",
+      "url": "https://archive.archlinux.org/packages/u/util-linux-libs/util-linux-libs-2.42.2-1-x86_64.pkg.tar.zst",
+      "sha256": "50e5541bafc8e7013d1cfe7fe90cba2d5e96ac05acf3e8d1540f21daf24fb9c9"
+    },
+    {
+      "name": "vulkan-icd-loader-1.4.350.1-1-aarch64.pkg.tar.xz",
+      "url": "https://de3.mirror.archlinuxarm.org/aarch64/extra/vulkan-icd-loader-1.4.350.1-1-aarch64.pkg.tar.xz",
+      "sha256": "31142fb87d8c76233e35afc715afa17bcf89e4fe544dbb4d59c0b8e950640c3d"
+    },
+    {
+      "name": "vulkan-icd-loader-1.4.350.1-1-x86_64.pkg.tar.zst",
+      "url": "https://archive.archlinux.org/packages/v/vulkan-icd-loader/vulkan-icd-loader-1.4.350.1-1-x86_64.pkg.tar.zst",
+      "sha256": "e5a8c305ddb66582566d1974bae5f606478608cfe8986cc0ba1d46931d26d1f4"
+    },
+    {
+      "name": "libstdc++-16.1.1+r12+g301eb08fa2c5-1-aarch64.pkg.tar.xz",
+      "url": "https://de3.mirror.archlinuxarm.org/aarch64/core/libstdc%2B%2B-16.1.1%2Br12%2Bg301eb08fa2c5-1-aarch64.pkg.tar.xz",
+      "sha256": "19832a38b2c4820695d28289f1c4f371955586d39fb893d8cbc0d8dbb09a4383"
+    },
+    {
+      "name": "zlib-1:1.3.2-3-aarch64.pkg.tar.xz",
+      "url": "https://de3.mirror.archlinuxarm.org/aarch64/core/zlib-1%3A1.3.2-3-aarch64.pkg.tar.xz",
+      "sha256": "7e31b465e09e8e61375578b8e26ed883906e126e0c0ef1c75b7ccccfa95a58c4"
+    },
+    {
+      "name": "libdrm-2.4.134-1-aarch64.pkg.tar.xz",
+      "url": "https://de3.mirror.archlinuxarm.org/aarch64/extra/libdrm-2.4.134-1-aarch64.pkg.tar.xz",
+      "sha256": "d4173d7adc60d32d389e44e976447962c31bc23ff9a2153539bd8ad766e307b8"
+    }
+  ],
+  "winlatorRevision": "fb66541b93a4eb3ee585a433b4c7b20544d58e40",
+  "winlatorGlibcPatches": [
+    {
+      "path": "sysdeps/unix/sysv/linux/android_sysvshm.c",
+      "sha256": "3698e8e9cc8e00790f60ec16fbf88c88a78da933740e003677a6c37e509c71c2"
+    },
+    {
+      "path": "sysdeps/unix/sysv/linux/android_sysvshm.h",
+      "sha256": "031fa071ca44d1191dc22b4adbf351191bb292d718af0afd2caa9291aabf6550"
+    },
+    {
+      "path": "sysdeps/unix/sysv/linux/shmat.c",
+      "sha256": "e6b80913003e80ef4f900322398b682a76c1806dbd2f2da2a8f58a0759897f66"
+    },
+    {
+      "path": "sysdeps/unix/sysv/linux/shmctl.c",
+      "sha256": "fe72ee45e0c4cd6215f109c358bdbbfbeef22a6922ea0f91758226a671bc7d4b"
+    },
+    {
+      "path": "sysdeps/unix/sysv/linux/shmdt.c",
+      "sha256": "4e4362296e2e572e36e48617dce286639b3d4c2998afc7b8737a201b1e91069e"
+    },
+    {
+      "path": "sysdeps/unix/sysv/linux/shmget.c",
+      "sha256": "e59d1b5574e05cd6683202a6e0f61addea2eccca61ebad66682703a9cd477299"
+    }
+  ]
+}

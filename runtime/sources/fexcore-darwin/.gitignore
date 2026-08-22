@@ -1,0 +1,15 @@
+# Existing
+
+compile_commands.json
+vim_rc
+Config.json
+
+[Bb]uild*
+[Bb]in/
+out/
+.vscode/
+.vs/
+*.pyc
+.cache
+.idea/
+CMakeLists.txt.user

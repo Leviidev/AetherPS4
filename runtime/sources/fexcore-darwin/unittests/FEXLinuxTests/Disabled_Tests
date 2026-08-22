@@ -1,0 +1,7 @@
+###
+### Disabled tests ###
+###
+
+# These sometimes crash FEX with SIGSEGV
+timer-sigev-thread.32
+timer-sigev-thread.64

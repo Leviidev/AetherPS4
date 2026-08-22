@@ -1,0 +1,124 @@
+name: GLIBC fault test
+# This workflow file is the same as the `Build + Test` with some key differences
+# - Runs on any x86 and ARM64 runner
+# - Disables the glibc jemalloc compile option
+# - Enables the glibc allocator fault option
+# - Disables gvisor tests to reduce stress on CI machines (tmp/shm tests overwhelm them)
+# - Disables thunk tests since they are incompatible with glibc fault allocator
+# - Disables ARMEmitter tests (We don't want to fault test vixl's disassembler)
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
+  BUILD_TYPE: Release
+  CC: clang
+  CXX: clang++
+  FEX_PORTABLE: 1
+
+jobs:
+  glibc_fault_test:
+    runs-on: ${{ matrix.arch }}
+    strategy:
+      matrix:
+        arch: [[self-hosted, ARM64]]
+      fail-fast: false
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: '0'
+        fetch-tags: 'true'
+
+    - name: Set runner info
+      run: |
+        echo "runner_label=${{ matrix.arch[1] }}" >> $GITHUB_ENV
+        echo "runner_name=$(hostname)" >> $GITHUB_ENV
+
+    - name: Setup Build Environment
+      uses: ./.github/workflows/setup-env
+
+    - name: Configure CMake
+      run: |
+        cmake -S . -B build -DCMAKE_BUILD_TYPE=$BUILD_TYPE -G Ninja -DENABLE_LTO=False \
+          -DENABLE_ASSERTIONS=True -DENABLE_X86_HOST_DEBUG=True -DBUILD_FEX_LINUX_TESTS=True \
+          -DENABLE_GLIBC_ALLOCATOR_HOOK_FAULT=True -DENABLE_JEMALLOC_GLIBC_ALLOC=False \
+          -DCMAKE_INSTALL_PREFIX="$PWD"/build/install
+
+    # These steps make a lot of noise but rarely fail.
+    # Put them in a separate step to make normal build logs easier to parse
+    - name: Noisy Build Targets
+      run: cmake --build build --target asm_files 32bit_asm_files JemallocLibs Catch2 vixl cephes_128bit
+
+    - name: Build
+      run: cmake --build build
+
+    - name: Install
+      run: cmake --build build --target install
+
+    # GCC tests
+    - name: GCC64 Target Tests
+      if: ${{ always() }}
+      uses: ./.github/workflows/test
+      with:
+        target: gcc_target_tests_64
+
+    - name: GCC32 Target Tests
+      if: ${{ always() }}
+      uses: ./.github/workflows/test
+      with:
+        target: gcc_target_tests_32
+
+    # API Tests
+    - name: API Tests
+      if: ${{ always() }}
+      uses: ./.github/workflows/test
+      with:
+        target: api_tests
+
+    - name: FEXCore API Tests
+      if: ${{ always() }}
+      uses: ./.github/workflows/test
+      with:
+        target: fexcore_apitests
+
+    # Linux tests
+    - name: FEX Linux Tests
+      if: ${{ always() }}
+      uses: ./.github/workflows/test
+      with:
+        target: fex_linux_tests_all
+
+    # ASM Tests
+    - name: ASM Tests
+      if: ${{ always() }}
+      uses: ./.github/workflows/test
+      with:
+        target: asm_tests
+
+    # POSIX Tests
+    - name: POSIX Tests
+      if: ${{ always() }}
+      uses: ./.github/workflows/test
+      with:
+        target: posix_tests
+
+    - name: Remove old SHM regions
+      if: ${{ always() }}
+      run: cmake --build build --target remove_old_shm_regions
+
+    - name: Upload results
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v6
+      timeout-minutes: 1
+      with:
+        name: Results-${{ env.runner_name }}-${{ env.runner_label }}
+        path: results/*.log
+        retention-days: 3
+

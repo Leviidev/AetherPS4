@@ -1,0 +1,127 @@
+diff --git a/src/libtools/bachata_thread_affinity.h b/src/libtools/bachata_thread_affinity.h
+new file mode 100644
+index 00000000..ed4cdbd0
+--- /dev/null
++++ b/src/libtools/bachata_thread_affinity.h
+@@ -0,0 +1,19 @@
++#ifndef BOX64_BACHATA_THREAD_AFFINITY_H
++#define BOX64_BACHATA_THREAD_AFFINITY_H
++
++#include <sched.h>
++#include <string.h>
++
++static inline int box64_bachata_should_pin_thread(const char* enabled, const char* name) {
++    return enabled && strcmp(enabled, "1") == 0 && name && strcmp(name, "NexusRevolution") == 0;
++}
++
++static inline int box64_bachata_highest_allowed_cpu(const cpu_set_t* allowed) {
++    if (!allowed) return -1;
++    for (int cpu = CPU_SETSIZE - 1; cpu >= 0; --cpu) {
++        if (CPU_ISSET(cpu, allowed)) return cpu;
++    }
++    return -1;
++}
++
++#endif
+diff --git a/src/libtools/static_threads.h b/src/libtools/static_threads.h
+index fd21676f..ede5de2a 100644
+--- a/src/libtools/static_threads.h
++++ b/src/libtools/static_threads.h
+@@ -46,6 +46,7 @@ int my_pthread_cond_wait(x64emu_t* emu, pthread_cond_t* cond, void* mutex);
+ int my_pthread_cond_clockwait(x64emu_t *emu, pthread_cond_t* cond, void* mutex, clockid_t __clock_id, const struct timespec* __abstime);
+ int my_pthread_getaffinity_np(x64emu_t* emu, pthread_t thread, size_t cpusetsize, void* cpuset);
+ int my_pthread_setaffinity_np(x64emu_t* emu, pthread_t thread, size_t cpusetsize, void* cpuset);
++int my_pthread_setname_np(x64emu_t* emu, pthread_t thread, const char* name);
+ int my_pthread_kill(x64emu_t* emu, void* thread, int sig);
+ int my_pthread_kill_old(x64emu_t* emu, void* thread, int sig);
+ int my_pthread_mutexattr_destroy(x64emu_t* emu, my_mutexattr_t *attr);
+diff --git a/src/libtools/threads.c b/src/libtools/threads.c
+index 2737c9bd..91b816a1 100644
+--- a/src/libtools/threads.c
++++ b/src/libtools/threads.c
+@@ -25,6 +25,7 @@
+ #include "bridge.h"
+ #include "myalign.h"
+ #include "x64tls.h"
++#include "bachata_thread_affinity.h"
+ #ifdef DYNAREC
+ #include "dynablock.h"
+ #include "dynarec/native_lock.h"
+@@ -927,6 +928,33 @@ EXPORT int my_pthread_setaffinity_np_old(x64emu_t* emu, pthread_t thread, void*
+ {
+ 	return my_pthread_setaffinity_np(emu, thread, 128, cpuset);
+ }
++
++EXPORT int my_pthread_setname_np(x64emu_t* emu, pthread_t thread, const char* name)
++{
++    (void)emu;
++    int ret = pthread_setname_np(thread, name);
++    if (ret || !box64_bachata_should_pin_thread(getenv("BOX64_BACHATA_PRIME_THREAD"), name))
++        return ret;
++
++    cpu_set_t allowed;
++    if (pthread_getaffinity_np(thread, sizeof(allowed), &allowed) != 0) {
++        printf_log(LOG_INFO, "Bachata affinity: failed to query allowed CPUs for %s\n", name);
++        return ret;
++    }
++    int cpu = box64_bachata_highest_allowed_cpu(&allowed);
++    if (cpu < 0)
++        return ret;
++
++    cpu_set_t target;
++    CPU_ZERO(&target);
++    CPU_SET(cpu, &target);
++    int affinity_ret = pthread_setaffinity_np(thread, sizeof(target), &target);
++    if (affinity_ret == 0)
++        printf_log(LOG_INFO, "Bachata affinity: pinned %s to CPU %d\n", name, cpu);
++    else
++        printf_log(LOG_INFO, "Bachata affinity: failed to pin %s to CPU %d (error=%d)\n", name, cpu, affinity_ret);
++    return ret;
++}
+ #endif
+ 
+ //EXPORT int my_pthread_attr_setaffinity_np(x64emu_t* emu, void* attr, uint32_t cpusetsize, void* cpuset)
+diff --git a/src/wrapped/wrappedlibpthread_private.h b/src/wrapped/wrappedlibpthread_private.h
+index 8f211cd7..7f2e3b2d 100644
+--- a/src/wrapped/wrappedlibpthread_private.h
++++ b/src/wrapped/wrappedlibpthread_private.h
+@@ -252,7 +252,7 @@ GOM(pthread_setaffinity_np, iFEpLp)
+ GO(pthread_setcancelstate, iFip)
+ GO(pthread_setcanceltype, iFip)
+ GO(pthread_setconcurrency, iFi)
+-GO(pthread_setname_np, iFpp)
++GOM(pthread_setname_np, iFEpp)
+ GO(pthread_setschedparam, iFLip)
+ GO(pthread_setschedprio, iFLi)
+ GO(__pthread_setspecific, iFLp)
+diff --git a/tests/test_bachata_thread_affinity.c b/tests/test_bachata_thread_affinity.c
+new file mode 100644
+index 00000000..1bbfbfe1
+--- /dev/null
++++ b/tests/test_bachata_thread_affinity.c
+@@ -0,0 +1,25 @@
++#define _GNU_SOURCE
++#include <assert.h>
++#include <sched.h>
++#include <stdio.h>
++
++#include "../src/libtools/bachata_thread_affinity.h"
++
++int main(void) {
++    cpu_set_t allowed;
++    CPU_ZERO(&allowed);
++    CPU_SET(2, &allowed);
++    CPU_SET(5, &allowed);
++    CPU_SET(7, &allowed);
++
++    assert(!box64_bachata_should_pin_thread(NULL, "NexusRevolution"));
++    assert(!box64_bachata_should_pin_thread("0", "NexusRevolution"));
++    assert(!box64_bachata_should_pin_thread("1", "Game:Main"));
++    assert(box64_bachata_should_pin_thread("1", "NexusRevolution"));
++    assert(box64_bachata_highest_allowed_cpu(&allowed) == 7);
++
++    CPU_ZERO(&allowed);
++    assert(box64_bachata_highest_allowed_cpu(&allowed) == -1);
++    puts("Bachata thread affinity policy passed");
++    return 0;
++}

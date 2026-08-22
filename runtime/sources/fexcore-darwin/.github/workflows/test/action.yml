@@ -1,0 +1,21 @@
+name: Run Test and Store Logs
+description: Run a test and store the log.
+inputs:
+  target:
+    description: 'The test target to run'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Run Tests
+      shell: bash
+      run: cmake --build build --target ${{ inputs.target }}
+
+    - name: Move and Truncate Results
+      if: ${{ always() }}
+      shell: bash
+      run: |
+        mkdir -p results
+        mv build/Testing/Temporary/LastTest.log results/${{ inputs.target }}.log || true
+        truncate --size="<20M" results/${{ inputs.target }}.log || true

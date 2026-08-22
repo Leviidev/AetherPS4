@@ -1,0 +1,150 @@
+// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+#include "platform/ios/shadps4_ios_api.h"
+
+#include <filesystem>
+#include <mutex>
+#include <string>
+#include <string_view>
+
+#include "common/frame_presented_flag.h"
+#include "common/key_manager.h"
+#include "common/logging/log.h"
+#include "common/path_util.h"
+#include "common/sigsys_trap.h"
+#include "common/singleton.h"
+#include "core/emulator_settings.h"
+#include "core/emulator_state.h"
+#include "core/file_sys/fs.h"
+#include "core/ipc/ipc.h"
+#include "core/loader/elf.h"
+#include "core/user_settings.h"
+#include "emulator.h"
+
+namespace {
+
+std::once_flag g_init_flag;
+bool g_init_ok = false;
+
+// Mirrors main.cpp's "resolve a path or a game ID" behavior (see FindGameByID usage
+// there): try the string as a literal path first, then search EmulatorSettings'
+// configured install directories for a matching game ID.
+std::optional<std::filesystem::path> ResolveEbootPath(std::string_view game_path_or_id) {
+    std::filesystem::path candidate(game_path_or_id);
+    if (std::filesystem::exists(candidate)) {
+        return candidate;
+    }
+    constexpr int max_depth = 5;
+    for (const auto& install_dir : EmulatorSettings.GetGameInstallDirs()) {
+        if (auto found = Common::FS::FindGameByID(install_dir, std::string(game_path_or_id),
+                                                    max_depth)) {
+            return found;
+        }
+    }
+    return std::nullopt;
+}
+
+} // namespace
+
+extern "C" int shadps4_init(const ShadPS4Options* options) {
+    std::call_once(g_init_flag, [&] {
+        Common::InstallBachataSigsysTrap();
+
+        // SetUserPath requires the directory to already exist (see path_util.cpp) --
+        // std::filesystem::create_directories is a no-op if it's already there.
+        if (options && options->user_dir && options->user_dir[0] != '\0') {
+            std::error_code ec;
+            std::filesystem::create_directories(options->user_dir, ec);
+            if (!ec) {
+                Common::FS::SetUserPath(Common::FS::PathType::UserDir, options->user_dir);
+            }
+        }
+
+        Common::Log::Setup("shadps4.log");
+
+        IPC::Instance().Init();
+
+        auto emu_state = std::make_shared<EmulatorState>();
+        EmulatorState::SetInstance(emu_state);
+        UserSettings.Load();
+
+        auto key_manager = KeyManager::GetInstance();
+        key_manager->LoadFromFile();
+
+        auto emu_settings = std::make_shared<EmulatorSettingsImpl>();
+        EmulatorSettingsImpl::SetInstance(emu_settings);
+        emu_settings->Load();
+        Common::Log::g_should_append |= EmulatorSettings.IsLogAppend();
+
+        if (options) {
+            if (options->show_fps) {
+                EmulatorSettings.SetShowFpsCounter(true);
+            }
+            if (options->fullscreen == 0) {
+                EmulatorSettings.SetFullScreen(false);
+            } else if (options->fullscreen == 1) {
+                EmulatorSettings.SetFullScreen(true);
+            }
+        }
+
+        g_init_ok = true;
+    });
+    return g_init_ok ? 0 : -1;
+}
+
+extern "C" int shadps4_run(const char* eboot_path) {
+    if (!g_init_ok || !eboot_path) {
+        return -1;
+    }
+
+    auto resolved = ResolveEbootPath(eboot_path);
+    if (!resolved.has_value()) {
+        LOG_ERROR(Loader, "shadps4_run: game ID or file path not found: {}", eboot_path);
+        return -1;
+    }
+
+    Core::Loader::Elf executable;
+    executable.Open(*resolved);
+    if (!executable.IsElfFile()) {
+        LOG_ERROR(Loader, "shadps4_run: invalid PS4 executable: {}", resolved->string());
+        return -1;
+    }
+
+    auto* emulator = Common::Singleton<Core::Emulator>::Instance();
+    emulator->executableName = "AetherPS4";
+    // Run() blocks until the SDL window closes or shadps4_stop() pushes a quit event
+    // (see emulator.cpp); SHADPS4_LIBRARY_BUILD makes it return here instead of
+    // quick_exit()-ing the host process.
+    emulator->Run(*resolved);
+    return 0;
+}
+
+extern "C" void shadps4_stop() {
+    if (!g_init_ok) {
+        return;
+    }
+    Common::Singleton<Core::Emulator>::Instance()->Stop();
+}
+
+extern "C" void shadps4_toggle_pause() {
+    if (!g_init_ok) {
+        return;
+    }
+    Common::Singleton<Core::Emulator>::Instance()->TogglePause();
+}
+
+extern "C" int shadps4_is_paused() {
+    if (!g_init_ok) {
+        return 0;
+    }
+    return Common::Singleton<Core::Emulator>::Instance()->IsPaused() ? 1 : 0;
+}
+
+extern "C" int shadps4_has_presented_frame() {
+    return Common::FramePresentedFlag().load(std::memory_order_relaxed) ? 1 : 0;
+}
+
+extern "C" void shadps4_register_first_frame_callback(void (*callback)(void)) {
+    Common::FramePresentedCallback().store(callback, std::memory_order_relaxed);
+}

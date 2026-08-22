@@ -1,0 +1,11 @@
+Target dependency graph (4 targets)
+Target 'AllIncludingTests' in project 'Aggregate'
+➜ Explicit dependency on target 'AetherPS4Tests-product' in project 'AetherPS4'
+➜ Dependency on target 'AetherPS4Tests-product' in project 'AetherPS4' via transitive dependency through 'AetherPS4Tests-test-runner'
+➜ Explicit dependency on target 'AetherPS4-product' in project 'AetherPS4'
+➜ Explicit dependency on target 'AetherPS4' in project 'AetherPS4'
+Target 'AetherPS4Tests-product' in project 'AetherPS4'
+➜ Explicit dependency on target 'AetherPS4-product' in project 'AetherPS4'
+➜ Explicit dependency on target 'AetherPS4' in project 'AetherPS4'
+Target 'AetherPS4' in project 'AetherPS4' (no dependencies)
+Target 'AetherPS4-product' in project 'AetherPS4' (no dependencies)

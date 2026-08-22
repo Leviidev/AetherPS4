@@ -1,0 +1,123 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -469,6 +469,7 @@ set(ELFLOADER_SRC
+     "${BOX64_ROOT}/src/libtools/sigtools.c"
+     "${BOX64_ROOT}/src/libtools/syscall_user_dispatch.c"
+     "${BOX64_ROOT}/src/libtools/decopcode.c"
++    "${BOX64_ROOT}/src/libtools/decopcode_native.c"
+     "${BOX64_ROOT}/src/libtools/threads.c"
+     "${BOX64_ROOT}/src/tools/bitutils.c"
+     "${BOX64_ROOT}/src/tools/box64stack.c"
+diff --git a/src/libtools/decopcode.c b/src/libtools/decopcode.c
+--- a/src/libtools/decopcode.c
++++ b/src/libtools/decopcode.c
+@@ -5,6 +5,7 @@
+ #include "x64emu.h"
+ #include "emu/x64run_private.h"
+ #include "custommem.h"
++#include "decopcode_native.h"
+ 
+ #define OPCODE_READ  (1<<0)
+ #define OPCODE_WRITE (1<<1)
+@@ -419,6 +420,11 @@ int decode_opcode(uintptr_t rip, int is32bits)
+ 
+ int write_opcode(uintptr_t rip, uintptr_t native_ip, int is32bits)
+ {
+-    // TODO, on ARM64, RiSCV and LoongArch, it would be easier to analyse the opcode at the native IP instead, as opcode that write to memory are more limited in quantity
++#ifdef __aarch64__
++    if (native_ip && is_native_write_opcode(*(const uint32_t*)native_ip))
++        return 1;
++#else
++    (void)native_ip;
++#endif
+     return (decode_opcode(rip, is32bits)&OPCODE_WRITE)?1:0;
+ }
+diff --git a/src/libtools/decopcode_native.c b/src/libtools/decopcode_native.c
+new file mode 100644
+--- /dev/null
++++ b/src/libtools/decopcode_native.c
+@@ -0,0 +1,27 @@
++#include "decopcode_native.h"
++
++int is_native_write_opcode(uint32_t opcode)
++{
++    // Load/store pair: STNP/STP have L (bit 22) clear; LDNP/LDP have it set.
++    if ((opcode & 0x3a000000u) == 0x28000000u)
++        return (opcode & 0x00400000u) == 0;
++
++    // Single-register load/store, including unscaled, pre/post-indexed,
++    // register-offset, and unsigned-immediate forms. Stores have L clear.
++    const uint32_t single_class = opcode & 0x3b000000u;
++    if (single_class == 0x38000000u || single_class == 0x39000000u)
++        return (opcode & 0x00400000u) == 0;
++
++    // Cache clean/invalidate by virtual address must take shadPS4's write-side
++    // invalidation path when Turnip touches a protected GPU-tracked page.
++    const uint32_t cache_maintenance = opcode & 0xffffffe0u;
++    if (cache_maintenance == 0xd50b7a20u || // DC CVAC, Xt
++        cache_maintenance == 0xd50b7e20u)   // DC CIVAC, Xt
++        return 1;
++
++    // DC ZVA zeroes the cache block containing Xt and therefore writes memory.
++    if ((opcode & 0xffffffe0u) == 0xd50b7420u)
++        return 1;
++
++    return 0;
++}
+diff --git a/src/libtools/decopcode_native.h b/src/libtools/decopcode_native.h
+new file mode 100644
+--- /dev/null
++++ b/src/libtools/decopcode_native.h
+@@ -0,0 +1,8 @@
++#ifndef BOX64_DECOPCODE_NATIVE_H
++#define BOX64_DECOPCODE_NATIVE_H
++
++#include <stdint.h>
++
++int is_native_write_opcode(uint32_t opcode);
++
++#endif
+diff --git a/tests/test_native_write_opcode.c b/tests/test_native_write_opcode.c
+new file mode 100644
+--- /dev/null
++++ b/tests/test_native_write_opcode.c
+@@ -0,0 +1,38 @@
++#include <stdint.h>
++#include <stdio.h>
++
++#include "../src/libtools/decopcode_native.h"
++
++typedef struct {
++    uint32_t opcode;
++    int expected_write;
++    const char* name;
++} opcode_case_t;
++
++int main(void)
++{
++    static const opcode_case_t cases[] = {
++        {0xad018c62, 1, "stp q2, q3, [x3, #0x30]"},
++        {0x3d800000, 1, "str q0, [x0]"},
++        {0xad428420, 0, "ldp q0, q1, [x1, #0x50]"},
++        {0x3dc00023, 0, "ldr q3, [x1]"},
++        {0xd50b7423, 1, "dc zva, x3"},
++        {0xd50b7a20, 1, "dc cvac, x0"},
++        {0xd50b7a27, 1, "dc cvac, x7"},
++        {0xd50b7e20, 1, "dc civac, x0"},
++        {0xd50b7e33, 1, "dc civac, x19"},
++        {0xd5087640, 0, "dc isw, x0"},
++        {0xd65f03c0, 0, "ret"},
++    };
++
++    int failures = 0;
++    for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
++        const int actual = is_native_write_opcode(cases[i].opcode);
++        if (actual != cases[i].expected_write) {
++            fprintf(stderr, "%s: expected write=%d, got %d (opcode=%#x)\n", cases[i].name,
++                    cases[i].expected_write, actual, cases[i].opcode);
++            ++failures;
++        }
++    }
++    return failures != 0;
++}
