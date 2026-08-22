@@ -496,7 +496,22 @@ void ContextImpl::ClearCodeCache(FEXCore::Core::InternalThreadState* Thread, boo
     // Allocate new CodeBuffer + L3 LookupCache and clear L1+L2 caches
     Thread->CPUBackend->ClearCache();
   } else {
-    // Clear L1+L2 cache of this thread, and clear L3 cache across any threads using it
+    // Clear L1+L2 cache of this thread, and clear L3 cache across any threads using it.
+    //
+    // NewCodeBuffer=false physically reuses the same already-allocated buffer memory instead
+    // of moving to a fresh allocation -- unlike the NewCodeBuffer=true path above, where other
+    // threads' already-compiled code and in-flight execution are simply left alone in the old,
+    // still-valid buffer. Reusing memory that another thread could be *executing* out of right
+    // now (not just compiling into -- a thread running already-JIT'd code never touches
+    // CodeInvalidationMutex at all) needs the same exclusion this codebase's existing code-
+    // invalidation entry points (InvalidateCodeBuffersCodeRange, InvalidateThreadCachedCodeRange)
+    // already rely on CodeInvalidationMutex for, so take it here too, unique/exclusive, for the
+    // duration of the actual clear. The caller (Arm64JITCore::CompileCode, on the iOS-only path
+    // that reaches this branch) is responsible for having already released its own shared lock
+    // on this same mutex before calling in here and re-acquiring it after returning -- this
+    // mutex doesn't support recursive/upgrade locking, so holding the shared lock across this
+    // call would deadlock against the exclusive lock taken here.
+    std::unique_lock inval_lock {CodeInvalidationMutex};
     auto lk = Thread->LookupCache->AcquireWriteLock();
     Thread->LookupCache->ClearCache(lk);
   }

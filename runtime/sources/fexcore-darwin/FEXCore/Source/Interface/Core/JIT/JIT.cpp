@@ -1174,7 +1174,26 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
         // address, which is the actual fix -- re-enabling reuse-in-place here now that the
         // real bug underneath it is fixed, rather than working around it by avoiding this
         // path altogether.
+        //
+        // ClearCodeCache's NewCodeBuffer=false branch (Core.cpp) now takes CodeInvalidationMutex
+        // exclusively for the duration of the clear, to exclude any other thread that might
+        // currently be *executing* out of the buffer being reused (not just compiling into it --
+        // execution of already-JIT'd code never touches this mutex at all, so this is the only
+        // guard available). This call site is reached from deep inside CompileBlock (Core.cpp),
+        // which already holds that same mutex *shared* for its entire duration
+        // (GuardSignalDeferringSection<std::shared_lock>) -- this mutex doesn't support
+        // recursive or shared-to-exclusive-upgrade locking, so calling in here without first
+        // releasing that shared lock would deadlock against the exclusive lock ClearCodeCache
+        // now takes. Release it manually here and restore it immediately after, bypassing the
+        // RAII wrapper CompileBlock's local `lk` owns (its own eventual unlock_shared() in that
+        // caller's destructor stays correctly balanced as long as this thread holds exactly one
+        // shared reference again by the time this function returns, which the sequence below
+        // guarantees) -- WritePriorityMutex::Mutex doesn't track *which* call site (de)acquired
+        // it, only the net reader/writer counts, so this is safe purely at the mutex level.
+        auto& InvalidationMutex = CTX->GetCodeInvalidationMutex();
+        InvalidationMutex.unlock_shared();
         CTX->ClearCodeCache(ThreadState, false);
+        InvalidationMutex.lock_shared();
 #else
         CTX->ClearCodeCache(ThreadState);
 #endif
