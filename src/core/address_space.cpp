@@ -862,6 +862,56 @@ struct AddressSpace::Impl {
         }
         void* ret = mmap(reinterpret_cast<void*>(virtual_addr), size, prot, MAP_FIXED | flag,
                          handle, host_offset);
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+        if (ret == MAP_FAILED && errno == ENOMEM) {
+            // iOS's mmap(MAP_FIXED) can refuse one very large request outright with ENOMEM even
+            // when far more than `size` remains free in this process's whole address-space
+            // budget, and even when the shared backing file is large enough (the BackingSize
+            // check above did not fire for this same call) -- confirmed on-device: Rocket
+            // League's ~1.25GB flexible-memory reservation failed here every time, well within
+            // the ~16GB user window and the ~8GB backing file. The guest only cares that the
+            // resulting virtual range ends up mapped and contiguous, not how many syscalls built
+            // it, so retry as a sequence of smaller MAP_FIXED mmaps covering the same span
+            // instead of one huge one.
+            constexpr u64 ChunkSize = 128_MB;
+            LOG_WARNING(Kernel_Vmm,
+                        "Impl::Map: single mmap of size {:#x} at {:#x} failed with ENOMEM, "
+                        "retrying as {} chunk(s) of up to {:#x} bytes",
+                        size, virtual_addr, (size + ChunkSize - 1) / ChunkSize, ChunkSize);
+            u64 mapped = 0;
+            bool chunk_failed = false;
+            while (mapped < size) {
+                const u64 remaining = size - mapped;
+                const u64 chunk = remaining < ChunkSize ? remaining : ChunkSize;
+                void* chunk_ret = mmap(reinterpret_cast<void*>(virtual_addr + mapped), chunk, prot,
+                                       MAP_FIXED | flag, handle,
+                                       host_offset + static_cast<off_t>(mapped));
+                if (chunk_ret == MAP_FAILED) {
+                    LOG_CRITICAL(Kernel_Vmm,
+                                 "Impl::Map: chunked fallback also failed at offset {:#x}/{:#x}: {}",
+                                 mapped, size, strerror(errno));
+                    chunk_failed = true;
+                    break;
+                }
+                mapped += chunk;
+            }
+            if (chunk_failed) {
+                // Tear down whatever we did manage to map so we don't leave a torn, partially
+                // mapped region behind -- the caller's ASSERT_MSG below still fires as if the
+                // original single mmap had simply failed outright.
+                if (mapped > 0) {
+                    munmap(reinterpret_cast<void*>(virtual_addr), mapped);
+                }
+                ret = MAP_FAILED;
+                errno = ENOMEM;
+            } else {
+                LOG_WARNING(Kernel_Vmm,
+                            "Impl::Map: chunked fallback succeeded for {:#x} bytes at {:#x}", size,
+                            virtual_addr);
+                ret = reinterpret_cast<void*>(virtual_addr);
+            }
+        }
+#endif
         ASSERT_MSG(ret != MAP_FAILED, "mmap failed: {}", strerror(errno));
         return ret;
     }
