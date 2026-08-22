@@ -711,27 +711,19 @@ struct AddressSpace::Impl {
         system_managed_base = virtual_base;
         system_reserved_base = reinterpret_cast<u8*>(SYSTEM_RESERVED_MIN);
         user_base = reinterpret_cast<u8*>(USER_MIN);
-#elif defined(__APPLE__) && (defined(ARCH_X86_64) || TARGET_OS_IPHONE)
+#elif defined(__APPLE__) && defined(ARCH_X86_64)
         // On ARM64 Macs, we run into limitations due to the commpage from 0xFC0000000 - 0xFFFFFFFFF
         // and the GPU carveout region from 0x1000000000 - 0x6FFFFFFFFF. Because this creates gaps
         // in the available virtual memory region, we map memory space using three distinct parts.
         //
-        // This same three-separate-mmaps approach is also required on iOS (ARM64), for an
-        // unrelated reason: without this branch, iOS ARM64 falls through to the generic #else
-        // below, which does ONE combined mmap(virtual_size, no MAP_FIXED) and then computes
-        // system_reserved_base/user_base as *offsets* from that single base using
-        // SYSTEM_RESERVED_MIN/USER_MIN literally -- constants sized for the desktop platforms'
-        // multi-terabyte layout, not for iOS's deliberately shrunk ~1GB/~1GB/~16GB windows (see
-        // the SYSTEM_MANAGED_MAX comment above). USER_MIN - SYSTEM_MANAGED_MIN alone is ~68GB,
-        // dwarfing the ~19GB actually reserved -- so user_base ended up ~68GB past the end of
-        // the real mapping, in memory nothing had ever reserved at all. Confirmed on-device:
-        // this is exactly why Rocket League's very first large ("user"-region) allocation
-        // failed with ENOMEM regardless of request size, chunked or not -- the address itself
-        // was never valid. iOS has no equivalent of FreeBSD's "can't stand MAP_FIXED" problem
-        // (every Impl::Map call already uses MAP_FIXED without issue), so there's no reason to
-        // take the offset-based fallback here at all -- placing each of the three windows at
-        // its own literal, absolute address (like desktop Apple/x86_64 already does) sidesteps
-        // the bad-offset math entirely.
+        // NOTE: iOS was briefly routed through this same branch, on the theory that it wouldn't
+        // share FreeBSD's "can't stand MAP_FIXED" problem below. Confirmed on-device that's
+        // wrong: iOS's sandbox refuses these specific low absolute addresses outright (mmap
+        // failed with EACCES, "Permission denied", on the very first reservation attempt) --
+        // stricter than even Apple Silicon macOS, which this branch's own name suggests already
+        // works fine with MAP_FIXED at these same addresses. iOS needs the offset-based fallback
+        // below after all, just fixed to use offsets that actually fit (see that branch's own
+        // comment).
         system_managed_base =
             reinterpret_cast<u8*>(mmap(reinterpret_cast<void*>(SYSTEM_MANAGED_MIN),
                                        system_managed_size, protection_flags, map_flags, -1, 0));
@@ -757,8 +749,23 @@ struct AddressSpace::Impl {
         const auto virtual_base =
             reinterpret_cast<u8*>(mmap(nullptr, virtual_size, protection_flags, map_flags, -1, 0));
         system_managed_base = virtual_base;
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+        // iOS reaches this branch too (its sandbox refuses MAP_FIXED at the desktop platforms'
+        // fixed absolute addresses outright -- EACCES, confirmed on-device -- ruling out the
+        // three-separate-mmaps branch above). SYSTEM_RESERVED_MIN/USER_MIN - SYSTEM_MANAGED_MIN
+        // are ~34GB/~68GB gaps sized for the desktop platforms' multi-terabyte layout; iOS's
+        // actual combined reservation (virtual_size) is only ~19GB, deliberately shrunk (see
+        // the SYSTEM_MANAGED_MAX comment above). Using those literal gaps here placed user_base
+        // ~68GB past the end of anything actually mapped -- confirmed as the exact cause of
+        // Rocket League's ENOMEM, regardless of request size or chunking, since the target
+        // address itself was never valid. Pack the three windows back-to-back within the
+        // reservation that's actually there instead.
+        system_reserved_base = virtual_base + system_managed_size;
+        user_base = virtual_base + system_managed_size + system_reserved_size;
+#else
         system_reserved_base = virtual_base + SYSTEM_RESERVED_MIN - SYSTEM_MANAGED_MIN;
         user_base = virtual_base + USER_MIN - SYSTEM_MANAGED_MIN;
+#endif
 #endif
 #endif
         if (system_managed_base == MAP_FAILED || system_reserved_base == MAP_FAILED ||
