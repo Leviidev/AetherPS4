@@ -677,7 +677,13 @@ s32 PS4_SYSV_ABI sceKernelDebugRaiseException(u32 error, s64 unk) {
     if (unk != 0) {
         return ORBIS_KERNEL_ERROR_EINVAL;
     }
-    UNREACHABLE_MSG("error {:#x}", error);
+    // This is the game intentionally signaling a debugger-visible fatal error (e.g. after
+    // deciding to self-terminate via its own appError/appRequestExit path) -- on real hardware,
+    // with no debugger attached, this just notifies and the game's own exit sequence continues.
+    // UNREACHABLE_MSG here instead crashed our entire host process for what is a normal,
+    // expected guest-initiated shutdown -- confirmed on-device with Rocket League hitting a
+    // missing-asset error and calling this right after appRequestExit(1).
+    LOG_ERROR(Lib_Kernel, "Guest raised debug exception, error={:#x}", error);
     return ORBIS_OK;
 }
 
@@ -685,7 +691,8 @@ s32 PS4_SYSV_ABI sceKernelDebugRaiseExceptionOnReleaseMode(u32 error, s64 unk) {
     if (unk != 0) {
         return ORBIS_KERNEL_ERROR_EINVAL;
     }
-    UNREACHABLE_MSG("error {:#x}", error);
+    // See sceKernelDebugRaiseException's own comment just above.
+    LOG_ERROR(Lib_Kernel, "Guest raised debug exception (release mode), error={:#x}", error);
     return ORBIS_OK;
 }
 
