@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "common/logging/log.h"
@@ -43,6 +45,34 @@ struct FiosOpAttr {
     void* p_reserved;         // 0x28
 };
 static_assert(sizeof(FiosOpAttr) == 0x30, "FiosOpAttr size");
+
+// BEST-EFFORT, UNVERIFIED layout for the PS4 FIOS2 SDK's SceFiosDirEntry. Unlike FiosOpAttr
+// above (confirmed against real Vita SDK/OpenOrbis references), this one couldn't be verified
+// against any available source (upstream shadPS4 has no FIOS2 support at all to compare
+// against; OpenOrbis and general web search turned up nothing for this specific struct). Kept
+// deliberately compact and the name copy is hard-bounded, so a wrong guess here fails the same
+// way the previous always-return-failure stub did (game doesn't get useful entries) rather than
+// overrunning the game's buffer.
+struct FiosDirEntry {
+    s32 file_type;   // best-effort: 1 = directory, 2 = regular file
+    u32 name_length;
+    s64 file_size;
+    char name[256];
+};
+
+// Real per-handle directory iteration state, backing the FIOS directory-handle calls below via
+// the SAME kernel-level posix_open/posix_getdents path the regular (non-FIOS) filesystem layer
+// already uses successfully -- so path translation and the OrbisKernelDirent entries themselves
+// are exactly as correct as everywhere else in this codebase; only the outer FiosDirEntry
+// marshaling above is a guess.
+struct FiosDirState {
+    s32 fd = -1;
+    std::vector<u8> raw_buf;
+    size_t raw_pos = 0;
+    bool eof = false;
+};
+std::mutex g_dir_mutex;
+std::unordered_map<s32, FiosDirState> g_dir_states;
 
 // typedef void (*SceFiosOpCallback)(void* pContext, s32 op, s32 err, s64 result);
 using FiosOpCallback = void PS4_SYSV_ABI (*)(void* context, s32 op, s32 err, s64 result);
@@ -606,17 +636,33 @@ s32 PS4_SYSV_ABI sceFiosDirectoryCreate(const void* op_attr, const char* path) {
     return result >= 0 ? AllocateOpHandle(0) : result;
 }
 
-// Directory-handle ops: not fully implemented. Return benign failures so callers
-// fall back rather than ENOSYS-trap on FEX.
+// Directory-handle ops. Previously always-fail stubs -- confirmed on-device that this is why
+// Rocket League couldn't discover its own "Core" package file: it enumerates
+// /app0/TAGame/CookedOrbis via these calls to find package data, and an always-empty listing
+// meant it could never locate a package that genuinely exists on disk. Backed by the same
+// kernel-level posix_open/posix_getdents path the regular (non-FIOS) filesystem layer already
+// uses, so path translation and the underlying directory entries are correct; see FiosDirEntry's
+// own comment for the one part of this that's still a best-effort guess.
 s32 PS4_SYSV_ABI sceFiosDHOpenSync(const void* op_attr, s32* handle, const char* path,
                                    void* open_params) {
     static_cast<void>(op_attr);
     static_cast<void>(open_params);
-    LOG_WARNING(Lib_SysModule, "[FIOS-HLE][DHOpenSync] path='{}' stub", path ? path : "(null)");
-    if (handle) {
-        *handle = -1;
+    if (handle == nullptr || path == nullptr) {
+        return -1;
     }
-    return -1;
+    const s32 fd = Kernel::posix_open(path, Kernel::ORBIS_KERNEL_O_DIRECTORY, 0);
+    if (fd < 0) {
+        LOG_WARNING(Lib_SysModule, "[FIOS-HLE][DHOpenSync] path='{}' failed fd={}", path, fd);
+        *handle = -1;
+        return fd;
+    }
+    {
+        std::scoped_lock lock{g_dir_mutex};
+        g_dir_states[fd] = FiosDirState{fd};
+    }
+    *handle = fd;
+    LOG_INFO(Lib_SysModule, "[FIOS-HLE][DHOpenSync] path='{}' handle={}", path, fd);
+    return 0;
 }
 
 s32 PS4_SYSV_ABI sceFiosDHOpen(const void* op_attr, s32* handle, const char* path,
@@ -626,15 +672,57 @@ s32 PS4_SYSV_ABI sceFiosDHOpen(const void* op_attr, s32* handle, const char* pat
 
 s32 PS4_SYSV_ABI sceFiosDHReadSync(const void* op_attr, s32 handle, void* entry) {
     static_cast<void>(op_attr);
-    static_cast<void>(handle);
-    static_cast<void>(entry);
-    return -1;
+    if (entry == nullptr) {
+        return -1;
+    }
+    std::scoped_lock lock{g_dir_mutex};
+    const auto it = g_dir_states.find(handle);
+    if (it == g_dir_states.end()) {
+        return -1;
+    }
+    auto& state = it->second;
+    if (state.raw_pos >= state.raw_buf.size() && !state.eof) {
+        state.raw_buf.resize(4096);
+        const s64 n = Kernel::posix_getdents(state.fd, reinterpret_cast<char*>(state.raw_buf.data()),
+                                             state.raw_buf.size());
+        if (n <= 0) {
+            state.eof = true;
+            state.raw_buf.clear();
+        } else {
+            state.raw_buf.resize(static_cast<size_t>(n));
+        }
+        state.raw_pos = 0;
+    }
+    if (state.raw_pos >= state.raw_buf.size()) {
+        return -1; // No more entries.
+    }
+    const auto* dirent =
+        reinterpret_cast<const Kernel::OrbisKernelDirent*>(state.raw_buf.data() + state.raw_pos);
+    if (dirent->d_reclen == 0) {
+        // Malformed/short record -- stop rather than looping forever on the same offset.
+        state.eof = true;
+        return -1;
+    }
+    state.raw_pos += dirent->d_reclen;
+
+    auto* out = static_cast<FiosDirEntry*>(entry);
+    std::memset(out, 0, sizeof(FiosDirEntry));
+    out->file_type = (dirent->d_type == 4 /* DT_DIR */) ? 1 : 2;
+    const size_t name_len = std::min<size_t>(dirent->d_namlen, sizeof(out->name) - 1);
+    std::memcpy(out->name, dirent->d_name, name_len);
+    out->name[name_len] = '\0';
+    out->name_length = static_cast<u32>(name_len);
+    LOG_DEBUG(Lib_SysModule, "[FIOS-HLE][DHReadSync] handle={} name='{}'", handle, out->name);
+    return 0;
 }
 
 s32 PS4_SYSV_ABI sceFiosDHCloseSync(const void* op_attr, s32 handle) {
     static_cast<void>(op_attr);
-    static_cast<void>(handle);
-    return 0;
+    {
+        std::scoped_lock lock{g_dir_mutex};
+        g_dir_states.erase(handle);
+    }
+    return Kernel::posix_close(handle);
 }
 
 s32 PS4_SYSV_ABI sceFiosStat(const void* op_attr, const char* path, FiosStat* stat) {
