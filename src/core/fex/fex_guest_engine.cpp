@@ -1974,9 +1974,21 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
               // ClearCodeCache call that invoked this callback.
               continue;
             }
-            LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: waiting for thread {:#x}'s LookupCache lock",
-                              reinterpret_cast<uintptr_t>(t->Native));
-            auto cacheLock = t->Native->LookupCache->AcquireWriteLock();
+            // Non-blocking: the calling thread already holds CodeInvalidationMutex exclusively
+            // (see ClearCodeCache, Core.cpp) -- if thread t is itself waiting on that same
+            // mutex while holding this very lock, blocking here would deadlock forever, which
+            // is confirmed on-device to actually happen (BACHATA_BUFFER_REUSE logging stopped
+            // dead at exactly this wait, every time, with no crash and no further progress).
+            // Skipping a thread whose lock isn't immediately free just leaves its L1/L2 stale
+            // for one more compile cycle -- the same already-handled class of fault as any
+            // other stale-but-tracked address, not a hang.
+            auto cacheLock = t->Native->LookupCache->TryAcquireWriteLock();
+            if (!cacheLock.Owned()) {
+              LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: thread {:#x}'s LookupCache lock busy, "
+                                "skipping (stale cache, not a hang)",
+                                reinterpret_cast<uintptr_t>(t->Native));
+              continue;
+            }
             LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: got thread {:#x}'s LookupCache lock, clearing",
                               reinterpret_cast<uintptr_t>(t->Native));
             t->Native->LookupCache->ClearThreadLocalCaches(cacheLock);

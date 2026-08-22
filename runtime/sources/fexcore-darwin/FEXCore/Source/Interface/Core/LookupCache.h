@@ -25,12 +25,21 @@ protected:
 };
 
 struct LookupCacheWriteLockToken : public LookupCacheBaseLockToken {
+  // Whether this token actually holds the lock -- only meaningful for a token constructed via
+  // the try_to_lock overload below (see GuestToHostMap::TryAcquireWriteLock's own comment for
+  // why that path exists). A token from the plain (blocking) constructor always owns the lock.
+  [[nodiscard]] bool Owned() const {
+    return Lock.owns_lock();
+  }
+
 private:
   // Only constructible by GuestToHostMap
   friend struct GuestToHostMap;
   LookupCacheWriteLockToken(FEXCore::Utils::WritePriorityMutex::Mutex& Mutex)
     : Lock {Mutex} {}
-  std::lock_guard<FEXCore::Utils::WritePriorityMutex::Mutex> Lock;
+  LookupCacheWriteLockToken(FEXCore::Utils::WritePriorityMutex::Mutex& Mutex, std::try_to_lock_t)
+    : Lock {Mutex, std::try_to_lock} {}
+  std::unique_lock<FEXCore::Utils::WritePriorityMutex::Mutex> Lock;
 };
 
 struct LookupCacheReadLockToken : public LookupCacheBaseLockToken {
@@ -48,6 +57,22 @@ struct GuestToHostMap {
   [[nodiscard]]
   LookupCacheWriteLockToken AcquireWriteLock() {
     return LookupCacheWriteLockToken {Lock};
+  }
+
+  // Non-blocking variant: check LookupCacheWriteLockToken::Owned() on the result before using
+  // it. Exists for cross-thread cache invalidation (a thread reusing the shared JIT buffer in
+  // place, clearing sibling threads' caches -- see OnBufferReusedInPlace's own comment,
+  // Context.h) where blocking here risks a real deadlock: the calling thread already holds
+  // CodeInvalidationMutex exclusively at that point, and if the target thread is itself
+  // waiting on that same mutex (e.g. mid-compile, about to take it shared) while holding this
+  // very lock, the blocking AcquireWriteLock() above would wait forever on a lock its own
+  // holder can never release. Confirmed on-device: exactly this scenario hung Minecraft's
+  // boot indefinitely with zero further progress. Skipping a thread here just leaves its L1/L2
+  // stale for one more compile cycle -- the same (already-handled) class of fault as a
+  // still-tracked-but-stale address, not a hang.
+  [[nodiscard]]
+  LookupCacheWriteLockToken TryAcquireWriteLock() {
+    return LookupCacheWriteLockToken {Lock, std::try_to_lock};
   }
 
   [[nodiscard]]
@@ -377,6 +402,12 @@ public:
   // Also note that L1 lookups might be inlined in the JIT Dispatcher and/or block ends.
   auto AcquireWriteLock() {
     return Shared->AcquireWriteLock();
+  }
+
+  // See GuestToHostMap::TryAcquireWriteLock's own comment for why this non-blocking variant
+  // exists. Check LookupCacheWriteLockToken::Owned() on the result before using it.
+  auto TryAcquireWriteLock() {
+    return Shared->TryAcquireWriteLock();
   }
 
 private:
