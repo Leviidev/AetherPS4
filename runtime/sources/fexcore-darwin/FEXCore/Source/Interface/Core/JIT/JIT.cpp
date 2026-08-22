@@ -1155,7 +1155,23 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
       SetCursorOffset(CodeBuffers.LatestOffset);
       Align16B();
       if ((GetCursorOffset() + TempSize) > CurrentCodeBuffer->UsableSize()) {
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+        // NewCodeBuffer=true (the default) requests a brand new dual-mapped allocation from
+        // StikDebug's external BreakpointJIT mechanism every time the cache fills. Confirmed
+        // on-device: even after capping every such request at a proven-working 16MB (see
+        // CPUBackend.cpp's iOS override of MAX_CODE_SIZE), the *third* JIT buffer allocation
+        // of a session still crashed inside that external call before it could even return --
+        // same failure regardless of request size, meaning it's StikDebug's own mechanism
+        // running out of some per-session capacity for handling further distinct grant
+        // requests, not a size problem. NewCodeBuffer=false clears the lookup caches and
+        // reuses the SAME already-granted buffer in place instead of ever asking for another
+        // one, which avoids the failure entirely at the cost of losing all previously
+        // compiled code on every clear (a normal, already-supported FEXCore eviction mode,
+        // just not the one exercised by default here).
+        CTX->ClearCodeCache(ThreadState, false);
+#else
         CTX->ClearCodeCache(ThreadState);
+#endif
       }
 
       CodeBuffers.LatestOffset = GetCursorOffset();
