@@ -1466,6 +1466,16 @@ bool HandleGuestSignal(int signal, siginfo_t* info, void* rawContext) noexcept {
     SetHgsCheckpoint(HgsCheckpoint::AdjustmentFailedReturn);
     return false;
   }
+  // HandleUnalignedAccess just backpatched the faulting instruction (up to one instruction
+  // before/after it too, for the half-barrier case) and invalidated the icache for that --
+  // but only at writable_pc, the alias it actually wrote through. Execution resumes below at
+  // pc, the separate executable-side alias of the same physical page: on a VA-tagged icache,
+  // invalidating one alias's line does not invalidate the other's, so without this the CPU
+  // can fetch whatever was cached at pc before the backpatch -- stale or unrelated
+  // instructions -- and silently run off into garbage with no crash and no further syscalls,
+  // rather than the freshly-patched code. Cover PC[-1] through PC[1] (3 instructions) since
+  // that's the widest range HandleUnalignedAccess's backpatch touches.
+  __builtin___clear_cache(reinterpret_cast<char*>(pc - 4), reinterpret_cast<char*>(pc + 8));
   std::memcpy(ts.__x, regs.data(), sizeof(ts.__x));
   arm_thread_state64_set_fp(ts, regs[29]);
   arm_thread_state64_set_lr_fptr(ts, reinterpret_cast<void*>(regs[30]));
