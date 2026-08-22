@@ -241,7 +241,19 @@ public:
   // redundantly touched) instead of leaving other threads' caches to only self-correct on their
   // own next CompileBlock call, which may never come if a thread is mostly just executing
   // already-cached code.
-  std::function<void(FEXCore::Core::InternalThreadState* CallingThread)> OnBufferReusedInPlace;
+  //
+  // The lk parameter is the SAME write-lock token ClearCodeCache already holds (from
+  // Thread->LookupCache->AcquireWriteLock() just above the call site) -- pass it straight
+  // through rather than having the callback acquire anything new. On iOS every guest thread's
+  // LookupCache::Shared points at the one process-wide L3 cache tied to the single, StikDebug-
+  // count-limited JIT buffer (see JIT.cpp's ThreadState->LookupCache->Shared assignment), so
+  // "another thread's write lock" and "the lock we're already holding" are literally the same
+  // mutex, not independent per-thread locks. An earlier version of this callback tried to
+  // (re-)acquire that same lock per other-thread, which can only ever self-conflict: blocking
+  // acquisition deadlocked outright, and a try-lock fallback failed 100% of the time, every
+  // thread, every call, with zero real contention involved -- confirmed on-device.
+  std::function<void(FEXCore::Core::InternalThreadState* CallingThread, const FEXCore::LookupCacheWriteLockToken& lk)>
+    OnBufferReusedInPlace;
 
   void ConfigureAOTGen(FEXCore::Core::InternalThreadState* Thread, fextl::set<uint64_t>* ExternalBranches, uint64_t SectionMaxAddress) override;
 

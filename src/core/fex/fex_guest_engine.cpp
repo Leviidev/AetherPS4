@@ -1961,50 +1961,34 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
   {
     auto* rawImpl = impl.get();
     static_cast<FEXCore::Context::ContextImpl*>(impl->Context.get())->OnBufferReusedInPlace =
-        [rawImpl](FEXCore::Core::InternalThreadState* CallingThread) {
+        [rawImpl](FEXCore::Core::InternalThreadState* CallingThread,
+                  const FEXCore::LookupCacheWriteLockToken& lk) {
           LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: callback begin, CallingThread={:#x}, waiting "
                             "for ThreadsMutex",
                             reinterpret_cast<uintptr_t>(CallingThread));
-          std::scoped_lock lk {rawImpl->ThreadsMutex};
+          std::scoped_lock threadsLock {rawImpl->ThreadsMutex};
           LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: got ThreadsMutex, {} threads registered",
                             rawImpl->Threads.size());
+          // lk is the SAME write-lock token the caller (ClearCodeCache, Core.cpp) already holds
+          // -- on iOS every guest thread's LookupCache::Shared points at the one process-wide L3
+          // cache tied to the single, StikDebug-count-limited JIT buffer (see JIT.cpp's
+          // ThreadState->LookupCache->Shared assignment), so there is no separate per-thread
+          // lock to acquire here at all; "another thread's write lock" and "the lock we already
+          // hold" are literally the same mutex. An earlier version of this callback tried to
+          // (re-)acquire that same lock per other-thread, which can only ever self-conflict:
+          // blocking acquisition deadlocked outright, and a subsequent try-lock fallback failed
+          // 100% of the time, every thread, every call, with zero real contention involved --
+          // confirmed on-device by BACHATA_BUFFER_REUSE logging showing every single thread
+          // reporting "busy" with no exceptions. Just reuse lk directly.
           for (auto* t : rawImpl->Threads) {
             if (t->Native == nullptr || t->Native == CallingThread) {
               // The calling thread's own L1/L2 was already cleared as part of the same
               // ClearCodeCache call that invoked this callback.
               continue;
             }
-            // Non-blocking: the calling thread already holds CodeInvalidationMutex exclusively
-            // (see ClearCodeCache, Core.cpp) -- if thread t is itself waiting on that same
-            // mutex while holding this very lock, blocking here would deadlock forever, which
-            // is confirmed on-device to actually happen (BACHATA_BUFFER_REUSE logging stopped
-            // dead at exactly this wait, every time, with no crash and no further progress).
-            // Skipping a thread whose lock isn't immediately free just leaves its L1/L2 stale,
-            // which is confirmed on-device to sometimes lead to a real (but clean, no longer
-            // hanging) crash if that thread later branches through the stale entry into memory
-            // since reused by someone else. Since thread t can only be genuinely deadlocked
-            // against us if it needs CodeInvalidationMutex to release this same lock (which it
-            // does not -- see ClearCodeCache/JIT.cpp's locking order, this write lock is only
-            // ever taken after CodeInvalidationMutex is already held), a thread reporting
-            // "busy" here is virtually always just mid-insert for a handful of instructions,
-            // not stuck. A short bounded retry catches the vast majority of those without any
-            // risk of the original unbounded deadlock -- worst case this just burns a little
-            // time still holding CodeInvalidationMutex exclusively.
-            FEXCore::LookupCacheWriteLockToken cacheLock = t->Native->LookupCache->TryAcquireWriteLock();
-            constexpr int kMaxAttempts = 64;
-            for (int attempt = 1; !cacheLock.Owned() && attempt < kMaxAttempts; ++attempt) {
-              std::this_thread::yield();
-              cacheLock = t->Native->LookupCache->TryAcquireWriteLock();
-            }
-            if (!cacheLock.Owned()) {
-              LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: thread {:#x}'s LookupCache lock still "
-                                "busy after {} retries, skipping (stale cache, not a hang)",
-                                reinterpret_cast<uintptr_t>(t->Native), kMaxAttempts);
-              continue;
-            }
-            LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: got thread {:#x}'s LookupCache lock, clearing",
+            LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: clearing thread {:#x}'s local caches",
                               reinterpret_cast<uintptr_t>(t->Native));
-            t->Native->LookupCache->ClearThreadLocalCaches(cacheLock);
+            t->Native->LookupCache->ClearThreadLocalCaches(lk);
           }
           LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: callback end");
         };

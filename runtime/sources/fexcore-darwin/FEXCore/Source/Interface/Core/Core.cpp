@@ -524,7 +524,7 @@ void ContextImpl::ClearCodeCache(FEXCore::Core::InternalThreadState* Thread, boo
     // until this returns -- see OnBufferReusedInPlace's own comment (Context.h) for why other
     // threads' independent L1/L2 caches need to be reached at all.
     if (OnBufferReusedInPlace) {
-      OnBufferReusedInPlace(Thread);
+      OnBufferReusedInPlace(Thread, lk);
     }
     LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: end, releasing CodeInvalidationMutex");
   }
