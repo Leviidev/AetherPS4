@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		ED6AA7953B0B4755B750C16E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 762ABA290BC04A21AAAD4C09 /* Assets.xcassets */; };
 		01752C79E5783EDE47DA1AFB /* libLibAtrac9.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 9D1FD5EEBB26F914522451A8 /* libLibAtrac9.a */; };
 		025836A38F3E7E4745B66AD6 /* libImGui_Resources.a in Frameworks */ = {isa = PBXBuildFile; fileRef = C00C31536F67CF0DDDF0645A /* libImGui_Resources.a */; };
 		02EC6B94A4DBAF3CD0A6DA0C /* ConsoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53619C1070A90CC3079C4AA8 /* ConsoleView.swift */; };
@@ -141,6 +142,7 @@
 		94774840493D224E84438FE0 /* AudioToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioToolbox.framework; path = System/Library/Frameworks/AudioToolbox.framework; sourceTree = SDKROOT; };
 		9678C9441B906A51AB4170D7 /* libcrypto.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libcrypto.a; path = "../runtime/build/shadps4-ios/externals/libressl/crypto/libcrypto.a"; sourceTree = "<group>"; };
 		96DA84C528B5915E625F0F1C /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; name = Info.plist; path = ../Info.plist; sourceTree = "<group>"; };
+		762ABA290BC04A21AAAD4C09 /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = Assets.xcassets; sourceTree = "<group>"; };
 		9C56C457EEA3245A079EFCB6 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		9D1FD5EEBB26F914522451A8 /* libLibAtrac9.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libLibAtrac9.a; path = "../runtime/build/shadps4-ios/externals/libLibAtrac9.a"; sourceTree = "<group>"; };
 		A0D77C9F2C1ADABCDA774F83 /* AetherPS4-iOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "AetherPS4-iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -268,6 +270,7 @@
 			isa = PBXGroup;
 			children = (
 				96DA84C528B5915E625F0F1C /* Info.plist */,
+				762ABA290BC04A21AAAD4C09 /* Assets.xcassets */,
 			);
 			name = Resources;
 			path = Resources;
@@ -412,6 +415,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				ED6AA7953B0B4755B750C16E /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
