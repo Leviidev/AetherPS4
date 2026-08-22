@@ -563,8 +563,14 @@ s32 MemoryManager::MapMemory(void** out_addr, VAddr virtual_addr, u64 size, Memo
     } else if (False(flags & MemoryMapFlags::Fixed)) {
         // Find a free virtual addr to map
         alignment = alignment > 0 ? alignment : 16_KB;
-        virtual_addr = virtual_addr == 0 ? DEFAULT_MAPPING_BASE : virtual_addr;
-        virtual_addr = SearchFree(virtual_addr, size, alignment);
+        const VAddr search_start = virtual_addr == 0 ? DEFAULT_MAPPING_BASE : virtual_addr;
+        virtual_addr = SearchFree(search_start, size, alignment);
+        LOG_WARNING(Kernel_Vmm,
+                    "BACHATA_SEARCHFREE: search_start={:#x} size={:#x} alignment={:#x} -> "
+                    "result={:#x} (sysm={:#x} sysr={:#x} user={:#x}-{:#x})",
+                    search_start, size, alignment, virtual_addr,
+                    impl.SystemManagedVirtualBase(), impl.SystemReservedVirtualBase(),
+                    impl.UserVirtualBase(), impl.UserVirtualBase() + impl.UserVirtualSize());
         if (virtual_addr == -1) {
             // No suitable memory areas to map to
             return ORBIS_KERNEL_ERROR_ENOMEM;
