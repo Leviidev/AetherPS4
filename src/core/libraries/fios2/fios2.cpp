@@ -67,6 +67,7 @@ struct FiosDirEntry {
 // marshaling above is a guess.
 struct FiosDirState {
     s32 fd = -1;
+    std::string dir_path;
     std::vector<u8> raw_buf;
     size_t raw_pos = 0;
     bool eof = false;
@@ -658,7 +659,7 @@ s32 PS4_SYSV_ABI sceFiosDHOpenSync(const void* op_attr, s32* handle, const char*
     }
     {
         std::scoped_lock lock{g_dir_mutex};
-        g_dir_states[fd] = FiosDirState{fd};
+        g_dir_states[fd] = FiosDirState{fd, path};
     }
     *handle = fd;
     LOG_INFO(Lib_SysModule, "[FIOS-HLE][DHOpenSync] path='{}' handle={}", path, fd);
@@ -712,7 +713,21 @@ s32 PS4_SYSV_ABI sceFiosDHReadSync(const void* op_attr, s32 handle, void* entry)
     std::memcpy(out->name, dirent->d_name, name_len);
     out->name[name_len] = '\0';
     out->name_length = static_cast<u32>(name_len);
-    LOG_DEBUG(Lib_SysModule, "[FIOS-HLE][DHReadSync] handle={} name='{}'", handle, out->name);
+    // Real entry names alone got Rocket League's own package-discovery scan to actually see
+    // "Core.xxx" on-device, but it still reported the package as unfindable afterward -- left
+    // file_size at 0 (memset above) for every entry until now, which is indistinguishable from
+    // a genuinely empty/invalid package to whatever validates entries after this call returns.
+    // A stat per entry does add real per-entry I/O to directory scans, but these are cheap
+    // metadata-only lookups, not full reads.
+    if (out->file_type == 2 && std::strcmp(out->name, ".") != 0 && std::strcmp(out->name, "..") != 0) {
+        const std::string full_path = state.dir_path + "/" + out->name;
+        Kernel::OrbisKernelStat st{};
+        if (Kernel::posix_stat(full_path.c_str(), &st) >= 0) {
+            out->file_size = st.st_size;
+        }
+    }
+    LOG_DEBUG(Lib_SysModule, "[FIOS-HLE][DHReadSync] handle={} name='{}' size={}", handle,
+              out->name, out->file_size);
     return 0;
 }
 

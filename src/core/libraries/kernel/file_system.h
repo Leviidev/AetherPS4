@@ -68,6 +68,7 @@ constexpr int ORBIS_KERNEL_O_DIRECTORY = 0x00020000;
 s32 PS4_SYSV_ABI posix_open(const char* path, s32 flags, u16 mode);
 s32 PS4_SYSV_ABI posix_close(s32 fd);
 s64 PS4_SYSV_ABI posix_getdents(s32 fd, char* buf, u64 nbytes);
+s32 PS4_SYSV_ABI posix_stat(const char* path, OrbisKernelStat* sb);
 s64 PS4_SYSV_ABI posix_lseek(s32 fd, s64 offset, s32 whence);
 s64 PS4_SYSV_ABI posix_read(s32 fd, void* buf, u64 nbytes);
 s32 PS4_SYSV_ABI posix_unlink(const char* path);
