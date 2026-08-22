@@ -1522,12 +1522,18 @@ bool TryRecoverJitAliasFault(int signal, siginfo_t* info, void* rawContext) noex
 
   void* const translated = FEXCore::Allocator::GetExecutableAddress(pc);
   if (translated == pc) {
-    // Not a tracked writable-alias address at all -- nothing this path can help with.
-    return false;
-  }
-  if (!ActiveFexExecution.Context->IsAddressInCodeBuffer(ActiveFexExecution.Thread,
-                                                          reinterpret_cast<uintptr_t>(translated))) {
-    return false;
+    // Not a tracked writable-alias address at all -- nothing this path can help with. This is
+    // already the real safety check: GetExecutableAddress only returns something other than its
+    // input for an address actually present in the table iOSJITAlloc populates, i.e. a
+    // genuinely-live dual-mapped JIT region, so no separate confirmation is needed.
+    //
+    // Deliberately NOT also requiring IsAddressInCodeBuffer here (tried first, on-device):
+    // that function only knows about the CodeBufferManager pool used for per-block guest code
+    // (CurrentCodeBuffer / SignalHandlerCodeBuffers) -- it has no idea about the dispatcher's
+    // own, separately-allocated bootstrap code buffer (Dispatcher.cpp's own AllocateBuffer),
+    // which is exactly where this bug's fault lands (confirmed: the crashing offset falls
+    // inside the dispatcher's own Start..End range). Requiring it here silently rejected the
+    // one region this recovery most needed to handle.
   }
 
   SignalSafeLog("BACHATA_JIT_ALIAS_RECOVER: pc=%p (writable alias) -> resuming at %p (executable "
