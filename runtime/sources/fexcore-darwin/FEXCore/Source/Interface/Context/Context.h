@@ -255,6 +255,27 @@ public:
   std::function<void(FEXCore::Core::InternalThreadState* CallingThread, const FEXCore::LookupCacheWriteLockToken& lk)>
     OnBufferReusedInPlace;
 
+  // Safepoint hooks around JIT buffer invalidation. Confirmed on-device: OnBufferReusedInPlace
+  // above (and the delinking GuestToHostMap::ClearCache already does) closes the "another
+  // thread's stale L1/L2 entry" and "another thread's stale direct branch" gaps, but neither
+  // stops a thread that's already MID-EXECUTION of an already-resolved direct branch, right as
+  // the memory it jumps into gets cleared/reused out from under it -- "a thread running
+  // already-JIT'd code never touches CodeInvalidationMutex at all", so holding it exclusively
+  // during a reuse does not, on its own, block a concurrent executor the way it blocks a
+  // concurrent compiler. Seen on-device as two different guest threads both faulting into the
+  // same stale dispatcher region within microseconds of each other, right as a third thread's
+  // buffer-reuse was in flight, once Rocket League reached genuine multi-threaded rendering.
+  //
+  // BeginBufferInvalidationSafepoint should pause every other live guest thread (via an async
+  // signal to each, unrelated to anything guest-visible) and only return once they're
+  // confirmed paused (or a bounded wait times out) -- called right before ANY code memory a
+  // stale branch could be executing through gets touched. EndBufferInvalidationSafepoint
+  // releases them, called once that memory is safe to run through again. Set by GuestEngine at
+  // setup, same as OnBufferReusedInPlace, since it's the one place a full thread list (with
+  // native OS thread handles) exists at all.
+  std::function<void(FEXCore::Core::InternalThreadState* CallingThread)> BeginBufferInvalidationSafepoint;
+  std::function<void(FEXCore::Core::InternalThreadState* CallingThread)> EndBufferInvalidationSafepoint;
+
   void ConfigureAOTGen(FEXCore::Core::InternalThreadState* Thread, fextl::set<uint64_t>* ExternalBranches, uint64_t SectionMaxAddress) override;
 
   bool IsAddressInCodeBuffer(FEXCore::Core::InternalThreadState* Thread, uintptr_t Address) const override;

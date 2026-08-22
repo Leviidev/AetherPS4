@@ -59,11 +59,14 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
+#include <csignal>
 #include <cstdarg>
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
 #include <fstream>
+#include <pthread.h>
 
 // Weak fallback when exception.cpp is not linked (fexcore-guest-harness).
 // Full shadPS4 provides the strong definition that reads g_curthread.
@@ -144,6 +147,50 @@ enum class HgsCheckpoint : int {
 std::atomic<int> g_hgs_checkpoint {static_cast<int>(HgsCheckpoint::Idle)};
 void SetHgsCheckpoint(HgsCheckpoint value) noexcept {
   g_hgs_checkpoint.store(static_cast<int>(value), std::memory_order_relaxed);
+}
+
+// Safepoint mechanism backing ContextImpl::BeginBufferInvalidationSafepoint/
+// EndBufferInvalidationSafepoint (see their own comment, Context.h): pauses every OTHER live
+// guest thread via an async signal before a thread delinks/clears/reuses JIT code memory those
+// threads might currently be mid-execution through via an already-resolved direct branch --
+// confirmed on-device as a real, if low-probability, cause of "not tracked" crashes once
+// Rocket League reached genuine multi-threaded rendering (two threads faulting into the same
+// stale dispatcher region at nearly the same instant, right as a third thread's buffer-reuse
+// cycle was in flight).
+//
+// SIGINFO is a real BSD/Darwin signal (historically the terminal "status" request, Ctrl+T) that
+// this codebase's extensive PS4-guest signal mapping (core/libraries/kernel/threads/exception.cpp)
+// does not claim for anything guest-visible -- checked every case there before picking it, so
+// this cannot collide with a game installing its own handler for a signal number it expects to
+// mean something on real hardware.
+constexpr int kSafepointSignal = SIGINFO;
+std::atomic<int> g_safepoint_paused_count {0};
+std::atomic<bool> g_safepoint_resume {false};
+std::atomic<bool> g_safepoint_handler_installed {false};
+
+void SafepointSignalHandler(int) noexcept {
+  g_safepoint_paused_count.fetch_add(1, std::memory_order_acq_rel);
+  while (!g_safepoint_resume.load(std::memory_order_acquire)) {
+    sched_yield();
+  }
+  g_safepoint_paused_count.fetch_sub(1, std::memory_order_acq_rel);
+}
+
+void EnsureSafepointHandlerInstalled() noexcept {
+  bool expected = false;
+  if (!g_safepoint_handler_installed.compare_exchange_strong(expected, true)) {
+    return;
+  }
+  struct sigaction action {};
+  action.sa_handler = SafepointSignalHandler;
+  sigemptyset(&action.sa_mask);
+  // Deliberately no SA_RESTART: a thread parked in a blocking host syscall isn't executing
+  // guest code and so isn't at risk from a buffer reuse anyway (see the bounded-wait comment
+  // at the call site below) -- but if it DOES get interrupted, EINTR is the normal, already-
+  // handled outcome elsewhere in this codebase, safer than silently swallowing the signal
+  // until the syscall eventually returns on its own.
+  action.sa_flags = 0;
+  sigaction(kSafepointSignal, &action, nullptr);
 }
 
 struct PendingOrbisSignalState final {
@@ -1610,6 +1657,12 @@ public:
   BridgeSyscallHandler::InvocationState Invocation;
   uint64_t FirstRip {};
   uint64_t LastRip {};
+  // Set by Run() itself via pthread_self() right as this thread starts actually executing --
+  // needed so the JIT buffer-invalidation safepoint (see BeginBufferInvalidationSafepoint's own
+  // comment, Context.h) can pthread_kill a specific OS thread. Zero until then; safepoint code
+  // must skip any thread still at zero (hasn't started running guest code yet, so it can't be
+  // mid-execution of anything that needs pausing).
+  std::atomic<pthread_t> NativeHandle {};
 };
 
 class GuestEngine::Impl final {
@@ -1992,6 +2045,49 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
           }
           LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: callback end");
         };
+
+    // See BeginBufferInvalidationSafepoint's own comment (Context.h) and the safepoint
+    // infrastructure's own comment above (SafepointSignalHandler and friends) for the full
+    // story. Registered here for the same reason OnBufferReusedInPlace is: this is the one
+    // place a full list of live guest threads (and now their native pthread_t handles) exists.
+    EnsureSafepointHandlerInstalled();
+    static_cast<FEXCore::Context::ContextImpl*>(impl->Context.get())
+        ->BeginBufferInvalidationSafepoint = [rawImpl](FEXCore::Core::InternalThreadState* CallingThread) {
+      g_safepoint_resume.store(false, std::memory_order_release);
+      g_safepoint_paused_count.store(0, std::memory_order_release);
+      int signaled = 0;
+      {
+        std::scoped_lock threadsLock {rawImpl->ThreadsMutex};
+        for (auto* t : rawImpl->Threads) {
+          if (t->Native == nullptr || t->Native == CallingThread) {
+            continue;
+          }
+          const pthread_t handle = t->NativeHandle.load(std::memory_order_acquire);
+          if (handle == pthread_t {}) {
+            // Hasn't started running guest code yet, so it can't be mid-execution of
+            // anything that needs pausing.
+            continue;
+          }
+          if (pthread_kill(handle, kSafepointSignal) == 0) {
+            ++signaled;
+          }
+        }
+      }
+      // Bounded wait, not indefinite: a thread parked in a genuine blocking host syscall may
+      // not run the signal handler until that syscall returns on its own, which could be
+      // arbitrarily long -- but such a thread isn't executing guest code during that time
+      // either, so there's nothing at risk from proceeding without it. Timing out is strictly
+      // no worse than this whole mechanism not existing.
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(20);
+      while (g_safepoint_paused_count.load(std::memory_order_acquire) < signaled &&
+             std::chrono::steady_clock::now() < deadline) {
+        sched_yield();
+      }
+    };
+    static_cast<FEXCore::Context::ContextImpl*>(impl->Context.get())
+        ->EndBufferInvalidationSafepoint = [](FEXCore::Core::InternalThreadState*) {
+      g_safepoint_resume.store(true, std::memory_order_release);
+    };
   }
 
   return std::unique_ptr<GuestEngine> {new GuestEngine {std::move(impl)}};
@@ -2072,6 +2168,9 @@ EngineResult<Core::GuestExecutionState> GuestEngine::Run(Thread& thread) {
     if (!ImplState->Threads.contains(&thread) || thread.Owner != std::this_thread::get_id()) {
       return Failure(EngineStage::Thread, EPERM);
     }
+    // See NativeHandle's own comment for why this is set here, under the same lock the
+    // safepoint code below reads it under.
+    thread.NativeHandle.store(pthread_self(), std::memory_order_release);
   }
 
   BridgeSyscallHandler::InvocationScope invocationScope {*ImplState->Syscalls, thread.Invocation,

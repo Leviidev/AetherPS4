@@ -514,6 +514,15 @@ void ContextImpl::ClearCodeCache(FEXCore::Core::InternalThreadState* Thread, boo
     LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: begin, Thread={:#x}", reinterpret_cast<uintptr_t>(Thread));
     std::unique_lock inval_lock {CodeInvalidationMutex};
     LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: got CodeInvalidationMutex exclusive");
+    // By this point no other thread can be mid-compile (that would require CodeInvalidationMutex
+    // shared, which we now hold exclusively) -- but a thread executing already-JIT'd code never
+    // touches this mutex at all, so it's still safe for one to be mid-execution of a direct
+    // branch into memory we're about to invalidate. Pause any such threads before touching
+    // anything, for the same reason OnBufferReusedInPlace exists -- see
+    // BeginBufferInvalidationSafepoint's own comment, Context.h.
+    if (BeginBufferInvalidationSafepoint) {
+      BeginBufferInvalidationSafepoint(Thread);
+    }
     auto lk = Thread->LookupCache->AcquireWriteLock();
     LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: got own LookupCache write lock, clearing");
     Thread->LookupCache->ClearCache(lk);
@@ -525,6 +534,9 @@ void ContextImpl::ClearCodeCache(FEXCore::Core::InternalThreadState* Thread, boo
     // threads' independent L1/L2 caches need to be reached at all.
     if (OnBufferReusedInPlace) {
       OnBufferReusedInPlace(Thread, lk);
+    }
+    if (EndBufferInvalidationSafepoint) {
+      EndBufferInvalidationSafepoint(Thread);
     }
     LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: end, releasing CodeInvalidationMutex");
   }
