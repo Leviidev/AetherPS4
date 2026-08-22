@@ -1962,16 +1962,26 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
     auto* rawImpl = impl.get();
     static_cast<FEXCore::Context::ContextImpl*>(impl->Context.get())->OnBufferReusedInPlace =
         [rawImpl](FEXCore::Core::InternalThreadState* CallingThread) {
+          LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: callback begin, CallingThread={:#x}, waiting "
+                            "for ThreadsMutex",
+                            reinterpret_cast<uintptr_t>(CallingThread));
           std::scoped_lock lk {rawImpl->ThreadsMutex};
+          LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: got ThreadsMutex, {} threads registered",
+                            rawImpl->Threads.size());
           for (auto* t : rawImpl->Threads) {
             if (t->Native == nullptr || t->Native == CallingThread) {
               // The calling thread's own L1/L2 was already cleared as part of the same
               // ClearCodeCache call that invoked this callback.
               continue;
             }
+            LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: waiting for thread {:#x}'s LookupCache lock",
+                              reinterpret_cast<uintptr_t>(t->Native));
             auto cacheLock = t->Native->LookupCache->AcquireWriteLock();
+            LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: got thread {:#x}'s LookupCache lock, clearing",
+                              reinterpret_cast<uintptr_t>(t->Native));
             t->Native->LookupCache->ClearThreadLocalCaches(cacheLock);
           }
+          LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: callback end");
         };
   }
 

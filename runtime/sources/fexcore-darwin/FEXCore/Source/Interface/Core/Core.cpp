@@ -511,9 +511,14 @@ void ContextImpl::ClearCodeCache(FEXCore::Core::InternalThreadState* Thread, boo
     // on this same mutex before calling in here and re-acquiring it after returning -- this
     // mutex doesn't support recursive/upgrade locking, so holding the shared lock across this
     // call would deadlock against the exclusive lock taken here.
+    LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: begin, Thread={:#x}", reinterpret_cast<uintptr_t>(Thread));
     std::unique_lock inval_lock {CodeInvalidationMutex};
+    LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: got CodeInvalidationMutex exclusive");
     auto lk = Thread->LookupCache->AcquireWriteLock();
+    LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: got own LookupCache write lock, clearing");
     Thread->LookupCache->ClearCache(lk);
+    LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: own cache cleared, invoking OnBufferReusedInPlace={}",
+                      OnBufferReusedInPlace ? "set" : "unset");
     // Still inside the exclusive lock's window here, so any other thread that might attempt
     // to compile (and so update its own L1/L2 from this now-current L3 state) stays blocked
     // until this returns -- see OnBufferReusedInPlace's own comment (Context.h) for why other
@@ -521,6 +526,7 @@ void ContextImpl::ClearCodeCache(FEXCore::Core::InternalThreadState* Thread, boo
     if (OnBufferReusedInPlace) {
       OnBufferReusedInPlace(Thread);
     }
+    LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: end, releasing CodeInvalidationMutex");
   }
   Allocator::VirtualDontNeed(Thread->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE);
 }
