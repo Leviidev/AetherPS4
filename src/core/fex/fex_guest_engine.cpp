@@ -1979,14 +1979,27 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
             // mutex while holding this very lock, blocking here would deadlock forever, which
             // is confirmed on-device to actually happen (BACHATA_BUFFER_REUSE logging stopped
             // dead at exactly this wait, every time, with no crash and no further progress).
-            // Skipping a thread whose lock isn't immediately free just leaves its L1/L2 stale
-            // for one more compile cycle -- the same already-handled class of fault as any
-            // other stale-but-tracked address, not a hang.
-            auto cacheLock = t->Native->LookupCache->TryAcquireWriteLock();
+            // Skipping a thread whose lock isn't immediately free just leaves its L1/L2 stale,
+            // which is confirmed on-device to sometimes lead to a real (but clean, no longer
+            // hanging) crash if that thread later branches through the stale entry into memory
+            // since reused by someone else. Since thread t can only be genuinely deadlocked
+            // against us if it needs CodeInvalidationMutex to release this same lock (which it
+            // does not -- see ClearCodeCache/JIT.cpp's locking order, this write lock is only
+            // ever taken after CodeInvalidationMutex is already held), a thread reporting
+            // "busy" here is virtually always just mid-insert for a handful of instructions,
+            // not stuck. A short bounded retry catches the vast majority of those without any
+            // risk of the original unbounded deadlock -- worst case this just burns a little
+            // time still holding CodeInvalidationMutex exclusively.
+            FEXCore::LookupCacheWriteLockToken cacheLock = t->Native->LookupCache->TryAcquireWriteLock();
+            constexpr int kMaxAttempts = 64;
+            for (int attempt = 1; !cacheLock.Owned() && attempt < kMaxAttempts; ++attempt) {
+              std::this_thread::yield();
+              cacheLock = t->Native->LookupCache->TryAcquireWriteLock();
+            }
             if (!cacheLock.Owned()) {
-              LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: thread {:#x}'s LookupCache lock busy, "
-                                "skipping (stale cache, not a hang)",
-                                reinterpret_cast<uintptr_t>(t->Native));
+              LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: thread {:#x}'s LookupCache lock still "
+                                "busy after {} retries, skipping (stale cache, not a hang)",
+                                reinterpret_cast<uintptr_t>(t->Native), kMaxAttempts);
               continue;
             }
             LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: got thread {:#x}'s LookupCache lock, clearing",
