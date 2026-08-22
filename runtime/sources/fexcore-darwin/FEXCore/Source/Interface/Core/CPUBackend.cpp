@@ -21,8 +21,24 @@ namespace FEXCore {
 namespace CPU {
 
   static constexpr size_t INITIAL_CODE_SIZE = 1024 * 1024 * 16;
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+  // Every JIT allocation on iOS has to be individually granted execute permission by
+  // StikDebug's external BreakpointJIT mechanism (a slow, page-by-page GDB-remote-mediated
+  // protocol -- see AllocatorHooks.h's iOS section). Confirmed on-device: the initial 16MB
+  // buffer (INITIAL_CODE_SIZE above) allocates fine, but the first *growth* step -- doubling
+  // to 32MB once that fills up, which only a heavier title's larger codebase (Minecraft; a
+  // lighter title never filled the first 16MB buffer at all) ever actually exercised for the
+  // first time this whole port -- crashed inside that external call before it could even
+  // return, never reaching this file's own success/failure logging. Capping growth at the
+  // already-proven-working 16MB (StartLargerCodeBuffer's std::min(latest*2, MAX_CODE_SIZE)
+  // then always returns the same 16MB every time, i.e. growth is disabled rather than
+  // guessing at some other untested larger size) trades more frequent ClearCodeCache
+  // evictions (some re-JIT overhead) for allocations that actually succeed.
+  static constexpr size_t MAX_CODE_SIZE = INITIAL_CODE_SIZE;
+#else
   // We don't want to move above 128MB atm because that means we will have to encode longer jumps
   static constexpr size_t MAX_CODE_SIZE = 1024 * 1024 * 128;
+#endif
 
   constexpr static uint64_t NamedVectorConstants[FEXCore::IR::NamedVectorConstant::NAMED_VECTOR_CONST_POOL_MAX][2] = {
     {0x0003'0002'0001'0000ULL, 0x0007'0006'0005'0004ULL}, // NAMED_VECTOR_INCREMENTAL_U16_INDEX
