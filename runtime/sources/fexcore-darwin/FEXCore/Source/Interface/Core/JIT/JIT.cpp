@@ -729,11 +729,30 @@ void Arm64JITCore::ClearCache() {
   auto PrevCodeBuffer = CurrentCodeBuffer;
   auto lk = PrevCodeBuffer->LookupCache->AcquireWriteLock();
 
+  // Delink direct branches other already-compiled code patched straight into blocks living in
+  // PrevCodeBuffer -- ChangeGuestToHostMapping below only clears this thread's own L1/L2 and
+  // swaps Shared to the new buffer, it never touches PrevCodeBuffer's own BlockLinks. Once
+  // PrevCodeBuffer's memory is eventually reclaimed/reused (this build's iOS JIT allocations
+  // are a small, StikDebug-count-limited shared pool -- see ClearCodeCache's NewCodeBuffer=false
+  // path, Core.cpp), any surviving direct patch into it becomes a landmine: a jump to memory
+  // that's since gone from "stale content" to "not part of any live allocation at all".
+  // Confirmed on-device: a crash with exactly that signature (LR inside the dispatcher's
+  // ExitFunctionLinker trampoline, PC entirely outside every current buffer) persisted even
+  // after the reuse-in-place path's own cross-thread cache sync was fully fixed and verified
+  // working -- this fresh-allocation path was the one remaining place still skipping delinking.
+  PrevCodeBuffer->LookupCache->ClearCache(lk);
+
   auto CodeBuffer = GetEmptyCodeBuffer();
   SetBuffer(CodeBuffer->Ptr, CodeBuffer->AllocatedSize);
   EmitDetectionString();
 
   ThreadState->LookupCache->ChangeGuestToHostMapping(*PrevCodeBuffer, *CurrentCodeBuffer->LookupCache, lk);
+  // Sibling guest threads' independent L1/L2 caches also need to be reached here, same as the
+  // reuse-in-place path -- this fresh allocation just as validly invalidates their stale
+  // entries as an in-place reuse does. See OnBufferReusedInPlace's own comment (Context.h).
+  if (CTX->OnBufferReusedInPlace) {
+    CTX->OnBufferReusedInPlace(ThreadState, lk);
+  }
 }
 
 Arm64JITCore::~Arm64JITCore() {}
