@@ -102,6 +102,27 @@ void LookupCache::ClearCache(const LookupCacheWriteLockToken& lk) {
 }
 
 void GuestToHostMap::ClearCache(const LookupCacheWriteLockToken&) {
+  // Sever every recorded direct-branch link before discarding them. Erase(Address, ...) already
+  // does this correctly for a single address (walk BlockLinks, call each delinker with its
+  // HostLink), but until now this full-cache clear just replaced BlockLinks with a fresh empty
+  // map, silently dropping every entry without ever calling its delinker. On every platform that
+  // only ever grows into fresh memory on eviction (NewCodeBuffer=true, the normal case
+  // everywhere) that gap was invisible: the stale patched branches point at addresses inside the
+  // now-abandoned old buffer, which nothing valid ever branches back into again anyway. It
+  // stopped being invisible on iOS, where JIT buffer reuse-in-place (NewCodeBuffer=false) was
+  // tried as a workaround for a separate StikDebug allocation-count limitation: reusing the same
+  // memory for new compiled code, with old delinkers never having been called, left other
+  // still-referenced code's already-patched direct branches pointing at addresses that now held
+  // completely unrelated new code. HandleGuestSignal's SIGBUS-recovery paths could keep
+  // "fixing" the resulting faults' host/writable-vs-executable address one instruction at a
+  // time, but never the actual stale target underneath -- confirmed on-device as an unbounded
+  // fault loop (7,000,000+ recoveries cycling through only 8 distinct addresses, no crash, no
+  // progress). Actually severing every link here, the same way Erase() already does for one
+  // address, is the real fix for that, independent of whichever eviction mode ends up used.
+  for (auto& [Tag, Delinker] : *BlockLinks) {
+    Delinker(Tag.HostLink);
+  }
+
   // Allocate a new pointer from the BlockLinks pma again.
   BlockLinks = BlockLinks_pma->new_object<BlockLinksMapType>();
   // All code is gone, clear the block list

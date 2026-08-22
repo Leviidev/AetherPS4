@@ -1155,24 +1155,29 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
       SetCursorOffset(CodeBuffers.LatestOffset);
       Align16B();
       if ((GetCursorOffset() + TempSize) > CurrentCodeBuffer->UsableSize()) {
-        // Reverted: NewCodeBuffer=false (reuse the existing buffer in place instead of
-        // allocating a fresh one) was tried here to work around StikDebug's external
-        // BreakpointJIT mechanism failing on a session's 3rd+ JIT buffer allocation. It
-        // avoided that crash, but created a worse failure on-device: something elsewhere
-        // (a direct block-link patched into other, non-evicted code, or a stale LookupCache
-        // entry -- not yet isolated) still holds addresses pointing into the reused region
-        // from before the reuse. Once that region's physical content gets overwritten by
-        // new compiled code, re-taking that stale reference lands on now-unrelated bytes,
-        // which this codebase's own writable/executable-alias fault recovery
-        // (TryRecoverJitAliasFault, fex_guest_engine.cpp) can transiently "fix" the alias
-        // of but not the content of -- so the same handful of addresses re-fault
-        // indefinitely (confirmed on-device: 7 million+ recoveries across only 8 distinct
-        // addresses in one session, no crash, no progress, just an unbounded loop). A clean
-        // crash with a debuggable log beats a silent infinite hang, so this reverts to
-        // always allocating a fresh buffer (NewCodeBuffer's true default) until reuse-in-
-        // place can be made to also invalidate every stale cross-reference into the region
-        // being reused, not just its own LookupCache entries.
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+        // NewCodeBuffer=true (the default) requests a brand new dual-mapped allocation from
+        // StikDebug's external BreakpointJIT mechanism every time the cache fills, which fails
+        // on a session's 3rd+ such request (confirmed on-device, independent of the requested
+        // size -- see CPUBackend.cpp's iOS MAX_CODE_SIZE comment). NewCodeBuffer=false reuses
+        // the same already-granted buffer in place instead, avoiding that failure entirely.
+        // This was tried once before and reverted: GuestToHostMap::ClearCache
+        // (LookupCache.cpp) discarded its BlockLinks map without ever calling each entry's
+        // delinker, so already-patched direct branches in other, non-evicted code kept
+        // pointing at addresses inside the reused region -- once that physical memory got
+        // overwritten with new compiled code, re-taking one of those stale links landed on
+        // unrelated bytes, and the resulting fault's own recovery path could only fix the
+        // register for one instruction, not the stale cached target, so the same handful of
+        // addresses re-faulted forever (confirmed on-device: 7,000,000+ recoveries across
+        // only 8 distinct addresses, no crash, no progress). ClearCache now properly severs
+        // every link before discarding them, the same way Erase() already did for a single
+        // address, which is the actual fix -- re-enabling reuse-in-place here now that the
+        // real bug underneath it is fixed, rather than working around it by avoiding this
+        // path altogether.
+        CTX->ClearCodeCache(ThreadState, false);
+#else
         CTX->ClearCodeCache(ThreadState);
+#endif
       }
 
       CodeBuffers.LatestOffset = GetCursorOffset();
