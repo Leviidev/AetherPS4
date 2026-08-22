@@ -14,21 +14,59 @@
 #include <FEXCore/Core/X86Enums.h>
 #include <FEXCore/Debug/InternalThreadState.h>
 #include <FEXCore/HLE/SyscallHandler.h>
+#include <FEXCore/Utils/AllocatorHooks.h>
 #include <FEXCore/Utils/ArchHelpers/Arm64.h>
 #include <FEXCore/Utils/LogManager.h>
 
+// Internal (non-public-API) header, needed for ContextImpl's full definition -- specifically
+// its OnBufferReusedInPlace member (see that member's own comment, Context.h) that this file
+// registers a callback into below, since only application-level code here tracks every live
+// guest thread (Threads, Impl::Threads below) at all; FEXCore's own core keeps no such list.
+#include "Interface/Context/Context.h"
+// InternalThreadState only forward-declares LookupCache; need the full type for
+// AcquireWriteLock()/ClearThreadLocalCaches() in the OnBufferReusedInPlace callback below.
+#include "Interface/Core/LookupCache.h"
+
 #include <sys/mman.h>
 #include <unistd.h>
+#ifdef __APPLE__
+// Darwin's <ucontext.h> hard-errors on the deprecated getcontext/setcontext/swapcontext
+// declarations unless _XOPEN_SOURCE is defined; we only need the ucontext_t/mcontext_t
+// *types* below, never those functions, but the header aborts for everyone without this.
+#define _XOPEN_SOURCE 1
 #include <ucontext.h>
+// Accessor macros for arm_thread_state64_t (pc/sp/fp/lr): on Apple Silicon these fields
+// are pointer-authentication-opaque and cannot be read/written as plain integers -- see
+// <mach/arm/_structs.h>. On a plain (non-arm64e) arm64 process like this one, the thread
+// state carries FLAGS_NO_PTRAUTH and the macros degrade to raw field access, so they're
+// safe to use unconditionally here as get/set of the actual register value.
+#include <mach/arm/thread_status.h>
+#include <mach/mach.h>
+#include <TargetConditionals.h>
+#if TARGET_OS_IPHONE
+// iOS dual-mapped JIT: see src/core/ios/ios_jit_allocator.h for full protocol docs.
+#include "core/ios/ios_jit_allocator.h"
+#else
+// iOS's SDK hard-blocks this header entirely (#error mach_vm.h unsupported.) -- see
+// ValidateHostMapping's TARGET_OS_IPHONE branch below for the fallout.
+#include <mach/mach_vm.h>
+#endif
+#else
+#include <ucontext.h>
+#endif
 
 #include <array>
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
+#include <csignal>
+#include <cstdarg>
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
 #include <fstream>
+#include <pthread.h>
 
 // Weak fallback when exception.cpp is not linked (fexcore-guest-harness).
 // Full shadPS4 provides the strong definition that reads g_curthread.
@@ -49,10 +87,20 @@ __attribute__((weak)) u64 FexCurrentGuestStackTop() noexcept {
 #include <utility>
 #include <vector>
 
-namespace Core::Fex {
+namespace AetherPS4::Fex {
 namespace {
 
+#if defined(__APPLE__)
+// Apple Silicon's host VM subsystem is unconditionally 16KB-granularity (unlike Linux's
+// usual 4KB). This engine doesn't yet emulate sub-host-page guest mmap semantics for real
+// PS4/x86-64 guest code (that's real, separate future work once shadPS4 integration begins
+// -- out of scope here per the explicit "do not attempt commercial games yet" milestone);
+// for this generic FEX-guest-CPU harness, kRequiredPageSize only needs to match the actual
+// host page size so mappings stay self-consistent.
+constexpr long kRequiredPageSize = 16384;
+#else
 constexpr long kRequiredPageSize = 4096;
+#endif
 constexpr uint32_t kFexBlockTraceLimit = 256;
 constexpr uint64_t kAddLeft = 0x1122'3344'5566'7788ULL;
 constexpr uint64_t kAddRight = 0x0102'0304'0506'0708ULL;
@@ -79,6 +127,72 @@ struct ActiveFexExecutionState final {
 };
 
 thread_local ActiveFexExecutionState ActiveFexExecution;
+
+// See BachataGetHgsCheckpoint's declaration in the header for why this exists: every
+// direct-I/O diagnostic tried inside HandleGuestSignal (fprintf, vsnprintf+write,
+// hand-rolled formatting+write, even bare hardcoded write() calls past its very first
+// statement) produced zero output on-device past a certain point, despite the function
+// provably running to completion (no crash follows). A plain relaxed atomic store touches
+// no I/O and can't hang or fault, so it can't fall prey to whatever is silencing this
+// function's other diagnostics -- whatever that turns out to be.
+// clang-format off
+enum class HgsCheckpoint : int {
+  Idle = 0, Enter = 1, BailoutTaken = 2, PastBailoutCheck = 3, HavePc = 4,
+  CheckedCodeBuffer = 5, NotInCodeBufferReturn = 6, IsAlignmentFault = 7,
+  NotAlignmentFaultReturn = 8, BeforeWriteGuard = 9, AfterWriteGuard = 10,
+  HaveWritablePc = 11, AfterHandleUnaligned = 12, AdjustmentFailedReturn = 13,
+  SuccessReturnTrue = 14,
+};
+// clang-format on
+std::atomic<int> g_hgs_checkpoint {static_cast<int>(HgsCheckpoint::Idle)};
+void SetHgsCheckpoint(HgsCheckpoint value) noexcept {
+  g_hgs_checkpoint.store(static_cast<int>(value), std::memory_order_relaxed);
+}
+
+// Safepoint mechanism backing ContextImpl::BeginBufferInvalidationSafepoint/
+// EndBufferInvalidationSafepoint (see their own comment, Context.h): pauses every OTHER live
+// guest thread via an async signal before a thread delinks/clears/reuses JIT code memory those
+// threads might currently be mid-execution through via an already-resolved direct branch --
+// confirmed on-device as a real, if low-probability, cause of "not tracked" crashes once
+// Rocket League reached genuine multi-threaded rendering (two threads faulting into the same
+// stale dispatcher region at nearly the same instant, right as a third thread's buffer-reuse
+// cycle was in flight).
+//
+// SIGINFO is a real BSD/Darwin signal (historically the terminal "status" request, Ctrl+T) that
+// this codebase's extensive PS4-guest signal mapping (core/libraries/kernel/threads/exception.cpp)
+// does not claim for anything guest-visible -- checked every case there before picking it, so
+// this cannot collide with a game installing its own handler for a signal number it expects to
+// mean something on real hardware.
+constexpr int kSafepointSignal = SIGINFO;
+std::atomic<int> g_safepoint_paused_count {0};
+std::atomic<bool> g_safepoint_resume {false};
+std::atomic<bool> g_safepoint_handler_installed {false};
+std::atomic<int> g_threads_in_hle_syscall {0};
+
+void SafepointSignalHandler(int) noexcept {
+  g_safepoint_paused_count.fetch_add(1, std::memory_order_acq_rel);
+  while (!g_safepoint_resume.load(std::memory_order_acquire)) {
+    sched_yield();
+  }
+  g_safepoint_paused_count.fetch_sub(1, std::memory_order_acq_rel);
+}
+
+void EnsureSafepointHandlerInstalled() noexcept {
+  bool expected = false;
+  if (!g_safepoint_handler_installed.compare_exchange_strong(expected, true)) {
+    return;
+  }
+  struct sigaction action {};
+  action.sa_handler = SafepointSignalHandler;
+  sigemptyset(&action.sa_mask);
+  // Deliberately no SA_RESTART: a thread parked in a blocking host syscall isn't executing
+  // guest code and so isn't at risk from a buffer reuse anyway (see the bounded-wait comment
+  // at the call site below) -- but if it DOES get interrupted, EINTR is the normal, already-
+  // handled outcome elsewhere in this codebase, safer than silently swallowing the signal
+  // until the syscall eventually returns on its own.
+  action.sa_flags = 0;
+  sigaction(kSafepointSignal, &action, nullptr);
+}
 
 struct PendingOrbisSignalState final {
   std::uintptr_t Handler {};
@@ -117,21 +231,33 @@ private:
 void FexMessageHandler(LogMan::DebugLevels level, const char* message) {
   if (message == nullptr) return;
   if (std::strstr(message, "Guest x86 Begin") != nullptr) {
+    // Kept capped separately from everything else below: this class of message alone can be
+    // one line per translated x86 block, unbounded-large over a real play session in a way
+    // ordinary Info/Debug logging never is.
     const auto index = FexBlockTraceCount.fetch_add(1, std::memory_order_relaxed);
     if (index < kFexBlockTraceLimit) {
       std::fprintf(stderr, "BACHATA_FEX_BLOCK index=%u %s\n", index, message);
     }
-  } else if (level <= LogMan::ERROR) {
+    return;
+  }
+  if (level <= LogMan::ERROR) {
     std::fprintf(stderr, "BACHATA_FEX_ERROR level=%u %s\n", static_cast<unsigned>(level),
                  message);
+    return;
   }
+  // Forward everything else (Debug/Info) too while actively debugging -- previously this
+  // silently dropped every FEXCore-internal message except Errors and two hand-picked JIT
+  // keywords, which is exactly what hid the FEXCore-side half of the JIT allocation timeline
+  // for most of this investigation. See emulator_settings.h's LogSettings::filter for the
+  // equivalent "just capture everything" change on Bachata's own LOG_* call sites.
+  std::fprintf(stderr, "BACHATA_FEX_MSG level=%u %s\n", static_cast<unsigned>(level), message);
 }
 
 EngineFailure Failure(EngineStage stage, int error) {
   return {stage, error == 0 ? EIO : error};
 }
 
-bool Contains(const GuestExecutionRange& range, std::uintptr_t address, std::size_t size) {
+bool Contains(const Core::GuestExecutionRange& range, std::uintptr_t address, std::size_t size) {
   if (range.Begin == 0 || range.Size == 0 || size == 0 || address < range.Begin) {
     return false;
   }
@@ -140,13 +266,79 @@ bool Contains(const GuestExecutionRange& range, std::uintptr_t address, std::siz
   return rangeEnd >= range.Begin && addressEnd >= address && addressEnd <= rangeEnd;
 }
 
-bool RangesOverlap(const GuestExecutionRange& lhs, const GuestExecutionRange& rhs) {
+bool RangesOverlap(const Core::GuestExecutionRange& lhs, const Core::GuestExecutionRange& rhs) {
   const auto lhsEnd = lhs.Begin + lhs.Size;
   const auto rhsEnd = rhs.Begin + rhs.Size;
   return lhsEnd >= lhs.Begin && rhsEnd >= rhs.Begin && lhs.Begin < rhsEnd && rhs.Begin < lhsEnd;
 }
 
-EngineResult<bool> ValidateHostMapping(const GuestExecutionRange& range) {
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+// iOS's SDK hard-blocks mach_vm.h entirely (#error mach_vm.h unsupported.) -- not a
+// portability gap, a deliberate platform restriction, same as CodeCache.cpp's mach_vm_remap
+// use elsewhere. This check is a defensive "fail fast with a clear error" diagnostic, not
+// something correctness-critical to actual guest execution (if a mapping really is wrong,
+// guest code will just fault instead of getting this earlier, more specific error) -- skipped
+// outright on iOS rather than reimplemented, since there's no equivalent introspection API
+// available here.
+EngineResult<bool> ValidateHostMapping(const Core::GuestExecutionRange&) {
+  return true;
+}
+#elif defined(__APPLE__)
+// /proc doesn't exist on Darwin at all, so the host-mapping introspection below uses
+// mach_vm_region() instead of parsing /proc/self/maps -- same idea (walk the regions
+// covering the requested range, checking each one's actual host protection), just via the
+// Mach VM API. mach_vm_region() looks up the region *containing* the given address; if that
+// address falls in an unmapped gap, it advances the address to the next real region instead
+// of failing, which is how the "gap" case below is detected (region start ends up past
+// `covered`).
+EngineResult<bool> ValidateHostMapping(const Core::GuestExecutionRange& range) {
+  const auto rangeEnd = range.Begin + range.Size;
+  std::uintptr_t covered = range.Begin;
+  while (covered < rangeEnd) {
+    mach_vm_address_t regionAddress = static_cast<mach_vm_address_t>(covered);
+    mach_vm_size_t regionSize = 0;
+    vm_region_basic_info_data_64_t info {};
+    mach_msg_type_number_t infoCount = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t objectName = MACH_PORT_NULL;
+    const kern_return_t kr = mach_vm_region(mach_task_self(), &regionAddress, &regionSize, VM_REGION_BASIC_INFO_64,
+                                            reinterpret_cast<vm_region_info_t>(&info), &infoCount, &objectName);
+    if (kr != KERN_SUCCESS || static_cast<std::uintptr_t>(regionAddress) > covered) {
+      std::fprintf(stderr,
+                   "BACHATA_FEX_MAPPING_FAIL reason=host_mapping_gap error=%d begin=%#lx size=%#lx "
+                   "executable=%d writable=%d covered=%#lx\n",
+                   EFAULT, static_cast<unsigned long>(range.Begin), static_cast<unsigned long>(range.Size), range.Executable,
+                   range.Writable, static_cast<unsigned long>(covered));
+      return Failure(EngineStage::Mapping, EFAULT);
+    }
+
+    const bool hostReadable = (info.protection & VM_PROT_READ) != 0;
+    const bool hostWritable = (info.protection & VM_PROT_WRITE) != 0;
+    const bool hostExecutable = (info.protection & VM_PROT_EXECUTE) != 0;
+    // Same policy as the Linux permission-string check below: guest-executable ranges must be
+    // host-readable and not host-writable; guest-writable ranges must be host-writable and not
+    // host-executable.
+    if (range.Executable && (!hostReadable || hostWritable)) {
+      std::fprintf(stderr,
+                   "BACHATA_FEX_MAPPING_FAIL reason=host_guest_code_permission error=%d "
+                   "begin=%#lx size=%#lx executable=%d writable=%d host_protection=%#x\n",
+                   EACCES, static_cast<unsigned long>(range.Begin), static_cast<unsigned long>(range.Size), range.Executable,
+                   range.Writable, info.protection);
+      return Failure(EngineStage::Mapping, EACCES);
+    }
+    if (range.Writable && (!hostWritable || hostExecutable)) {
+      std::fprintf(stderr,
+                   "BACHATA_FEX_MAPPING_FAIL reason=host_write_permission error=%d begin=%#lx "
+                   "size=%#lx executable=%d writable=%d host_protection=%#x\n",
+                   EACCES, static_cast<unsigned long>(range.Begin), static_cast<unsigned long>(range.Size), range.Executable,
+                   range.Writable, info.protection);
+      return Failure(EngineStage::Mapping, EACCES);
+    }
+    covered = std::min(static_cast<std::uintptr_t>(regionAddress) + static_cast<std::uintptr_t>(regionSize), rangeEnd);
+  }
+  return true;
+}
+#else
+EngineResult<bool> ValidateHostMapping(const Core::GuestExecutionRange& range) {
   std::ifstream maps {"/proc/self/maps"};
   if (!maps.is_open()) {
     const auto error = errno == 0 ? EACCES : errno;
@@ -203,8 +395,9 @@ EngineResult<bool> ValidateHostMapping(const GuestExecutionRange& range) {
                static_cast<unsigned long>(covered));
   return Failure(EngineStage::Mapping, EFAULT);
 }
+#endif
 
-EngineResult<bool> ValidateRequest(const GuestExecutionRequest& request) {
+EngineResult<bool> ValidateRequest(const Core::GuestExecutionRequest& request) {
   if (request.Rip == 0 || request.Rsp == 0 || request.MappedRanges.empty()) {
     return Failure(EngineStage::Request, EINVAL);
   }
@@ -335,6 +528,61 @@ private:
   void* Address;
   int LastError;
 };
+
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+// DualMappedMapping — iOS equivalent of Mapping for allocations that need PROT_EXEC.
+//
+// On iOS, an unentitled app cannot add PROT_EXEC to any page via mprotect. Instead
+// we use BreakpointJIT.framework's BRK-trap protocol (serviced by StikDebug) to get
+// a pair of virtual addresses aliasing the same physical pages: one writable (RW)
+// for code-writing and one executable (RX) for CPU dispatch. See ios_jit_allocator.h.
+//
+// Call sites that formerly did:
+//   Mapping m(page_size, PROT_READ | PROT_WRITE);
+//   write_code(m.Get());  // write through RW addr
+//   m.Protect(PROT_READ | PROT_EXEC);
+//   execute(m.Get());     // execute same addr — FAILS on iOS
+// now do:
+//   DualMappedMapping m(page_size);
+//   write_code(m.GetRW());   // write through RW addr
+//   execute(m.GetRX());      // execute via distinct RX addr — OK on iOS
+class DualMappedMapping final {
+public:
+  explicit DualMappedMapping(size_t size)
+    : Region {Core::DualMappedRegion::Allocate(size)} {}
+
+  DualMappedMapping(const DualMappedMapping&) = delete;
+  DualMappedMapping& operator=(const DualMappedMapping&) = delete;
+
+  [[nodiscard]] bool IsValid() const {
+    return Region.IsValid();
+  }
+
+  // Returns ENODEV when StikDebug is not attached (BreakGetJITMapping returned nullptr).
+  [[nodiscard]] int Error() const {
+    return Region.IsValid() ? 0 : ENODEV;
+  }
+
+  // Write JIT code through this address.
+  [[nodiscard]] void* GetRW() const {
+    return Region.rw_addr;
+  }
+
+  // Execute JIT code through this address (distinct from RW on iOS).
+  [[nodiscard]] void* GetRX() const {
+    return Region.rx_addr;
+  }
+
+  // For callers that only need the exec address (e.g. registering a callback return
+  // address with the signal delegator): returns the RX address.
+  [[nodiscard]] void* Get() const {
+    return GetRX();
+  }
+
+private:
+  Core::DualMappedRegion Region;
+};
+#endif // defined(__APPLE__) && TARGET_OS_IPHONE
 
 class CallRetStack final {
 public:
@@ -694,15 +942,20 @@ public:
     // Desktop APC ExceptionHandler runs guest handler on the target thread around
     // normal execution. On FEX, host pthread_kill only wakes + queues Pending;
     // deliver here at HLE boundary (entry) so GC STW sees the handler.
+    g_threads_in_hle_syscall.fetch_add(1, std::memory_order_acq_rel);
     FlushPendingOrbisSignal();
     auto* invocation = ActiveInvocation;
-    if (invocation == nullptr) return static_cast<uint64_t>(-EPERM);
+    if (invocation == nullptr) {
+      g_threads_in_hle_syscall.fetch_sub(1, std::memory_order_acq_rel);
+      return static_cast<uint64_t>(-EPERM);
+    }
     if (frame == nullptr) {
       invocation->Failure = Failure(EngineStage::Bridge, EFAULT);
+      g_threads_in_hle_syscall.fetch_sub(1, std::memory_order_acq_rel);
       return static_cast<uint64_t>(-EFAULT);
     }
 
-    GuestCpu::HleCallFrame hleFrame{};
+    AetherPS4::GuestCpu::HleCallFrame hleFrame{};
     hleFrame.operation = frame->State.gregs[FEXCore::X86State::REG_RAX];
     std::copy(std::begin(frame->State.gregs), std::end(frame->State.gregs), hleFrame.gpr.begin());
     hleFrame.gpr[FEXCore::X86State::REG_RCX] = frame->State.gregs[FEXCore::X86State::REG_R10];
@@ -716,6 +969,7 @@ public:
       frame->State.gregs[FEXCore::X86State::REG_RAX] = static_cast<uint64_t>(-error->Error);
       // Still try to deliver if kill arrived while blocked in host HLE.
       FlushPendingOrbisSignal();
+      g_threads_in_hle_syscall.fetch_sub(1, std::memory_order_acq_rel);
       return frame->State.gregs[FEXCore::X86State::REG_RAX];
     }
 
@@ -729,11 +983,12 @@ public:
     // Kill often lands while target is blocked inside host futex/HLE. Flush after
     // Invoke so handler runs before returning to pure guest JIT.
     FlushPendingOrbisSignal();
+    g_threads_in_hle_syscall.fetch_sub(1, std::memory_order_acq_rel);
     return invocation->Result;
   }
 
   EngineResult<bool> RegisterThread(FEXCore::Core::InternalThreadState* thread,
-                                    const std::vector<GuestExecutionRange>& ranges) {
+                                    const std::vector<Core::GuestExecutionRange>& ranges) {
     if (thread == nullptr) return Failure(EngineStage::Thread, EINVAL);
     std::scoped_lock lock {RangesMutex};
     const auto [_, inserted] = ExecutableRanges.emplace(thread, ranges);
@@ -781,7 +1036,7 @@ public:
     std::scoped_lock lock {RangesMutex};
     const auto ranges = ExecutableRanges.find(thread);
     if (ranges == ExecutableRanges.end()) return false;
-    return std::ranges::any_of(ranges->second, [&](const GuestExecutionRange& range) {
+    return std::ranges::any_of(ranges->second, [&](const Core::GuestExecutionRange& range) {
       return range.Writable && Contains(range, address, size);
     });
   }
@@ -808,7 +1063,7 @@ private:
 
   GuestBridge& Bridge;
   std::mutex RangesMutex;
-  std::unordered_map<FEXCore::Core::InternalThreadState*, std::vector<GuestExecutionRange>> ExecutableRanges;
+  std::unordered_map<FEXCore::Core::InternalThreadState*, std::vector<Core::GuestExecutionRange>> ExecutableRanges;
 };
 
 thread_local BridgeSyscallHandler::InvocationState* BridgeSyscallHandler::ActiveInvocation {};
@@ -913,6 +1168,10 @@ GuestCode BuildGuestCode() {
 
 } // namespace
 
+int BachataGetHgsCheckpoint() noexcept {
+  return g_hgs_checkpoint.load(std::memory_order_relaxed);
+}
+
 bool BachataQueryGuestRipSyscall(uint64_t* out_rip, uint64_t* out_syscall) noexcept {
   // Async-signal-safe: only dereferences thread-local pointer + frame struct.
   // ActiveFexExecution is thread_local, set by FexExecutionSignalScope during
@@ -933,6 +1192,43 @@ bool BachataQueryGuestRipSyscall(uint64_t* out_rip, uint64_t* out_syscall) noexc
     *out_syscall = state.gregs[FEXCore::X86State::REG_RAX];
   }
   return true;
+}
+
+bool BachataDescribeHostFaultAddress(void* fault_addr, char* out_buf, std::size_t out_buf_size) noexcept {
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+  if (out_buf == nullptr || out_buf_size == 0) {
+    return false;
+  }
+  uintptr_t region_base = 0;
+  std::size_t offset = 0;
+  std::size_t size = 0;
+  const auto kind = FEXCore::Allocator::iOSJITDescribeAddress(fault_addr, &region_base, &offset, &size);
+  const char* kind_str = "not tracked (not inside any currently-live JIT allocation)";
+  if (kind == FEXCore::Allocator::iOSJITAddressKind::LiveAllocation) {
+    kind_str = "inside a currently-live JIT allocation (execute grant likely never landed, or "
+              "was lost since -- see the reprepare attempt below)";
+  }
+  if (kind == FEXCore::Allocator::iOSJITAddressKind::NotTracked) {
+    std::snprintf(out_buf, out_buf_size, "%s", kind_str);
+  } else {
+    std::snprintf(out_buf, out_buf_size, "%s (region base=%#lx, offset=%zu, size=%zu)", kind_str,
+                  static_cast<unsigned long>(region_base), offset, size);
+  }
+  return true;
+#else
+  static_cast<void>(fault_addr);
+  static_cast<void>(out_buf);
+  static_cast<void>(out_buf_size);
+  return false;
+#endif
+}
+
+bool BachataDumpDispatcherState(char* out_buf, std::size_t out_buf_size) noexcept {
+  const auto& exec = ActiveFexExecution;
+  if (exec.Context == nullptr || exec.Thread == nullptr || out_buf == nullptr || out_buf_size == 0) {
+    return false;
+  }
+  return exec.Context->DumpDispatcherStateForDiagnostics(exec.Thread, out_buf, out_buf_size);
 }
 
 void FlushPendingGuestOrbisSignal() noexcept {
@@ -972,8 +1268,14 @@ bool DeliverGuestOrbisSignal(int orbis_sig, siginfo_t* info, void* rawContext,
 #if defined(__aarch64__)
   if (rawContext != nullptr) {
     const auto* context = reinterpret_cast<const ucontext_t*>(rawContext);
+#ifdef __APPLE__
+    const auto& ts = context->uc_mcontext->__ss;
+    host_pc = static_cast<std::uint64_t>(arm_thread_state64_get_pc(ts));
+    host_sp = static_cast<std::uint64_t>(arm_thread_state64_get_sp(ts));
+#else
     host_pc = static_cast<std::uint64_t>(context->uc_mcontext.pc);
     host_sp = static_cast<std::uint64_t>(context->uc_mcontext.sp);
+#endif
     if (ActiveFexExecution.Context != nullptr && ActiveFexExecution.Thread != nullptr) {
       in_jit = ActiveFexExecution.Context->IsAddressInCodeBuffer(
           ActiveFexExecution.Thread, static_cast<std::uintptr_t>(host_pc));
@@ -1000,22 +1302,256 @@ bool DeliverGuestOrbisSignal(int orbis_sig, siginfo_t* info, void* rawContext,
 }
 
 
+namespace {
+// Writes `value` in the given base (10 or 16) into *out, advancing it. No allocation,
+// no libc formatting calls -- unlike vsnprintf, this is genuinely safe to call from a
+// signal handler.
+void SignalSafeWriteUnsigned(char*& out, char* end, unsigned long long value, int base) {
+  char digits[32];
+  int n = 0;
+  if (value == 0) {
+    digits[n++] = '0';
+  } else {
+    while (value != 0 && n < static_cast<int>(sizeof(digits))) {
+      const unsigned long long digit = value % static_cast<unsigned long long>(base);
+      digits[n++] = digit < 10 ? static_cast<char>('0' + digit) : static_cast<char>('a' + (digit - 10));
+      value /= static_cast<unsigned long long>(base);
+    }
+  }
+  while (n > 0 && out < end) {
+    *out++ = digits[--n];
+  }
+}
+}  // namespace
+
+// std::fprintf(stderr, ...) from a raw signal handler risks silently producing no output
+// at all: it goes through libc's FILE*-level lock, which -- unlike write(2) -- is not
+// guaranteed async-signal-safe, and can be held by another thread (or even this same
+// thread, if the signal landed mid-fprintf-call elsewhere) at the exact moment the
+// handler runs. Confirmed on-device: LOG_CRITICAL calls immediately before/after
+// HandleGuestSignal in this exact call chain reliably appear in the log, but the
+// fprintf-based diagnostics inside this function never did, even on paths that must
+// have executed.
+//
+// A first fix switched to vsnprintf() into a local buffer plus a raw write(2), on the
+// assumption that avoiding FILE* was enough. That still produced zero output on every
+// formatted call site, even after confirming (via bare write() calls with no formatting
+// at all, placed at the very top of this function and at its call site) that both entry
+// into this function and write(2) itself work fine in this exact context. vsnprintf is
+// not actually on POSIX's async-signal-safe list either: some libc implementations
+// lazily initialize per-thread locale/conversion state on first use, which can require a
+// heap allocation -- and if the interrupting SIGBUS happened to land while this same
+// thread already held malloc's internal lock (entirely plausible; the guest is running
+// JIT'd game code that allocates constantly), that lazy init would self-deadlock forever
+// against its own thread. No crash, no output, and the rest of the process (other
+// threads) keeps running -- exactly what was observed. This hand-rolled formatter avoids
+// vsnprintf (and malloc) entirely; it supports only the specifiers this file's call
+// sites actually use (%d, %p, %#lx, %#x, %%) plus literal text.
+void SignalSafeLog(const char* fmt, ...) noexcept {
+  char buf[512];
+  char* out = buf;
+  char* const end = buf + sizeof(buf);
+  va_list args;
+  va_start(args, fmt);
+  for (const char* p = fmt; *p != '\0' && out < end; ++p) {
+    if (*p != '%') {
+      *out++ = *p;
+      continue;
+    }
+    ++p;
+    if (*p == '\0') {
+      break;
+    }
+    bool alt = false;
+    if (*p == '#') {
+      alt = true;
+      ++p;
+    }
+    bool is_long = false;
+    if (*p == 'l') {
+      is_long = true;
+      ++p;
+    }
+    switch (*p) {
+    case 'd': {
+      const int value = va_arg(args, int);
+      if (value < 0) {
+        if (out < end) {
+          *out++ = '-';
+        }
+        SignalSafeWriteUnsigned(out, end, static_cast<unsigned long long>(-static_cast<long long>(value)), 10);
+      } else {
+        SignalSafeWriteUnsigned(out, end, static_cast<unsigned long long>(value), 10);
+      }
+      break;
+    }
+    case 'x': {
+      const unsigned long long value =
+          is_long ? static_cast<unsigned long long>(va_arg(args, unsigned long))
+                  : static_cast<unsigned long long>(va_arg(args, unsigned int));
+      if (alt) {
+        if (out < end) *out++ = '0';
+        if (out < end) *out++ = 'x';
+      }
+      SignalSafeWriteUnsigned(out, end, value, 16);
+      break;
+    }
+    case 'p': {
+      void* value = va_arg(args, void*);
+      if (out < end) *out++ = '0';
+      if (out < end) *out++ = 'x';
+      SignalSafeWriteUnsigned(out, end, reinterpret_cast<unsigned long long>(value), 16);
+      break;
+    }
+    case '%':
+      if (out < end) *out++ = '%';
+      break;
+    default:
+      // Unknown specifier: not expected to happen for this logger's fixed call sites,
+      // but emit it verbatim rather than silently dropping it, so a mismatch is visible.
+      if (out < end) *out++ = '%';
+      if (*p != '\0' && out < end) *out++ = *p;
+      break;
+    }
+  }
+  va_end(args);
+
+  size_t remaining = static_cast<size_t>(out - buf);
+  const char* wp = buf;
+  // write(2) can return a short count or fail with EINTR when a signal lands mid-call --
+  // this is common inside a signal handler, where we may already be re-entering after
+  // another interrupt. A single unchecked write() call can silently drop the whole
+  // message; retry until every byte is out or a non-EINTR error occurs.
+  while (remaining > 0) {
+    const ssize_t written = write(STDERR_FILENO, wp, remaining);
+    if (written < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      break;
+    }
+    if (written == 0) {
+      break;
+    }
+    wp += written;
+    remaining -= static_cast<size_t>(written);
+  }
+}
+
 bool HandleGuestSignal(int signal, siginfo_t* info, void* rawContext) noexcept {
+  // Absolute minimal, unconditional entry marker: no va_args, no vsnprintf, no
+  // buffer formatting -- a single hardcoded string literal and one write(2) call,
+  // placed before even the __aarch64__ guard. Every previous diagnostic in this
+  // function, on every code path, has produced zero output despite: the string
+  // literals being confirmed present in the shipped binary (via `strings` on the
+  // actual binary under test), the symbol reference to this exact function being
+  // confirmed present in signals.cpp's compiled object file (so the call site is
+  // definitely compiled in, not preprocessed out), and plain fprintf(stderr, ...)
+  // being confirmed to work reliably on this same thread earlier in the same run
+  // (376 BACHATA_FEX_HLE_* lines). If this line also never appears, the entry into
+  // this function itself is broken (bad trampoline/stack state on signal delivery)
+  // or write(2) is not actually able to complete during this exact signal
+  // invocation -- as opposed to any bug in what this function's body does with the
+  // fault info once running.
+  SetHgsCheckpoint(HgsCheckpoint::Enter);
 #if defined(__aarch64__)
   if (signal != SIGBUS || info == nullptr || rawContext == nullptr ||
       ActiveFexExecution.Context == nullptr || ActiveFexExecution.Thread == nullptr ||
       ActiveFexExecution.SignalDelegator == nullptr) {
+    SetHgsCheckpoint(HgsCheckpoint::BailoutTaken);
     return false;
   }
+  SetHgsCheckpoint(HgsCheckpoint::PastBailoutCheck);
 
   auto* context = reinterpret_cast<ucontext_t*>(rawContext);
+#ifdef __APPLE__
+  auto& ts = context->uc_mcontext->__ss;
+  const auto pc = static_cast<std::uintptr_t>(arm_thread_state64_get_pc(ts));
+#else
   const auto pc = static_cast<std::uintptr_t>(context->uc_mcontext.pc);
-  if (!ActiveFexExecution.Context->IsAddressInCodeBuffer(ActiveFexExecution.Thread, pc)) {
+#endif
+  SetHgsCheckpoint(HgsCheckpoint::HavePc);
+  const bool in_code_buffer =
+      ActiveFexExecution.Context->IsAddressInCodeBuffer(ActiveFexExecution.Thread, pc);
+  SetHgsCheckpoint(HgsCheckpoint::CheckedCodeBuffer);
+  if (!in_code_buffer) {
+    SetHgsCheckpoint(HgsCheckpoint::NotInCodeBufferReturn);
     return false;
   }
 
+  if (info->si_code != BUS_ADRALN) {
+    SetHgsCheckpoint(HgsCheckpoint::NotAlignmentFaultReturn);
+    return false;
+  }
+  SetHgsCheckpoint(HgsCheckpoint::IsAlignmentFault);
+#ifdef __APPLE__
+  // __x[0..28] are plain (non-PAC) uint64_t registers x0-x28; fp/lr (x29/x30) are
+  // separate opaque fields on Darwin, not contiguous with __x -- stage all 31 GPRs into
+  // a flat buffer for HandleUnalignedAccess (which indexes it directly by instruction
+  // register-encoding field, 0-30), then write back whatever it modified.
+  std::array<std::uint64_t, 31> regs;
+  std::memcpy(regs.data(), ts.__x, sizeof(ts.__x));
+  regs[29] = static_cast<std::uint64_t>(arm_thread_state64_get_fp(ts));
+  regs[30] = static_cast<std::uint64_t>(arm_thread_state64_get_lr(ts));
+  // HandleUnalignedAccess backpatches the faulting JIT'd instruction in place
+  // (std::atomic_ref stores directly into PC[-1..1] of whatever address it's given -- see
+  // Arm64.cpp's PC[1]/PC[0]/PC[-1] stores around line 2116). On macOS, `pc` (the live,
+  // executing address) doubles as the writable address too -- MAP_JIT toggles write access
+  // per-thread on that SAME address via ScopedJITWriteProtect (pthread_jit_write_protect_np),
+  // which is why the guard alone used to be enough there. On iOS there is no such toggle:
+  // ScopedJITWriteProtect is a no-op (see AllocatorHooks.h's iOS section), and `pc` is the
+  // EXECUTABLE side of a genuinely separate dual-mapped alias -- not writable at all, ever,
+  // regardless of any per-thread state. Passing `pc` itself into HandleUnalignedAccess here
+  // would make its backpatch stores fault the same way this whole handler exists to avoid,
+  // this time with the original signal still masked (unrecoverable). Translate to the
+  // writable alias first: reads/writes through it are immediately coherent with `pc` (same
+  // physical pages), and the *offset* HandleUnalignedAccess returns is address-independent,
+  // so resuming is still computed from the original executable `pc` below.
+  SetHgsCheckpoint(HgsCheckpoint::BeforeWriteGuard);
+  FEXCore::Allocator::ScopedJITWriteProtect write_guard;
+  SetHgsCheckpoint(HgsCheckpoint::AfterWriteGuard);
+  const uintptr_t writable_pc =
+      reinterpret_cast<uintptr_t>(FEXCore::Allocator::GetWritableAddress(reinterpret_cast<void*>(pc)));
+  SetHgsCheckpoint(HgsCheckpoint::HaveWritablePc);
+  // Reading via writable_pc, not pc: the executable alias may be execute-only (no read
+  // permission) on iOS, so touching it here for a diagnostic could introduce a second,
+  // unrelated fault. writable_pc is known-readable since HandleUnalignedAccess writes
+  // through it below.
+  const uint32_t instr_before = *reinterpret_cast<volatile uint32_t*>(writable_pc);
+  const auto adjustment = FEXCore::ArchHelpers::Arm64::HandleUnalignedAccess(
+      ActiveFexExecution.Thread,
+      FEXCore::ArchHelpers::Arm64::UnalignedHandlerType::HalfBarrier, writable_pc, regs.data());
+  SetHgsCheckpoint(HgsCheckpoint::AfterHandleUnaligned);
+  if (!adjustment.has_value()) {
+    SetHgsCheckpoint(HgsCheckpoint::AdjustmentFailedReturn);
+    SignalSafeLog("BACHATA_UNALIGNED_FAIL: pc=%p writable_pc=%p instr_before=%#x\n",
+                  reinterpret_cast<void*>(pc), reinterpret_cast<void*>(writable_pc), instr_before);
+    return false;
+  }
+  {
+    const uint32_t instr_after = *reinterpret_cast<volatile uint32_t*>(writable_pc);
+    SignalSafeLog("BACHATA_UNALIGNED_FIX: pc=%p writable_pc=%p adj=%d instr_before=%#x "
+                  "instr_after=%#x resume_pc=%p\n",
+                  reinterpret_cast<void*>(pc), reinterpret_cast<void*>(writable_pc),
+                  static_cast<int>(*adjustment), instr_before, instr_after,
+                  reinterpret_cast<void*>(pc + *adjustment));
+  }
+  // HandleUnalignedAccess just backpatched the faulting instruction (up to one instruction
+  // before/after it too, for the half-barrier case) and invalidated the icache for that --
+  // but only at writable_pc, the alias it actually wrote through. Execution resumes below at
+  // pc, the separate executable-side alias of the same physical page: on a VA-tagged icache,
+  // invalidating one alias's line does not invalidate the other's, so without this the CPU
+  // can fetch whatever was cached at pc before the backpatch -- stale or unrelated
+  // instructions -- and silently run off into garbage with no crash and no further syscalls,
+  // rather than the freshly-patched code. Cover PC[-1] through PC[1] (3 instructions) since
+  // that's the widest range HandleUnalignedAccess's backpatch touches.
+  __builtin___clear_cache(reinterpret_cast<char*>(pc - 4), reinterpret_cast<char*>(pc + 8));
+  std::memcpy(ts.__x, regs.data(), sizeof(ts.__x));
+  arm_thread_state64_set_fp(ts, regs[29]);
+  arm_thread_state64_set_lr_fptr(ts, reinterpret_cast<void*>(regs[30]));
+  arm_thread_state64_set_pc_fptr(ts, reinterpret_cast<void*>(pc + *adjustment));
+#else
   auto* registers = reinterpret_cast<std::uint64_t*>(context->uc_mcontext.regs);
-  if (info->si_code != BUS_ADRALN) return false;
   const auto adjustment = FEXCore::ArchHelpers::Arm64::HandleUnalignedAccess(
       ActiveFexExecution.Thread,
       FEXCore::ArchHelpers::Arm64::UnalignedHandlerType::HalfBarrier, pc, registers);
@@ -1023,6 +1559,89 @@ bool HandleGuestSignal(int signal, siginfo_t* info, void* rawContext) noexcept {
     return false;
   }
   context->uc_mcontext.pc = pc + *adjustment;
+#endif
+  SetHgsCheckpoint(HgsCheckpoint::SuccessReturnTrue);
+  return true;
+#else
+  static_cast<void>(signal);
+  static_cast<void>(info);
+  static_cast<void>(rawContext);
+  return false;
+#endif
+}
+
+bool TryRecoverJitAliasFault(int signal, siginfo_t* info, void* rawContext) noexcept {
+#if defined(__aarch64__) && defined(__APPLE__)
+  // A live JIT block occasionally ends up executed from its WRITABLE alias instead of the
+  // EXECUTABLE one -- confirmed on-device: a Minecraft crash's own fault PC (0x11bae20b4)
+  // was exactly one region-size (16384 bytes, the standard iOS JIT allocation chunk) past
+  // where the region's known-good executable-side address should have put it, i.e. it sat
+  // precisely at writable_base + offset instead of executable_base + offset. Something in
+  // FEXCore's JIT emission still bakes in the write-side address for that one branch target
+  // instead of the exec-side one -- most of this codebase's JIT-address handling was already
+  // audited and fixed for this exact class of bug (CPUBackend::IsAddressInCodeBuffer,
+  // Dispatcher::InitThreadPointers's Ptrs.*, JIT.cpp's EntryPoints/ExitFunctionLink/block
+  // delinkers), but this crash proves at least one more site still isn't. Finding that exact
+  // emission site would need tracing VIXL's own code generation; this recovers from the
+  // *symptom* instead: if the fault is a plain instruction fetch (si_addr == pc, not some
+  // unrelated data access -- a real wild guest pointer must NOT be silently "recovered" from
+  // by this path) and PC, read as if it were a writable JIT alias, actually translates to a
+  // different address that's inside a live executable code buffer, resume there instead of
+  // crashing. The self-healing "re-request execute permission and retry" approach tried
+  // before this (see the removed comment this replaced) failed 100% of the time for
+  // already-granted regions; this doesn't re-request anything, it just corrects which alias
+  // of a region that was *already* granted this thread was about to (mis)use.
+  if (signal != SIGBUS && signal != SIGSEGV) {
+    return false;
+  }
+  if (info == nullptr || rawContext == nullptr || info->si_addr == nullptr) {
+    return false;
+  }
+  if (ActiveFexExecution.Context == nullptr || ActiveFexExecution.Thread == nullptr) {
+    return false;
+  }
+
+  auto* context = reinterpret_cast<ucontext_t*>(rawContext);
+  auto& ts = context->uc_mcontext->__ss;
+  void* const pc = reinterpret_cast<void*>(arm_thread_state64_get_pc(ts));
+
+  if (info->si_addr != pc) {
+    return false;
+  }
+
+  void* const translated = FEXCore::Allocator::GetExecutableAddress(pc);
+  if (translated == pc) {
+    // Not a tracked writable-alias address at all -- nothing this path can help with. This is
+    // already the real safety check: GetExecutableAddress only returns something other than its
+    // input for an address actually present in the table iOSJITAlloc populates, i.e. a
+    // genuinely-live dual-mapped JIT region, so no separate confirmation is needed.
+    //
+    // Deliberately NOT also requiring IsAddressInCodeBuffer here (tried first, on-device):
+    // that function only knows about the CodeBufferManager pool used for per-block guest code
+    // (CurrentCodeBuffer / SignalHandlerCodeBuffers) -- it has no idea about the dispatcher's
+    // own, separately-allocated bootstrap code buffer (Dispatcher.cpp's own AllocateBuffer),
+    // which is exactly where this bug's fault lands (confirmed: the crashing offset falls
+    // inside the dispatcher's own Start..End range). Requiring it here silently rejected the
+    // one region this recovery most needed to handle.
+    //
+    // This `return false` was accidentally dropped in an earlier edit that removed the
+    // IsAddressInCodeBuffer check above it, leaving this whole block a no-op: on ANY fault
+    // where translated genuinely equals pc (a real, unrelated crash -- not this bug's target
+    // at all), execution fell through to the code below anyway, logged a bogus "recovery", and
+    // called arm_thread_state64_set_pc_fptr(ts, translated) with translated == pc -- i.e. set
+    // the PC right back to the exact address that had just faulted. That is an infinite loop
+    // by construction: immediate re-fault at the same PC, "recovered" again the same way,
+    // forever. Confirmed on-device as the actual cause of every "still looping after the fix"
+    // result today (millions of recoveries, pc always equal to the logged "translated" value)
+    // -- independent of, and hiding the effect of, every other genuine fix made today
+    // (GenerateABICall's translation, ClearCache's delinking, the buffer-reuse locking).
+    return false;
+  }
+
+  SignalSafeLog("BACHATA_JIT_ALIAS_RECOVER: pc=%p (writable alias) -> resuming at %p (executable "
+                "alias)\n",
+                pc, translated);
+  arm_thread_state64_set_pc_fptr(ts, translated);
   return true;
 #else
   static_cast<void>(signal);
@@ -1034,18 +1653,24 @@ bool HandleGuestSignal(int signal, siginfo_t* info, void* rawContext) noexcept {
 
 class GuestEngine::Thread final {
 public:
-  Thread(std::thread::id owner, GuestExecutionRequest request)
+  Thread(std::thread::id owner, Core::GuestExecutionRequest request)
     : Owner {owner}
     , Request {std::move(request)} {}
 
   std::thread::id Owner;
-  GuestExecutionRequest Request;
+  Core::GuestExecutionRequest Request;
   FEXCore::Core::InternalThreadState* Native {};
   CallRetStack CallRet;
   GuestSegmentState Segments;
   BridgeSyscallHandler::InvocationState Invocation;
   uint64_t FirstRip {};
   uint64_t LastRip {};
+  // Set by Run() itself via pthread_self() right as this thread starts actually executing --
+  // needed so the JIT buffer-invalidation safepoint (see BeginBufferInvalidationSafepoint's own
+  // comment, Context.h) can pthread_kill a specific OS thread. Zero until then; safepoint code
+  // must skip any thread still at zero (hasn't started running guest code yet, so it can't be
+  // mid-execution of anything that needs pausing).
+  std::atomic<pthread_t> NativeHandle {};
 };
 
 class GuestEngine::Impl final {
@@ -1087,7 +1712,7 @@ public:
     auto* thread = Context->CreateThread(initialRip, initialRsp);
     if (thread == nullptr) return Failure(EngineStage::Thread, ENOMEM);
     ThreadScope threadScope {*Context, thread};
-    const std::vector<GuestExecutionRange> ranges {
+    const std::vector<Core::GuestExecutionRange> ranges {
         {static_cast<std::uintptr_t>(initialRip), PageSize, true, false},
     };
     const auto registered = Syscalls->RegisterThread(thread, ranges);
@@ -1234,7 +1859,7 @@ public:
     auto* thread = Context->CreateThread(rip, initialRsp);
     if (thread == nullptr) return false;
     ThreadScope threadScope {*Context, thread};
-    const std::vector<GuestExecutionRange> ranges {
+    const std::vector<Core::GuestExecutionRange> ranges {
         {static_cast<std::uintptr_t>(rip & ~(PageSize - 1)), PageSize, true, false},
     };
     const auto registered = Syscalls->RegisterThread(thread, ranges);
@@ -1260,8 +1885,16 @@ public:
   fextl::unique_ptr<FEXCore::Context::Context> Context;
   std::unique_ptr<BridgeSignalDelegator> SignalDelegator;
   std::unique_ptr<BridgeSyscallHandler> Syscalls;
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+  // iOS: trampolines need dual-mapped (RW write addr + RX exec addr) memory because
+  // iOS cannot add PROT_EXEC via mprotect on unentitled processes. StikDebug must be
+  // attached (via Phase 4's JIT-enablement flow) before Create() is called.
+  std::unique_ptr<DualMappedMapping> CallbackReturn;
+  std::unique_ptr<DualMappedMapping> FunctionReturn;
+#else
   std::unique_ptr<Mapping> CallbackReturn;
   std::unique_ptr<Mapping> FunctionReturn;
+#endif
   size_t PageSize {};
   bool ConfigInitialized {};
   bool Ran {};
@@ -1298,6 +1931,50 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
   if (impl->Context == nullptr) {
     return fail(Failure(EngineStage::Context, ENOMEM));
   }
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+  // iOS dual-mapped trampolines: write through RW addr, execute via RX addr.
+  // BreakGetJITMapping (brk #0xf00d, x16=1) is called inside DualMappedMapping
+  // constructor — StikDebug must be attached by the time Create() runs.
+  impl->FunctionReturn = std::make_unique<DualMappedMapping>(impl->PageSize);
+  if (!impl->FunctionReturn->IsValid()) {
+    return fail(Failure(EngineStage::Mapping, impl->FunctionReturn->Error()));
+  }
+  *static_cast<uint8_t*>(impl->FunctionReturn->GetRW()) = 0xf4; // HLT trampoline
+  __builtin___clear_cache(static_cast<char*>(impl->FunctionReturn->GetRW()),
+                          static_cast<char*>(impl->FunctionReturn->GetRW()) + impl->PageSize);
+  // No mprotect needed: RX mapping is already executable (set up by BreakGetJITMapping).
+
+  impl->CallbackReturn = std::make_unique<DualMappedMapping>(impl->PageSize);
+  if (!impl->CallbackReturn->IsValid()) {
+    return fail(Failure(EngineStage::Mapping, impl->CallbackReturn->Error()));
+  }
+  {
+    auto* callbackReturn = static_cast<uint8_t*>(impl->CallbackReturn->GetRW());
+    callbackReturn[0] = 0x0f; // SYSCALL trampoline (x86 opcode)
+    callbackReturn[1] = 0x3e;
+  }
+  __builtin___clear_cache(static_cast<char*>(impl->CallbackReturn->GetRW()),
+                          static_cast<char*>(impl->CallbackReturn->GetRW()) + impl->PageSize);
+  // No mprotect needed: RX mapping is already executable (set up by BreakGetJITMapping).
+
+  // Do NOT detach the debugger here. This originally assumed all DualMappedRegion
+  // allocations were front-loaded before the run loop starts (see the "call once...
+  // before the emulator's main run loop starts" comment in ios_jit_allocator.h), but
+  // that's false: flatten_extended_userdata_pass.cpp calls DualMappedRegion::Allocate()
+  // on demand throughout actual gameplay, whenever a shader needs an SRT walker JIT'd
+  // for the first time. Once detached, StikDebug stops servicing the BreakGetJITMapping
+  // BRK trap those later calls send -- an unhandled BRK is a raw SIGTRAP/EXC_BREAKPOINT
+  // crash, not a caught error, which is exactly what killed the app ~100s into a real
+  // run (long enough to hit the first shader needing fresh JIT). Staying attached for
+  // the whole session is safe (see IosJitAllocator::Detach()'s own doc comment: "If not
+  // called: StikDebug stays attached; this isn't fatal but wastes resources") --
+  // correctness here matters more than that minor resource cost.
+
+  // Register the RX (exec) address with the signal delegator — this is the address
+  // FEXCore will branch to as the callback-return veneer.
+  impl->SignalDelegator = std::make_unique<BridgeSignalDelegator>(
+      reinterpret_cast<std::uintptr_t>(impl->CallbackReturn->GetRX()));
+#else
   impl->FunctionReturn =
       std::make_unique<Mapping>(impl->PageSize, PROT_READ | PROT_WRITE);
   if (!impl->FunctionReturn->IsValid()) {
@@ -1327,12 +2004,122 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
   }
   impl->SignalDelegator = std::make_unique<BridgeSignalDelegator>(
       reinterpret_cast<std::uintptr_t>(impl->CallbackReturn->Get()));
+#endif
   impl->Syscalls = std::make_unique<BridgeSyscallHandler>(impl->Bridge);
   impl->Context->SetSignalDelegator(impl->SignalDelegator.get());
   impl->Context->SetSyscallHandler(impl->Syscalls.get());
   impl->Context->EnableExitOnHLT();
   if (!impl->Context->InitCore()) {
     return fail(Failure(EngineStage::Context, EIO));
+  }
+
+  // See OnBufferReusedInPlace's own comment (Context.h) for the full story: on iOS, filling
+  // the JIT code cache clears and reuses the same already-granted buffer in place (rather than
+  // allocating a fresh one, which fails on a session's 3rd+ such request) -- and while the
+  // calling thread's own fast-path lookup cache gets cleared as part of that, sibling guest
+  // threads' independent caches don't, since FEXCore's own core has no list of them to reach.
+  // This is the one place that list (Threads, below) actually exists, so wire it in here.
+  {
+    auto* rawImpl = impl.get();
+    static_cast<FEXCore::Context::ContextImpl*>(impl->Context.get())->OnBufferReusedInPlace =
+        [rawImpl](FEXCore::Core::InternalThreadState* CallingThread,
+                  const FEXCore::LookupCacheWriteLockToken& lk) {
+          LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: callback begin, CallingThread={:#x}, waiting "
+                            "for ThreadsMutex",
+                            reinterpret_cast<uintptr_t>(CallingThread));
+          std::scoped_lock threadsLock {rawImpl->ThreadsMutex};
+          LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: got ThreadsMutex, {} threads registered",
+                            rawImpl->Threads.size());
+          // lk is the SAME write-lock token the caller (ClearCodeCache, Core.cpp) already holds
+          // -- on iOS every guest thread's LookupCache::Shared points at the one process-wide L3
+          // cache tied to the single, StikDebug-count-limited JIT buffer (see JIT.cpp's
+          // ThreadState->LookupCache->Shared assignment), so there is no separate per-thread
+          // lock to acquire here at all; "another thread's write lock" and "the lock we already
+          // hold" are literally the same mutex. An earlier version of this callback tried to
+          // (re-)acquire that same lock per other-thread, which can only ever self-conflict:
+          // blocking acquisition deadlocked outright, and a subsequent try-lock fallback failed
+          // 100% of the time, every thread, every call, with zero real contention involved --
+          // confirmed on-device by BACHATA_BUFFER_REUSE logging showing every single thread
+          // reporting "busy" with no exceptions. Just reuse lk directly.
+          for (auto* t : rawImpl->Threads) {
+            if (t->Native == nullptr || t->Native == CallingThread) {
+              // The calling thread's own L1/L2 was already cleared as part of the same
+              // ClearCodeCache call that invoked this callback.
+              continue;
+            }
+            LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: clearing thread {:#x}'s local caches",
+                              reinterpret_cast<uintptr_t>(t->Native));
+            t->Native->LookupCache->ClearThreadLocalCaches(lk);
+          }
+          LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: callback end");
+        };
+
+    // See BeginBufferInvalidationSafepoint's own comment (Context.h) and the safepoint
+    // infrastructure's own comment above (SafepointSignalHandler and friends) for the full
+    // story. Registered here for the same reason OnBufferReusedInPlace is: this is the one
+    // place a full list of live guest threads (and now their native pthread_t handles) exists.
+    EnsureSafepointHandlerInstalled();
+    static_cast<FEXCore::Context::ContextImpl*>(impl->Context.get())
+        ->BeginBufferInvalidationSafepoint = [rawImpl](FEXCore::Core::InternalThreadState* CallingThread) {
+      LogMan::Msg::IFmt("BACHATA_SAFEPOINT: begin, CallingThread={:#x}", reinterpret_cast<uintptr_t>(CallingThread));
+      g_safepoint_resume.store(false, std::memory_order_release);
+      g_safepoint_paused_count.store(0, std::memory_order_release);
+      int signaled = 0;
+      int skipped_no_handle = 0;
+      int skipped_not_started = 0;
+      {
+        std::scoped_lock threadsLock {rawImpl->ThreadsMutex};
+        for (auto* t : rawImpl->Threads) {
+          if (t->Native == nullptr || t->Native == CallingThread) {
+            continue;
+          }
+          const pthread_t handle = t->NativeHandle.load(std::memory_order_acquire);
+          if (handle == pthread_t {}) {
+            ++skipped_not_started;
+            continue;
+          }
+          if (pthread_kill(handle, kSafepointSignal) == 0) {
+            ++signaled;
+          } else {
+            ++skipped_no_handle;
+          }
+        }
+      }
+      LogMan::Msg::IFmt("BACHATA_SAFEPOINT: signaled={} skipped_no_handle={} skipped_not_started={} hle_syscall_count={}",
+                        signaled, skipped_no_handle, skipped_not_started,
+                        g_threads_in_hle_syscall.load(std::memory_order_acquire));
+      // Bounded wait for paused threads (SIGINFO handler). A thread parked in a genuine
+      // blocking host syscall may not run the signal handler until that syscall returns on
+      // its own, which could be arbitrarily long -- but such a thread isn't executing guest
+      // code during that time either, so there's nothing at risk from proceeding without it.
+      // Timing out is strictly no worse than this whole mechanism not existing.
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
+      while (g_safepoint_paused_count.load(std::memory_order_acquire) < signaled &&
+             std::chrono::steady_clock::now() < deadline) {
+        sched_yield();
+      }
+      int final_paused = g_safepoint_paused_count.load(std::memory_order_acquire);
+      LogMan::Msg::IFmt("BACHATA_SAFEPOINT: paused wait done, final_paused={} expected={}", final_paused, signaled);
+      // Additionally wait for any threads currently in HLE syscalls to complete. These threads
+      // are executing host code (not guest JIT) and will return to guest code after the syscall.
+      // If we reuse the JIT buffer while they're in the syscall, they'll return to stale code.
+      // We track this with g_threads_in_hle_syscall and wait for it to drain.
+      const auto hle_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2000);
+      while (g_threads_in_hle_syscall.load(std::memory_order_acquire) > 0 &&
+             std::chrono::steady_clock::now() < hle_deadline) {
+        sched_yield();
+      }
+      int final_hle = g_threads_in_hle_syscall.load(std::memory_order_acquire);
+      LogMan::Msg::IFmt("BACHATA_SAFEPOINT: hle wait done, final_hle_count={}", final_hle);
+      if (final_paused < signaled || final_hle > 0) {
+        LogMan::Msg::IFmt("BACHATA_SAFEPOINT: WARNING - incomplete pause! paused={}/{} hle={}",
+                          final_paused, signaled, final_hle);
+      }
+    };
+    static_cast<FEXCore::Context::ContextImpl*>(impl->Context.get())
+        ->EndBufferInvalidationSafepoint = [](FEXCore::Core::InternalThreadState*) {
+      g_safepoint_resume.store(true, std::memory_order_release);
+    };
   }
 
   return std::unique_ptr<GuestEngine> {new GuestEngine {std::move(impl)}};
@@ -1343,7 +2130,7 @@ EngineResult<GuestRunResult> GuestEngine::RunControlledHarness() {
   return ImplState->Run();
 }
 
-EngineResult<GuestEngine::Thread*> GuestEngine::CreateThread(const GuestExecutionRequest& request) {
+EngineResult<GuestEngine::Thread*> GuestEngine::CreateThread(const Core::GuestExecutionRequest& request) {
   if (ImplState == nullptr || ImplState->Context == nullptr || ImplState->Syscalls == nullptr) {
     return Failure(EngineStage::Teardown, ESHUTDOWN);
   }
@@ -1404,7 +2191,7 @@ EngineResult<GuestEngine::Thread*> GuestEngine::CreateThread(const GuestExecutio
   return thread.release();
 }
 
-EngineResult<GuestExecutionState> GuestEngine::Run(Thread& thread) {
+EngineResult<Core::GuestExecutionState> GuestEngine::Run(Thread& thread) {
   if (ImplState == nullptr || ImplState->Context == nullptr || thread.Native == nullptr) {
     return Failure(EngineStage::Teardown, ESHUTDOWN);
   }
@@ -1413,6 +2200,9 @@ EngineResult<GuestExecutionState> GuestEngine::Run(Thread& thread) {
     if (!ImplState->Threads.contains(&thread) || thread.Owner != std::this_thread::get_id()) {
       return Failure(EngineStage::Thread, EPERM);
     }
+    // See NativeHandle's own comment for why this is set here, under the same lock the
+    // safepoint code below reads it under.
+    thread.NativeHandle.store(pthread_self(), std::memory_order_release);
   }
 
   BridgeSyscallHandler::InvocationScope invocationScope {*ImplState->Syscalls, thread.Invocation,
@@ -1428,7 +2218,7 @@ EngineResult<GuestExecutionState> GuestEngine::Run(Thread& thread) {
   }
 
   const auto& frame = thread.Native->CurrentFrame->State;
-  GuestExecutionState result;
+  Core::GuestExecutionState result;
   result.FirstRip = thread.FirstRip;
   result.Rip = frame.rip;
   result.Rsp = frame.gregs[FEXCore::X86State::REG_RSP];
@@ -1444,11 +2234,11 @@ EngineResult<GuestExecutionState> GuestEngine::Run(Thread& thread) {
   thread.LastRip = result.Rip;
   result.LastRip = thread.LastRip;
   // This Phase-1 context exits only because EnableExitOnHLT() is active.
-  result.StopReason = GuestStopReason::Halted;
+  result.StopReason = Core::GuestStopReason::Halted;
   return result;
 }
 
-EngineResult<GuestExecutionState> GuestEngine::CallGuest(
+EngineResult<Core::GuestExecutionState> GuestEngine::CallGuest(
     std::uintptr_t rip, std::span<const std::uint64_t> arguments) {
   if (ImplState == nullptr || ImplState->Context == nullptr || ImplState->Syscalls == nullptr) {
     return Failure(EngineStage::Teardown, ESHUTDOWN);
@@ -1494,7 +2284,7 @@ EngineResult<GuestExecutionState> GuestEngine::CallGuest(
     return Failure(EngineStage::Thread, EFAULT);
   }
 
-  GuestExecutionState result;
+  Core::GuestExecutionState result;
   result.FirstRip = rip;
   result.Rip = frame.rip;
   result.LastRip = frame.rip;
@@ -1508,7 +2298,7 @@ EngineResult<GuestExecutionState> GuestEngine::CallGuest(
   for (size_t index = 0; index < xmm.size(); ++index) {
     std::memcpy(result.Xmm[index].data(), &xmm[index], sizeof(xmm[index]));
   }
-  result.StopReason = GuestStopReason::Returned;
+  result.StopReason = Core::GuestStopReason::Returned;
   return result;
 }
 
@@ -1526,7 +2316,7 @@ EngineResult<bool> GuestEngine::Invalidate(Thread& thread, std::uintptr_t begin,
     return Failure(EngineStage::Request, EINVAL);
   }
   const auto executable = std::any_of(thread.Request.MappedRanges.begin(), thread.Request.MappedRanges.end(),
-                                      [begin, size](const GuestExecutionRange& range) {
+                                      [begin, size](const Core::GuestExecutionRange& range) {
                                         return range.Executable && !range.Writable && Contains(range, begin, size);
                                       });
   if (!executable) {
@@ -1575,16 +2365,16 @@ std::uintptr_t GuestEngine::ReturnAddress() const {
   return reinterpret_cast<std::uintptr_t>(ImplState->FunctionReturn->Get());
 }
 
-GuestExecutionRange GuestEngine::ReturnRange() const {
+Core::GuestExecutionRange GuestEngine::ReturnRange() const {
   if (ImplState == nullptr || ImplState->FunctionReturn == nullptr) return {};
   return {reinterpret_cast<std::uintptr_t>(ImplState->FunctionReturn->Get()),
           ImplState->PageSize, true, false};
 }
 
-GuestExecutionRange GuestEngine::CallbackReturnRange() const {
+Core::GuestExecutionRange GuestEngine::CallbackReturnRange() const {
   if (ImplState == nullptr || ImplState->CallbackReturn == nullptr) return {};
   return {reinterpret_cast<std::uintptr_t>(ImplState->CallbackReturn->Get()),
           ImplState->PageSize, true, false};
 }
 
-} // namespace Core::Fex
+} // namespace AetherPS4::Fex

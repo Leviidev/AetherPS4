@@ -42,6 +42,7 @@ option(ENABLE_TESTS "Build unit tests (requires GTest)" OFF)
 option(ENABLE_BACHATA_RUNTIME "Build x86-64 Android-container runtime mode" OFF)
 option(ENABLE_SYSTEM_LIBRARIES "Enable building against system libraries" OFF)
 option(ENABLE_FEX_GUEST_CPU "Build the native ARM64 FEXCore guest CPU backend" OFF)
+option(ENABLE_SHADPS4_IOS_LIB "Build shadps4_ios, the embeddable C-API library used by the standalone AetherPS4 app (builds for the host macOS architecture; arm64-apple-ios cross-compilation is a later phase)" OFF)
 set(FEXCORE_GUEST_CPU_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/runtime/sources/fex" CACHE PATH
     "Checked-out FEX source directory for the FEXCore guest CPU backend")
 set(FEXCORE_GUEST_CPU_BUILD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/runtime/build/fexcore-smoke-build" CACHE PATH
@@ -637,16 +638,24 @@ set(RANDOM_LIB src/core/libraries/random/random.cpp
                src/core/libraries/random/random_error.h
 )
 
-set(USBD_LIB src/core/libraries/usbd/usbd.cpp
-             src/core/libraries/usbd/usbd.h
-             src/core/libraries/usbd/usb_backend.h
-             src/core/libraries/usbd/emulated/dimensions.cpp
-             src/core/libraries/usbd/emulated/dimensions.h
-             src/core/libraries/usbd/emulated/infinity.cpp
-             src/core/libraries/usbd/emulated/infinity.h
-             src/core/libraries/usbd/emulated/skylander.cpp
-             src/core/libraries/usbd/emulated/skylander.h
-)
+# libSceUsbd (real-hardware and emulated USB toy-portal support -- Skylanders/Infinity/
+# Dimensions) is built on real libusb types throughout usb_backend.h, and libusb itself
+# has no iOS build story (its Darwin backend needs IOKit/IOCFBundle.h, unavailable on
+# iOS). USB toy portals aren't a meaningful iOS feature anyway (no physical USB
+# accessory port), so this is dropped entirely for iOS rather than ported -- see the
+# matching SHADPS4_DISABLE_USBD guard around its registration call in libs.cpp.
+if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(USBD_LIB src/core/libraries/usbd/usbd.cpp
+                 src/core/libraries/usbd/usbd.h
+                 src/core/libraries/usbd/usb_backend.h
+                 src/core/libraries/usbd/emulated/dimensions.cpp
+                 src/core/libraries/usbd/emulated/dimensions.h
+                 src/core/libraries/usbd/emulated/infinity.cpp
+                 src/core/libraries/usbd/emulated/infinity.h
+                 src/core/libraries/usbd/emulated/skylander.cpp
+                 src/core/libraries/usbd/emulated/skylander.h
+    )
+endif()
 
 set(FIBER_LIB src/core/libraries/fiber/fiber_context.s
               src/core/libraries/fiber/fiber.cpp
@@ -858,6 +867,8 @@ set(COMMON src/common/logging/classes.h
            src/common/scm_rev.h
            src/common/key_manager.cpp
            src/common/key_manager.h
+           src/common/sigsys_trap.cpp
+           src/common/sigsys_trap.h
 )
 
 if (ENABLE_DISCORD_RPC)
@@ -1231,7 +1242,9 @@ set(EMULATOR src/emulator.cpp
              src/sdl_window.cpp
 )
 
-if (APPLE)
+if (APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    # AppKit-based native dock icon -- iOS has neither AppKit nor a dock; sdl_window.cpp's
+    # generic SDL3+stb_image SetWindowIcon() compiles for iOS instead (see its comment).
     list(APPEND EMULATOR src/sdl_window_apple.mm)
 endif()
 
@@ -1287,6 +1300,7 @@ if (ENABLE_FEX_GUEST_CPU)
         "${FEXCORE_GUEST_CPU_BUILD_DIR}/generated"
         "${FEXCORE_GUEST_CPU_SOURCE_DIR}/Source/Tools/CommonTools"
         "${FEXCORE_GUEST_CPU_BUILD_DIR}/FEXCore/Source"
+        "${FEXCORE_GUEST_CPU_SOURCE_DIR}/FEXCore/Source"
         "${FEXCORE_GUEST_CPU_SOURCE_DIR}/FEXCore/include"
         "${FEXCORE_GUEST_CPU_BUILD_DIR}/include"
         "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/unordered_dense/include"
@@ -1317,7 +1331,7 @@ endif()
 if (${CMAKE_SYSTEM_NAME} STREQUAL "FreeBSD")
     target_link_libraries(shadps4 PRIVATE "/usr/lib/libusb.so")
     target_link_libraries(shadps4 PRIVATE "/usr/local/lib/libuuid.so")
-else()
+elseif (NOT ${CMAKE_SYSTEM_NAME} STREQUAL "iOS")
     target_link_libraries(shadps4 PRIVATE libusb::usb)
 endif()
 
@@ -1339,8 +1353,9 @@ if (${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
 endif()
 
 if (APPLE)
-    if (NOT ENABLE_SYSTEM_VULKAN)
-        # Bundle Vulkan loader and KosmicKrisp driver with the emulator.
+    if (NOT ENABLE_SYSTEM_VULKAN AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        # Bundle Vulkan loader and KosmicKrisp driver with the emulator. Skipped on iOS
+        # for now -- see the matching guard in externals/CMakeLists.txt for why.
         set_property(TARGET shadps4 APPEND PROPERTY BUILD_RPATH "@executable_path")
 
         set(LOADER_DEST "${CMAKE_CURRENT_BINARY_DIR}/libvulkan.dylib")
@@ -1474,6 +1489,163 @@ endif()
 
 # Install rules
 install(TARGETS shadps4 BUNDLE DESTINATION .)
+
+if (ENABLE_SHADPS4_IOS_LIB)
+    # Embeddable C-API library for the standalone AetherPS4 app (see the iOS port plan).
+    # Builds for the host architecture for now -- arm64-apple-ios cross-compilation is a
+    # later phase. Reuses the same source-list variables as the shadps4 CLI executable
+    # above, with src/main.cpp's CLI/process-lifetime responsibilities replaced by
+    # src/platform/ios/shadps4_ios_api.cpp (see that file for the C API surface).
+    #
+    # Deliberately NOT mirrored from the shadps4 executable target above, since they're
+    # executable-packaging concerns a static library doesn't have: Info.plist embedding,
+    # BUILD_RPATH/bundling the Vulkan loader+KosmicKrisp driver next to the binary (the
+    # eventual iOS app project must do its own equivalent of this), and Windows/FreeBSD/
+    # Linux-only linker flags.
+    add_library(shadps4_ios STATIC
+        ${AUDIO_CORE}
+        ${IMGUI}
+        ${INPUT}
+        ${COMMON}
+        ${CORE}
+        ${SHADER_RECOMPILER}
+        ${VIDEO_CORE}
+        ${EMULATOR}
+        src/platform/ios/shadps4_ios_api.cpp
+        src/platform/ios/shadps4_ios_api.h
+        src/platform/ios/mobile_overlay.cpp
+        src/platform/ios/mobile_overlay.h
+    )
+
+    if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        # No genuine iOS FFmpeg prebuilt exists (see externals/ffmpeg-core/CMakeLists.txt);
+        # this provides real (header-checked, not hand-transcribed) stub definitions for
+        # the FFmpeg symbols this codebase currently references, each returning FFmpeg's
+        # own documented failure sentinel. See that file for the full rationale.
+        target_sources(shadps4_ios PRIVATE src/platform/ios/ffmpeg_stub.cpp)
+
+        # Phase 3 dual-mapped JIT allocator (BreakpointJIT.framework-based) -- see
+        # src/core/ios/ios_jit_allocator.h for the full protocol writeup. Used by
+        # src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp's SRT
+        # walker JIT.
+        target_sources(shadps4_ios PRIVATE
+            src/core/ios/ios_jit_allocator.cpp
+            src/core/ios/ios_jit_allocator.h
+        )
+
+        # PKG extraction (bachata_pkg_probe/bachata_pkg_extract) -- ported from
+        # tools/pkg-extract/ (itself ported from the Bachata Android runtime's
+        # JNI module), since neither shadps4_run() nor anything else in this
+        # tree can turn a raw, encrypted .pkg into the extracted eboot.bin +
+        # sce_sys/ directory it actually needs. See src/core/pkg_extract/pkg_extractor.h
+        # for the C API surface. Not compiled with BACHATA_HAVE_LIBDEFLATE, so
+        # PFSC block decompression falls back to the already-linked ZLIB::ZLIB
+        # instead of pulling in a new dependency.
+        target_sources(shadps4_ios PRIVATE
+            src/core/pkg_extract/aes.c
+            src/core/pkg_extract/aes.h
+            src/core/pkg_extract/aes_neon.h
+            src/core/pkg_extract/keys.h
+            src/core/pkg_extract/pfs.h
+            src/core/pkg_extract/pkg_crypto.cpp
+            src/core/pkg_extract/pkg_crypto.h
+            src/core/pkg_extract/pkg_extractor.cpp
+            src/core/pkg_extract/pkg_extractor.h
+            src/core/pkg_extract/pkg_rsa_native.cpp
+            src/core/pkg_extract/pkg_rsa_native.h
+            src/core/pkg_extract/pkg_type.cpp
+            src/core/pkg_extract/pkg_type.h
+            src/core/pkg_extract/types.h
+        )
+        # LibreSSL's BN_* (RSA modexp) comes in transitively via Cpp_Httplib,
+        # already linked into shadps4_ios below.
+    endif()
+
+    create_target_directory_groups(shadps4_ios)
+
+    target_compile_definitions(shadps4_ios PRIVATE
+        SHADPS4_LIBRARY_BUILD=1
+        IMGUI_USER_CONFIG="imgui/imgui_config.h"
+    )
+    if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        # libusb has no iOS build story (see the USBD_LIB comment above); matches
+        # USBD_LIB being excluded from ${CORE} for this same platform check.
+        target_compile_definitions(shadps4_ios PRIVATE SHADPS4_DISABLE_USBD=1)
+    endif()
+    target_include_directories(shadps4_ios PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${HOST_SHADERS_INCLUDE}
+        ${IMGUI_RESOURCES_INCLUDE}
+    )
+    add_dependencies(shadps4_ios host_shaders ImGui_Resources)
+
+    target_link_libraries(shadps4_ios PRIVATE spdlog::spdlog)
+    target_link_libraries(shadps4_ios PRIVATE magic_enum::magic_enum fmt::fmt toml11::toml11 tsl::robin_map xbyak::xbyak Tracy::TracyClient RenderDoc::API FFmpeg::ffmpeg Dear_ImGui ImGuiFileDialog gcn half::half ZLIB::ZLIB PNG::PNG minimp3)
+    target_link_libraries(shadps4_ios PRIVATE Boost::headers GPUOpen::VulkanMemoryAllocator LibAtrac9 sirit Vulkan::Headers xxHash::xxhash Zydis::Zydis glslang::glslang SDL3::SDL3 pugixml::pugixml)
+    target_link_libraries(shadps4_ios PRIVATE stb::headers lfreist-hwinfo::hwinfo nlohmann_json::nlohmann_json miniz::miniz fdk-aac OpenAL::OpenAL Cpp_Httplib miniupnpc::miniupnpc)
+    target_link_libraries(shadps4_ios PRIVATE Freetype::Freetype)
+    if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        target_link_libraries(shadps4_ios PRIVATE libusb::usb)
+    endif()
+    target_link_libraries(shadps4_ios PRIVATE res::embedded)
+
+    if (ENABLE_FEX_GUEST_CPU)
+        target_compile_definitions(shadps4_ios PRIVATE SHADPS4_ENABLE_FEX_GUEST_CPU=1)
+        target_include_directories(shadps4_ios PRIVATE
+            "${FEXCORE_GUEST_CPU_BUILD_DIR}"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/Source"
+            "${FEXCORE_GUEST_CPU_BUILD_DIR}/Source"
+            "${FEXCORE_GUEST_CPU_BUILD_DIR}/generated"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/Source/Tools/CommonTools"
+            "${FEXCORE_GUEST_CPU_BUILD_DIR}/FEXCore/Source"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/FEXCore/Source"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/FEXCore/include"
+            "${FEXCORE_GUEST_CPU_BUILD_DIR}/include"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/unordered_dense/include"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/fmt/include"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/xxhash/cmake_unofficial/.."
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/FEXHeaderUtils/."
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/CodeEmitter/."
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/cephes/include"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/SoftFloat-3e/include"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/SoftFloat-3e/include/SoftFloat-3e"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/Source/Common/cpp-optparse"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/tiny-json"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/range-v3/include"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/rpmalloc"
+        )
+        target_compile_definitions(shadps4_ios PRIVATE
+            FEXCORE_HAS_PRESERVE_ALL_ATTR=1
+            FEX_DISABLE_TELEMETRY=1
+            FEX_HAS_PRESERVE_ALL_ATTR=1
+            ARCHITECTURE_arm64=1
+        )
+        target_compile_options(shadps4_ios PRIVATE
+            "-DFEXCORE_PRESERVE_ALL_ATTR=__attribute__((preserve_all))"
+            "-DFEX_PRESERVE_ALL_ATTR=__attribute__((preserve_all))"
+        )
+        target_link_libraries(shadps4_ios PRIVATE ${FEXCORE_GUEST_CPU_LIBRARIES} pthread dl)
+    endif()
+
+    if (ENABLE_DISCORD_RPC)
+        target_compile_definitions(shadps4_ios PRIVATE ENABLE_DISCORD_RPC)
+        target_link_libraries(shadps4_ios PRIVATE discord-rpc)
+    endif()
+
+    if (APPLE)
+        # Replacement for std::chrono::time_zone
+        target_link_libraries(shadps4_ios PRIVATE date::date-tz epoll-shim)
+    endif()
+
+    # Phase 1 verification harness: links only against shadps4_ios's public C API
+    # header, proving the library is actually consumable standalone (CMake propagates
+    # a static library's link dependencies transitively to its consumers even when
+    # they were declared PRIVATE above, so this doesn't need to repeat any of them).
+    add_executable(shadps4_ios_smoke runtime/probes/shadps4-ios-smoke.cpp)
+    target_include_directories(shadps4_ios_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(shadps4_ios_smoke PRIVATE shadps4_ios)
+endif()
 
 else()
     enable_testing()

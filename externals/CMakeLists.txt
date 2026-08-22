@@ -224,7 +224,9 @@ if (NOT TARGET libusb::usb)
         # using anything else will crash instantly, also freebsd will NOT like it
         # no you cant vendor this libusb, its builtin on freebsd
         find_package(libusb)
-    else()
+    elseif (NOT ${CMAKE_SYSTEM_NAME} STREQUAL "iOS")
+        # libusb's Darwin backend needs IOKit/IOCFBundle.h, unavailable on iOS.
+        # USB toy portals aren't a meaningful iOS feature anyway (no physical USB accessory port).
         add_subdirectory(libusb)
         add_library(libusb::usb ALIAS usb-1.0)
     endif()
@@ -323,8 +325,15 @@ if (WIN32)
     set(ALSOFT_BACKEND_WASAPI ON CACHE BOOL "" FORCE)
     set(ALSOFT_BACKEND_DSOUND OFF CACHE BOOL "" FORCE)
     set(ALSOFT_BACKEND_WINMM OFF CACHE BOOL "" FORCE)
-elseif (APPLE)
+elseif (APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(ALSOFT_BACKEND_COREAUDIO ON CACHE BOOL "" FORCE)
+elseif (APPLE)
+    # CoreAudio's coreaudio.cpp needs Objective-C++ (Foundation.h, pulled in
+    # transitively via AudioToolbox.h), which isn't wired up for this project's
+    # iOS cross-compile toolchain yet (CMAKE_OBJCXX_COMPILE_OBJECT unset --
+    # merely declaring OBJCXX in a project() breaks CMake's generate step even
+    # with no file using it). Deferred; audio isn't blocking iOS bring-up.
+    set(ALSOFT_BACKEND_COREAUDIO OFF CACHE BOOL "" FORCE)
 else()
     set(ALSOFT_BACKEND_ALSA ON CACHE BOOL "" FORCE)
     set(ALSOFT_BACKEND_PULSEAUDIO ON CACHE BOOL "" FORCE)
@@ -356,6 +365,14 @@ endif()
 add_library(Cpp_Httplib INTERFACE)
 target_include_directories(Cpp_Httplib INTERFACE cpp-httplib/)
 
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    # httplib.h auto-enables CPPHTTPLIB_USE_CERTS_FROM_MACOSX_KEYCHAIN for any
+    # __APPLE__ + clang + SSL build without distinguishing iOS -- but the
+    # SecTrustCopyAnchorCertificates() it calls isn't in iOS's public SDK. This is
+    # httplib's own documented opt-out for that auto-detection, not a header patch.
+    target_compile_definitions(Cpp_Httplib INTERFACE CPPHTTPLIB_DISABLE_MACOSX_AUTOMATIC_ROOT_CERTIFICATES)
+endif()
+
 if (TARGET ZLIB::ZLIB)
     target_link_libraries(Cpp_Httplib INTERFACE ZLIB::ZLIB)
     target_compile_definitions(Cpp_Httplib INTERFACE CPPHTTPLIB_ZLIB_SUPPORT)
@@ -372,8 +389,13 @@ else()
     message(STATUS "cpp-httplib: OpenSSL/LibreSSL not available — libSceHttp HTTPS will fall back to mock at runtime.")
 endif()
 
-# macOS Vulkan driver
-if (APPLE AND NOT ENABLE_SYSTEM_VULKAN AND NOT ENABLE_TESTS)
+# macOS Vulkan driver. Skipped on iOS for now: KosmicKrisp/Mesa's `platforms` build
+# option has no iOS choice yet (only auto/x11/wayland/haiku/android/windows/macos --
+# see externals/mesa-kosmickrisp/externals/mesa/meson.options), so building it for
+# arm64-apple-ios needs its own follow-up. shadps4_ios (a static library) never links
+# the compiled driver anyway -- only the shadps4 executable's packaging step
+# (CopyVulkanDriver, below) does, so this doesn't block shadps4_ios from building.
+if (APPLE AND NOT ENABLE_SYSTEM_VULKAN AND NOT ENABLE_TESTS AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_subdirectory(vulkan-loader)
     set(VULKAN_LOADER_PATH "${CMAKE_CURRENT_BINARY_DIR}/vulkan-loader/loader/libvulkan.dylib" PARENT_SCOPE)
 
