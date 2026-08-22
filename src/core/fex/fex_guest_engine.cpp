@@ -1534,6 +1534,19 @@ bool TryRecoverJitAliasFault(int signal, siginfo_t* info, void* rawContext) noex
     // which is exactly where this bug's fault lands (confirmed: the crashing offset falls
     // inside the dispatcher's own Start..End range). Requiring it here silently rejected the
     // one region this recovery most needed to handle.
+    //
+    // This `return false` was accidentally dropped in an earlier edit that removed the
+    // IsAddressInCodeBuffer check above it, leaving this whole block a no-op: on ANY fault
+    // where translated genuinely equals pc (a real, unrelated crash -- not this bug's target
+    // at all), execution fell through to the code below anyway, logged a bogus "recovery", and
+    // called arm_thread_state64_set_pc_fptr(ts, translated) with translated == pc -- i.e. set
+    // the PC right back to the exact address that had just faulted. That is an infinite loop
+    // by construction: immediate re-fault at the same PC, "recovered" again the same way,
+    // forever. Confirmed on-device as the actual cause of every "still looping after the fix"
+    // result today (millions of recoveries, pc always equal to the logged "translated" value)
+    // -- independent of, and hiding the effect of, every other genuine fix made today
+    // (GenerateABICall's translation, ClearCache's delinking, the buffer-reuse locking).
+    return false;
   }
 
   SignalSafeLog("BACHATA_JIT_ALIAS_RECOVER: pc=%p (writable alias) -> resuming at %p (executable "
