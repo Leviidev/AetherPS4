@@ -1481,6 +1481,68 @@ bool HandleGuestSignal(int signal, siginfo_t* info, void* rawContext) noexcept {
 #endif
 }
 
+bool TryRecoverJitAliasFault(int signal, siginfo_t* info, void* rawContext) noexcept {
+#if defined(__aarch64__) && defined(__APPLE__)
+  // A live JIT block occasionally ends up executed from its WRITABLE alias instead of the
+  // EXECUTABLE one -- confirmed on-device: a Minecraft crash's own fault PC (0x11bae20b4)
+  // was exactly one region-size (16384 bytes, the standard iOS JIT allocation chunk) past
+  // where the region's known-good executable-side address should have put it, i.e. it sat
+  // precisely at writable_base + offset instead of executable_base + offset. Something in
+  // FEXCore's JIT emission still bakes in the write-side address for that one branch target
+  // instead of the exec-side one -- most of this codebase's JIT-address handling was already
+  // audited and fixed for this exact class of bug (CPUBackend::IsAddressInCodeBuffer,
+  // Dispatcher::InitThreadPointers's Ptrs.*, JIT.cpp's EntryPoints/ExitFunctionLink/block
+  // delinkers), but this crash proves at least one more site still isn't. Finding that exact
+  // emission site would need tracing VIXL's own code generation; this recovers from the
+  // *symptom* instead: if the fault is a plain instruction fetch (si_addr == pc, not some
+  // unrelated data access -- a real wild guest pointer must NOT be silently "recovered" from
+  // by this path) and PC, read as if it were a writable JIT alias, actually translates to a
+  // different address that's inside a live executable code buffer, resume there instead of
+  // crashing. The self-healing "re-request execute permission and retry" approach tried
+  // before this (see the removed comment this replaced) failed 100% of the time for
+  // already-granted regions; this doesn't re-request anything, it just corrects which alias
+  // of a region that was *already* granted this thread was about to (mis)use.
+  if (signal != SIGBUS && signal != SIGSEGV) {
+    return false;
+  }
+  if (info == nullptr || rawContext == nullptr || info->si_addr == nullptr) {
+    return false;
+  }
+  if (ActiveFexExecution.Context == nullptr || ActiveFexExecution.Thread == nullptr) {
+    return false;
+  }
+
+  auto* context = reinterpret_cast<ucontext_t*>(rawContext);
+  auto& ts = context->uc_mcontext->__ss;
+  void* const pc = reinterpret_cast<void*>(arm_thread_state64_get_pc(ts));
+
+  if (info->si_addr != pc) {
+    return false;
+  }
+
+  void* const translated = FEXCore::Allocator::GetExecutableAddress(pc);
+  if (translated == pc) {
+    // Not a tracked writable-alias address at all -- nothing this path can help with.
+    return false;
+  }
+  if (!ActiveFexExecution.Context->IsAddressInCodeBuffer(ActiveFexExecution.Thread,
+                                                          reinterpret_cast<uintptr_t>(translated))) {
+    return false;
+  }
+
+  SignalSafeLog("BACHATA_JIT_ALIAS_RECOVER: pc=%p (writable alias) -> resuming at %p (executable "
+                "alias)\n",
+                pc, translated);
+  arm_thread_state64_set_pc_fptr(ts, translated);
+  return true;
+#else
+  static_cast<void>(signal);
+  static_cast<void>(info);
+  static_cast<void>(rawContext);
+  return false;
+#endif
+}
+
 class GuestEngine::Thread final {
 public:
   Thread(std::thread::id owner, Core::GuestExecutionRequest request)

@@ -156,9 +156,17 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
         // the very same call always succeeds cleanly the first time for a fresh allocation. That
         // pattern -- fails 100% of the time, only ever on a second request for the same address --
         // points at re-preparing an already-granted region simply not being a supported
-        // operation, not at a bug in how the call was issued. Diagnostics-only from here;
-        // see BachataDescribeHostFaultAddress/BachataDumpDispatcherState above for what's still
-        // logged about the fault.
+        // operation, not at a bug in how the call was issued.
+        //
+        // A distinct, narrower issue found via an actual on-device Minecraft crash: PC landing
+        // exactly on the WRITABLE alias of a live JIT region instead of its executable one (some
+        // JIT emission site still bakes in the wrong side of the dual mapping for one branch
+        // target). See TryRecoverJitAliasFault's own comment for the full trace; unlike the
+        // retry above, this doesn't ask StikDebug for anything new, it just corrects which
+        // already-granted alias execution was about to use.
+        if (::AetherPS4::Fex::TryRecoverJitAliasFault(sig, info, raw_context)) {
+            return;
+        }
 #endif
         // If the guest has installed a custom signal handler, and the access violation didn't
         // come from HLE memory tracking, pass the signal on

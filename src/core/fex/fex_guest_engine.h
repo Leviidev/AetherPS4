@@ -60,6 +60,13 @@ struct GuestRunResult final {
 
 #ifndef _WIN32
 bool HandleGuestSignal(int signal, siginfo_t* info, void* rawContext) noexcept;
+// Narrow recovery for a fault whose PC lands exactly on the writable alias of a live JIT
+// code buffer instead of its executable alias (a distinct bug from the BUS_ADRALN case
+// HandleGuestSignal handles). Only engages for a plain instruction-fetch fault where the
+// translated address is confirmed to be inside a live executable code buffer; returns false
+// (no state changed) for anything else, including genuine wild guest pointers. See its
+// definition for the on-device crash that motivated it.
+bool TryRecoverJitAliasFault(int signal, siginfo_t* info, void* rawContext) noexcept;
 // Queue Orbis guest exception handler for deferred FEX delivery (ARM64 host).
 // orbis_sig is the Orbis signal number (e.g. 30 / SIGUSR1). guest_handler is the
 // guest VA from Libraries::Kernel::Handlers. Actual run is HandleCallback at HLE
