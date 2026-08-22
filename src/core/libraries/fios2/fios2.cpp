@@ -346,6 +346,16 @@ s32 PS4_SYSV_ABI sceFiosOverlayAdd(void* overlay, s32* out_id) {
     return 0;
 }
 
+s32 PS4_SYSV_ABI sceFiosOverlayRemove(s32 id) {
+    LOG_INFO(Lib_SysModule, "[FIOS-HLE][OverlayRemove] id={}", id);
+    // Was previously left as an auto-generated ENOSYS stub in aerolib.inl. Games that add an
+    // overlay (a no-op here, see sceFiosOverlayAdd above) and later tear it down as part of
+    // normal cleanup would hit that ENOSYS and treat it as a real failure. Since OverlayAdd
+    // never created any actual overlay filesystem state, removal has nothing real to undo --
+    // just accept it, mirroring OverlayAdd's own no-op success behavior.
+    return 0;
+}
+
 s32 PS4_SYSV_ABI sceFiosFHPread(const void* op_attr, s32 handle, void* buffer, s64 size,
                                 s64 offset) {
     // Non-blocking positioned read: perform it synchronously and return a fake op handle
@@ -657,6 +667,7 @@ void RegisterLib(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("Kl-TbrDU9YM", "libSceFios2", 1, "libSceFios2", sceFiosFHWriteSync);
     LIB_FUNCTION("jayvY07C5dk", "libSceFios2", 1, "libSceFios2", sceFiosStatSync);
     LIB_FUNCTION("TXABsmiiqto", "libSceFios2", 1, "libSceFios2", sceFiosOverlayAdd);
+    LIB_FUNCTION("MuMnDaXBTm0", "libSceFios2", 1, "libSceFios2", sceFiosOverlayRemove);
     LIB_FUNCTION("rR8wq7YFRZs", "libSceFios2", 1, "libSceFios2", sceFiosFHPread);
     LIB_FUNCTION("cg-VoPqZYss", "libSceFios2", 1, "libSceFios2", sceFiosFHRead);
     LIB_FUNCTION("er6TkQFUvp0", "libSceFios2", 1, "libSceFios2", sceFiosFHOpen);
