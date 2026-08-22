@@ -2647,7 +2647,24 @@ uint64_t Dispatcher::GenerateABICall(FallbackABI ABI) {
   // Return to JIT
   ret();
 
-  return Address;
+  // Address is the write-side (RW) address GetCursorAddress() returned at the top of this
+  // function, same as every other named handler address in this file (F64SinHandlerAddress,
+  // ExitFunctionLinkerAddress, etc.) -- but unlike those, which all get translated via
+  // GetExecutableAddress() before being stored where JIT'd code can branch to them
+  // (InitThreadPointers's Ptrs.* assignments), this function's caller
+  // (Dispatcher::EmitDispatcher's `ABIPointers[ABI] = GenerateABICall(ABI);` loop) stores the
+  // return value directly into ABIPointers with no translation anywhere downstream:
+  // InterpreterOps::FillFallbackIndexPointers copies it verbatim into
+  // Pointers.FallbackHandlerPointers[...].ABIHandler, which JIT'd guest code then loads and
+  // calls directly (`ldr TMP1, STATE_PTR(..., ABIHandler); blr TMP1;`, see the F64FPREM1
+  // fallback just above as one example) for every F80/F64 transcendental-math fallback
+  // operation. Confirmed on-device: this is the actual source of a fault that looked like
+  // stale-JIT-buffer corruption but recurred identically after a full app relaunch with a
+  // freshly allocated dispatcher buffer -- a hot floating-point fallback path (plausible for
+  // any game doing significant world-gen/physics math) branching to this untranslated write
+  // address over and over, millions of times, each fixed for one instruction by
+  // TryRecoverJitAliasFault's signal-time recovery but never for the actual cached target.
+  return reinterpret_cast<uint64_t>(FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(Address)));
 }
 
 void Dispatcher::InitThreadPointers(FEXCore::Core::InternalThreadState* Thread) {
