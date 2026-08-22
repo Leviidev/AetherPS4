@@ -1458,13 +1458,28 @@ bool HandleGuestSignal(int signal, siginfo_t* info, void* rawContext) noexcept {
   const uintptr_t writable_pc =
       reinterpret_cast<uintptr_t>(FEXCore::Allocator::GetWritableAddress(reinterpret_cast<void*>(pc)));
   SetHgsCheckpoint(HgsCheckpoint::HaveWritablePc);
+  // Reading via writable_pc, not pc: the executable alias may be execute-only (no read
+  // permission) on iOS, so touching it here for a diagnostic could introduce a second,
+  // unrelated fault. writable_pc is known-readable since HandleUnalignedAccess writes
+  // through it below.
+  const uint32_t instr_before = *reinterpret_cast<volatile uint32_t*>(writable_pc);
   const auto adjustment = FEXCore::ArchHelpers::Arm64::HandleUnalignedAccess(
       ActiveFexExecution.Thread,
       FEXCore::ArchHelpers::Arm64::UnalignedHandlerType::HalfBarrier, writable_pc, regs.data());
   SetHgsCheckpoint(HgsCheckpoint::AfterHandleUnaligned);
   if (!adjustment.has_value()) {
     SetHgsCheckpoint(HgsCheckpoint::AdjustmentFailedReturn);
+    SignalSafeLog("BACHATA_UNALIGNED_FAIL: pc=%p writable_pc=%p instr_before=%#x\n",
+                  reinterpret_cast<void*>(pc), reinterpret_cast<void*>(writable_pc), instr_before);
     return false;
+  }
+  {
+    const uint32_t instr_after = *reinterpret_cast<volatile uint32_t*>(writable_pc);
+    SignalSafeLog("BACHATA_UNALIGNED_FIX: pc=%p writable_pc=%p adj=%d instr_before=%#x "
+                  "instr_after=%#x resume_pc=%p\n",
+                  reinterpret_cast<void*>(pc), reinterpret_cast<void*>(writable_pc),
+                  static_cast<int>(*adjustment), instr_before, instr_after,
+                  reinterpret_cast<void*>(pc + *adjustment));
   }
   // HandleUnalignedAccess just backpatched the faulting instruction (up to one instruction
   // before/after it too, for the half-barrier case) and invalidated the icache for that --
