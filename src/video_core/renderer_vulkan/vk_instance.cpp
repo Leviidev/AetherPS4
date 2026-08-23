@@ -774,12 +774,15 @@ void Instance::CollectPhysicalMemoryInfo() {
     const u64 system_reserve = 2_GB; // Leave 2GB for OS/UI on iOS
     const s64 available_memory = static_cast<s64>(total_memory_budget) - static_cast<s64>(device_initial_usage);
     total_memory_budget = static_cast<u64>(std::max<s64>(available_memory - static_cast<s64>(system_reserve), static_cast<s64>(local_memory)));
+    LOG_INFO(Render_Vulkan, "iOS memory budget: total={}GB initial_usage={}GB local={}GB final_budget={}GB reserve=2GB",
+             total_memory_budget / 1_GB, device_initial_usage / 1_GB, local_memory / 1_GB, total_memory_budget / 1_GB);
 #else
     // Leave at least 8 GB for the system on integrated GPUs (desktop Linux/macOS).
     const s64 available_memory = static_cast<s64>(total_memory_budget - device_initial_usage);
     total_memory_budget =
         static_cast<u64>(std::max<s64>(available_memory - 8_GB, static_cast<s64>(local_memory)));
 #endif
+    LOG_INFO(Render_Vulkan, "Final memory budget: {}GB", total_memory_budget / 1_GB);
 }
 
 void Instance::CollectImageFormatInfo() {
