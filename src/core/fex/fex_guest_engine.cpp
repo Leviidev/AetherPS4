@@ -955,7 +955,7 @@ public:
       return static_cast<uint64_t>(-EFAULT);
     }
 
-    AetherPS4::GuestCpu::HleCallFrame hleFrame{};
+    Core::GuestCpu::HleCallFrame hleFrame{};
     hleFrame.operation = frame->State.gregs[FEXCore::X86State::REG_RAX];
     std::copy(std::begin(frame->State.gregs), std::end(frame->State.gregs), hleFrame.gpr.begin());
     hleFrame.gpr[FEXCore::X86State::REG_RCX] = frame->State.gregs[FEXCore::X86State::REG_R10];
@@ -2100,11 +2100,19 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
       }
       int final_paused = g_safepoint_paused_count.load(std::memory_order_acquire);
       LogMan::Msg::IFmt("BACHATA_SAFEPOINT: paused wait done, final_paused={} expected={}", final_paused, signaled);
-      // Additionally wait for any threads currently in HLE syscalls to complete. These threads
-      // are executing host code (not guest JIT) and will return to guest code after the syscall.
-      // If we reuse the JIT buffer while they're in the syscall, they'll return to stale code.
-      // We track this with g_threads_in_hle_syscall and wait for it to drain.
-      const auto hle_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(30000);
+      // Additionally give any threads currently in HLE syscalls a brief window to complete.
+      // These threads are executing host code (not guest JIT) and will return to guest code
+      // after the syscall, so if we reuse the JIT buffer mid-syscall they could return to stale
+      // code. However, g_threads_in_hle_syscall stays incremented for the ENTIRE duration of
+      // Bridge.Invoke(), including HLE calls that block indefinitely (semaphore/condvar waits,
+      // thread-pool idle loops - common in Unreal Engine worker threads). Those threads are not
+      // about to return to guest code at all, so waiting for the counter to hit 0 can never
+      // succeed for them; on-device logs confirmed a stuck count (e.g. 12) held constant for the
+      // full duration of a 30s wait, meaning that wait was pure added latency with zero effect on
+      // the race it targeted (the crash still happened right after). Keep only a short, best-
+      // effort window to let genuinely fast/short syscalls drain without stalling gameplay for
+      // threads that were never going to finish in time anyway.
+      const auto hle_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(5);
       while (g_threads_in_hle_syscall.load(std::memory_order_acquire) > 0 &&
              std::chrono::steady_clock::now() < hle_deadline) {
         sched_yield();

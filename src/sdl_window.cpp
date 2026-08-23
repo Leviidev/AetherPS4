@@ -181,7 +181,9 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, Input::GameControllers* controller
     SDL_SetWindowFullscreen(window, EmulatorSettings.IsFullScreen());
     SDL_SyncWindow(window);
 
+#ifndef ENABLE_BACHATA_RUNTIME
     SDL_InitSubSystem(SDL_INIT_GAMEPAD);
+#endif
 
 #if defined(SDL_PLATFORM_WIN32)
     window_info.type = WindowSystemType::Windows;
@@ -214,7 +216,9 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, Input::GameControllers* controller
     // input handler init-s
     Input::ControllerOutput::LinkJoystickAxes();
     Input::ParseInputConfig(std::string(Common::ElfInfo::Instance().GameSerial()));
+#ifndef ENABLE_BACHATA_RUNTIME
     controllers.TryOpenSDLControllers();
+#endif
 
     if (EmulatorSettings.IsBackgroundControllerInput()) {
         SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
@@ -295,7 +299,9 @@ void WindowSDL::WaitEvent() {
         break;
     case SDL_EVENT_GAMEPAD_ADDED:
     case SDL_EVENT_GAMEPAD_REMOVED:
+#ifndef ENABLE_BACHATA_RUNTIME
         controllers.TryOpenSDLControllers();
+#endif
         break;
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
     case SDL_EVENT_GAMEPAD_BUTTON_UP:

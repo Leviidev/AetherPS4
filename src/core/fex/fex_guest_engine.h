@@ -41,7 +41,7 @@ class GuestBridge {
 public:
   virtual ~GuestBridge() = default;
 
-  virtual EngineResult<bool> Invoke(AetherPS4::GuestCpu::HleCallFrame& frame) = 0;
+  virtual EngineResult<bool> Invoke(Core::GuestCpu::HleCallFrame& frame) = 0;
   virtual std::optional<Core::GuestExecutionRange> QueryExecutableRange(std::uintptr_t) {
     return std::nullopt;
   }

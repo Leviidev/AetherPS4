@@ -23,78 +23,9 @@
 #include <csignal>
 #endif
 #include <array>
-#include <cstdio>
 #include <unordered_set>
 
 namespace Libraries::Kernel {
-
-#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-namespace {
-
-// `_Ux86_64_setcontext` is libunwind's x86-64 register-restore primitive: the
-// tail of C++ exception delivery (called from `_Unwind_Resume`/`unw_resume`)
-// and also used by cooperative "fiber" style worker threads (e.g. Miles Sound
-// System's timer thread bootstraps itself this way on some ports). On
-// non-Apple platforms libunwind defines `unw_context_t` as a plain alias of
-// the platform `ucontext_t`, so the single argument here has exactly the
-// `Ucontext`/`Mcontext` layout above, which we already trust for guest signal
-// delivery.
-//
-// Unlike an ordinary HLE call this one must never "return" to its caller:
-// it has to replace the entire guest register file (including Rip) and
-// resume execution there instead. Every HLE veneer is the fixed sequence
-// `mov r10, rcx; mov rax, op; syscall; ret` (see HleVeneerAllocator::Allocate),
-// so we can redirect control flow without any additional FEX-side plumbing:
-// write the target Rip just below the target Rsp, then point the
-// post-syscall Rsp at that slot. The veneer's trailing `ret` pops our
-// injected Rip straight into the instruction pointer and leaves Rsp exactly
-// where the saved context expects it.
-class UnwindSetContextAdapter final : public AetherPS4::GuestCpu::HleCallAdapter {
-public:
-    AetherPS4::GuestCpu::HleCallResult Invoke(
-        AetherPS4::GuestCpu::HleCallFrame& frame) const override {
-        const u64 ctx_addr = frame.gpr[7]; // RDI: first SysV integer argument.
-        if (ctx_addr == 0 || frame.validate_range == nullptr ||
-            !frame.validate_range(frame.validate_context, ctx_addr, sizeof(Ucontext), false)) {
-            return AetherPS4::GuestCpu::HleCallFailure{EFAULT, Name()};
-        }
-        Ucontext ctx{};
-        std::memcpy(&ctx, reinterpret_cast<const void*>(ctx_addr), sizeof(ctx));
-        const Mcontext& mc = ctx.uc_mcontext;
-
-        const u64 target_rsp = mc.mc_rsp;
-        if (target_rsp < 0x1000 || target_rsp % alignof(u64) != 0) {
-            return AetherPS4::GuestCpu::HleCallFailure{EINVAL, Name()};
-        }
-        const u64 landing_slot = target_rsp - sizeof(u64);
-        if (!frame.validate_range(frame.validate_context, landing_slot, sizeof(u64), true)) {
-            return AetherPS4::GuestCpu::HleCallFailure{EFAULT, Name()};
-        }
-        const u64 target_rip = mc.mc_rip;
-        std::memcpy(reinterpret_cast<void*>(landing_slot), &target_rip, sizeof(target_rip));
-
-        frame.gpr[0] = mc.mc_rax;
-        frame.gpr[1] = mc.mc_rcx;
-        frame.gpr[2] = mc.mc_rdx;
-        frame.gpr[3] = mc.mc_rbx;
-        frame.gpr[4] = landing_slot; // Rsp; veneer's `ret` pops target_rip, leaving Rsp == target_rsp.
-        frame.gpr[5] = mc.mc_rbp;
-        frame.gpr[6] = mc.mc_rsi;
-        frame.gpr[7] = mc.mc_rdi;
-        frame.gpr[8] = mc.mc_r8;
-        frame.gpr[9] = mc.mc_r9;
-        frame.gpr[10] = mc.mc_r10;
-        frame.gpr[11] = mc.mc_r11;
-        frame.gpr[12] = mc.mc_r12;
-        frame.gpr[13] = mc.mc_r13;
-        frame.gpr[14] = mc.mc_r14;
-        frame.gpr[15] = mc.mc_r15;
-        return true;
-    }
-};
-
-} // namespace
-#endif
 
 u64 FexCurrentGuestStackTop() noexcept {
     auto* thr = g_curthread;
@@ -677,13 +608,7 @@ s32 PS4_SYSV_ABI sceKernelDebugRaiseException(u32 error, s64 unk) {
     if (unk != 0) {
         return ORBIS_KERNEL_ERROR_EINVAL;
     }
-    // This is the game intentionally signaling a debugger-visible fatal error (e.g. after
-    // deciding to self-terminate via its own appError/appRequestExit path) -- on real hardware,
-    // with no debugger attached, this just notifies and the game's own exit sequence continues.
-    // UNREACHABLE_MSG here instead crashed our entire host process for what is a normal,
-    // expected guest-initiated shutdown -- confirmed on-device with Rocket League hitting a
-    // missing-asset error and calling this right after appRequestExit(1).
-    LOG_ERROR(Lib_Kernel, "Guest raised debug exception, error={:#x}", error);
+    UNREACHABLE_MSG("error {:#x}", error);
     return ORBIS_OK;
 }
 
@@ -691,31 +616,11 @@ s32 PS4_SYSV_ABI sceKernelDebugRaiseExceptionOnReleaseMode(u32 error, s64 unk) {
     if (unk != 0) {
         return ORBIS_KERNEL_ERROR_EINVAL;
     }
-    // See sceKernelDebugRaiseException's own comment just above.
-    LOG_ERROR(Lib_Kernel, "Guest raised debug exception (release mode), error={:#x}", error);
+    UNREACHABLE_MSG("error {:#x}", error);
     return ORBIS_OK;
 }
 
 void RegisterException(Core::Loader::SymbolsResolver* sym) {
-#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-    {
-        // Orbis libkernel's `_Ux86_64_setcontext` (NID "OjWstbIRPUo"), the
-        // register/context-restore primitive used by libunwind's C++
-        // exception delivery and by cooperative "fiber" style worker threads
-        // (e.g. Miles Sound System's MSSTimer bootstraps itself this way).
-        // It's imported like any other NID-hashed libkernel symbol, so
-        // LIB_FUNCTION's normal typed-return dispatch can't express it (see
-        // UnwindSetContextAdapter above for why).
-        Core::Loader::SymbolResolver sr{};
-        sr.name = "OjWstbIRPUo";
-        sr.library = "libkernel";
-        sr.library_version = 1;
-        sr.module = "libkernel";
-        sr.type = Core::Loader::SymbolType::Function;
-        sym->AddFunction(sr, std::make_shared<UnwindSetContextAdapter>());
-    }
-#endif
-
     LIB_OBJ("nQVWJEGHObc", "libkernel", 1, "libkernel", &g_sigintr);
 
     LIB_FUNCTION("il03nluKfMk", "libkernel_unity", 1, "libkernel", sceKernelRaiseException);

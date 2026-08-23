@@ -8,13 +8,13 @@
 #include <shared_mutex>
 #include <vector>
 
-namespace AetherPS4::GuestCpu {
+namespace Core::GuestCpu {
 
 class HleGuestBridge final : public AetherPS4::Fex::GuestBridge {
 public:
     using RangeValidator = bool (*)(void* context, std::uintptr_t address, std::size_t size,
                                     bool writable);
-    using ExecutableRangeQuery = std::optional<Core::GuestExecutionRange> (*)(void* context,
+    using ExecutableRangeQuery = std::optional<GuestExecutionRange> (*)(void* context,
                                                                         std::uintptr_t address);
     using FailureReporter = void (*)(void* context, const HleCallFailure& failure);
 
@@ -24,7 +24,7 @@ public:
                    void* executable_query_context_ = nullptr);
 
     AetherPS4::Fex::EngineResult<bool> Invoke(HleCallFrame& frame) override;
-    std::optional<Core::GuestExecutionRange> QueryExecutableRange(std::uintptr_t address) override;
+    std::optional<GuestExecutionRange> QueryExecutableRange(std::uintptr_t address) override;
 
 private:
     struct HostRange final {
@@ -53,4 +53,4 @@ private:
     std::vector<HostRange> host_ranges;
 };
 
-} // namespace AetherPS4::GuestCpu
+} // namespace Core::GuestCpu

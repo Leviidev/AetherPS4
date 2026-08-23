@@ -6,8 +6,6 @@
 #if defined(__APPLE__) && TARGET_OS_IPHONE
 
 #include <algorithm>
-#include <cfloat>
-#include <cmath>
 #include <fstream>
 #include <sstream>
 
@@ -63,16 +61,6 @@ std::string ReadTail(const std::filesystem::path& path, size_t max_bytes) {
     std::ostringstream contents;
     contents << file.rdbuf();
     return contents.str();
-}
-
-// There's no real "percent complete" signal available during boot (game load times vary
-// wildly and nothing here tracks discrete stages), so a determinate fill would just be
-// inventing a number. A back-and-forth sweep communicates "still actively working"
-// honestly, without pretending to know how much is left -- the same idea as an
-// indeterminate spinner, done with ImGui's plain ProgressBar (no custom draw-list code).
-float LoadingBarFraction() {
-    const float t = static_cast<float>(std::fmod(ImGui::GetTime() * 0.6, 2.0));
-    return t <= 1.0f ? t : 2.0f - t;
 }
 } // namespace
 
@@ -147,30 +135,21 @@ void MobileOverlayLayer::DrawPanel() {
         ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
         if (booting) {
             ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "Loading game...");
-            ImGui::Separator();
-            // A standard user has no use for a raw scrolling log wall -- a familiar loading
-            // bar reassures them the app is actually doing something, without needing to
-            // understand what any of that text means. The console is still one tap away
-            // (this same panel, once the game is running) for anyone who does want it.
-            ImGui::Spacing();
-            ImGui::ProgressBar(LoadingBarFraction(), ImVec2(-FLT_MIN, 0.0f), "");
-            ImGui::Spacing();
-            ImGui::TextWrapped("This can take a little while, especially the first time.");
         } else {
             ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "Running");
-            ImGui::Separator();
-            ImGui::TextUnformatted("Console");
-            ImGui::BeginChild("##MobileConsoleScroll", ImVec2(0, 0), ImGuiChildFlags_Borders,
-                               ImGuiWindowFlags_HorizontalScrollbar);
-            ImGui::TextUnformatted(console_tail.c_str(), console_tail.c_str() + console_tail.size());
-            // Only auto-snap to the bottom when the user was already there (or the panel just
-            // opened) -- if they've manually scrolled up to read something, new output
-            // shouldn't yank them back down.
-            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0f) {
-                ImGui::SetScrollHereY(1.0f);
-            }
-            ImGui::EndChild();
         }
+        ImGui::Separator();
+        ImGui::TextUnformatted("Console");
+        ImGui::BeginChild("##MobileConsoleScroll", ImVec2(0, 0), ImGuiChildFlags_Borders,
+                           ImGuiWindowFlags_HorizontalScrollbar);
+        ImGui::TextUnformatted(console_tail.c_str(), console_tail.c_str() + console_tail.size());
+        // Only auto-snap to the bottom when the user was already there (or the panel just
+        // opened) -- if they've manually scrolled up to read something, new output
+        // shouldn't yank them back down.
+        if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0f) {
+            ImGui::SetScrollHereY(1.0f);
+        }
+        ImGui::EndChild();
     }
     ImGui::End();
 }

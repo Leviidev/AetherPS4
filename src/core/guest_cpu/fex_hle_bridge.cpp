@@ -12,11 +12,11 @@ namespace {
 constexpr uint32_t HleTraceLimit = 256;
 std::atomic_uint32_t HleTraceCount{};
 
-thread_local AetherPS4::GuestCpu::HleCallFrame* ActiveHleCallFrame{};
+thread_local Core::GuestCpu::HleCallFrame* ActiveHleCallFrame{};
 
 class ActiveHleCallScope final {
 public:
-    explicit ActiveHleCallScope(AetherPS4::GuestCpu::HleCallFrame& frame)
+    explicit ActiveHleCallScope(Core::GuestCpu::HleCallFrame& frame)
         : previous{ActiveHleCallFrame} {
         ActiveHleCallFrame = &frame;
     }
@@ -26,11 +26,11 @@ public:
     }
 
 private:
-    AetherPS4::GuestCpu::HleCallFrame* previous;
+    Core::GuestCpu::HleCallFrame* previous;
 };
 } // namespace
 
-namespace AetherPS4::GuestCpu {
+namespace Core::GuestCpu {
 
 bool PublishHostRange(const void* pointer, std::size_t size, bool writable) {
     if (ActiveHleCallFrame == nullptr || pointer == nullptr ||
@@ -108,7 +108,7 @@ AetherPS4::Fex::EngineResult<bool> HleGuestBridge::Invoke(HleCallFrame& frame) {
     return true;
 }
 
-std::optional<Core::GuestExecutionRange> HleGuestBridge::QueryExecutableRange(
+std::optional<GuestExecutionRange> HleGuestBridge::QueryExecutableRange(
     std::uintptr_t address) {
     if (executable_query == nullptr) {
         return std::nullopt;
@@ -179,4 +179,4 @@ void HleGuestBridge::Report(const HleCallFailure& failure) const {
     }
 }
 
-} // namespace AetherPS4::GuestCpu
+} // namespace Core::GuestCpu

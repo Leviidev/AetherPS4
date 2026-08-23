@@ -39,6 +39,15 @@ embed_frameworks_phase.dst_subfolder_spec = '10' # Frameworks
 app_target.build_phases << embed_frameworks_phase
 embed_frameworks_phase.add_file_reference(bp_jit_ref)
 
+# libvulkan.dylib (MoltenVK) -- deliberately NOT linked (only added to the Embed Frameworks
+# copy phase below, never to frameworks_build_phase), so it never appears in the main
+# binary's LC_LOAD_DYLIB list. SDL's UIKit Vulkan backend dlopen()s it by this exact name
+# at runtime (see src/sdl_window.cpp's SDL_HINT_VULKAN_LIBRARY hint) -- without it being
+# physically present in Frameworks/, Vulkan init fails at runtime even though the app
+# builds and links fine, since nothing at build time references this file.
+vulkan_dylib_ref = frameworks_dir.new_file(File.absolute_path("#{project_dir}/Frameworks/libvulkan.dylib"))
+embed_frameworks_phase.add_file_reference(vulkan_dylib_ref)
+
 # Resources directory
 resources_dir = project.main_group.new_group('Resources', 'Resources')
 # Info.plist and Entitlements
@@ -96,7 +105,7 @@ app_target.build_configurations.each do |config|
   config.build_settings['OTHER_LDFLAGS'] = ['-ObjC', '-lc++']
   config.build_settings['LIBRARY_SEARCH_PATHS'] = ['$(inherited)', build_dir, "#{build_dir}/**"]
   config.build_settings['FRAMEWORK_SEARCH_PATHS'] = ['$(inherited)', "#{File.absolute_path(project_dir)}/Frameworks"]
-  config.build_settings['HEADER_SEARCH_PATHS'] = ['$(inherited)', File.absolute_path('src/platform/ios')]
+  config.build_settings['HEADER_SEARCH_PATHS'] = ['$(inherited)', File.absolute_path('src/platform/ios'), File.absolute_path('src/core/pkg_extract')]
   config.build_settings['SWIFT_OBJC_BRIDGING_HEADER'] = "AetherPS4-iOS-Bridging-Header.h"
   
   # Important for JIT and entitlements

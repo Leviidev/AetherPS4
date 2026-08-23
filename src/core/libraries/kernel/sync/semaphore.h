@@ -19,9 +19,9 @@
 #endif
 
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-namespace AetherPS4::Fex {
+namespace Core::Fex {
 void FlushPendingGuestOrbisSignal() noexcept;
-} // namespace AetherPS4::Fex
+} // namespace Core::Fex
 #endif
 
 namespace Libraries::Kernel {
