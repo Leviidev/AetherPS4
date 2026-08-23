@@ -173,12 +173,12 @@ struct GeneralSettings {
     Setting<bool> neo_mode{false};
     Setting<bool> dev_kit_mode{false};
     Setting<int> extra_dmem_in_mbytes{0};
-    Setting<bool> shad_net_enabled{false};
+    Setting<bool> shad_net_enabled{true};
     Setting<bool> trophy_popup_disabled{false};
     Setting<double> trophy_notification_duration{6.0};
     Setting<std::string> trophy_notification_side{"right"};
     Setting<bool> show_splash{false};
-    Setting<bool> connected_to_network{false};
+    Setting<bool> connected_to_network{true};
     Setting<bool> discord_rpc_enabled{false};
     Setting<bool> show_fps_counter{false};
     Setting<int> console_language{1};
@@ -227,7 +227,14 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(GeneralSettings, install_dirs, addon_install_
 struct LogSettings {
     Setting<bool> append{false}; // specific
     Setting<bool> enable{true};  // specific
-    Setting<std::string> filter{""};
+    // "*:trace" (max verbosity, every class) rather than the empty-string default (which
+    // UpdateLogLevels, common/logging/log.cpp, resolves to spdlog::level::info) -- while
+    // actively debugging a hard-to-pin-down crash it's cheaper to always capture everything
+    // (LOG_DEBUG/LOG_TRACE calls already scattered throughout this codebase, previously
+    // silently dropped) than to keep adding new one-off LOG_CRITICAL diagnostics each time.
+    // Tune this back down (e.g. to "*:info") once the current investigation is done -- Trace
+    // globally makes crash logs much larger and log I/O measurably slower.
+    Setting<std::string> filter{"*:trace"};
     Setting<u32> max_skip_duration{5'000};
     Setting<bool> separate{false}; // specific
     Setting<unsigned long long> size_limit{100_MB};
