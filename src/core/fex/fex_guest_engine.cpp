@@ -167,6 +167,7 @@ constexpr int kSafepointSignal = SIGINFO;
 std::atomic<int> g_safepoint_paused_count {0};
 std::atomic<bool> g_safepoint_resume {false};
 std::atomic<bool> g_safepoint_handler_installed {false};
+std::atomic<int> g_threads_in_hle_syscall {0};
 
 void SafepointSignalHandler(int) noexcept {
   g_safepoint_paused_count.fetch_add(1, std::memory_order_acq_rel);
@@ -941,11 +942,16 @@ public:
     // Desktop APC ExceptionHandler runs guest handler on the target thread around
     // normal execution. On FEX, host pthread_kill only wakes + queues Pending;
     // deliver here at HLE boundary (entry) so GC STW sees the handler.
+    g_threads_in_hle_syscall.fetch_add(1, std::memory_order_acq_rel);
     FlushPendingOrbisSignal();
     auto* invocation = ActiveInvocation;
-    if (invocation == nullptr) return static_cast<uint64_t>(-EPERM);
+    if (invocation == nullptr) {
+      g_threads_in_hle_syscall.fetch_sub(1, std::memory_order_acq_rel);
+      return static_cast<uint64_t>(-EPERM);
+    }
     if (frame == nullptr) {
       invocation->Failure = Failure(EngineStage::Bridge, EFAULT);
+      g_threads_in_hle_syscall.fetch_sub(1, std::memory_order_acq_rel);
       return static_cast<uint64_t>(-EFAULT);
     }
 
@@ -963,6 +969,7 @@ public:
       frame->State.gregs[FEXCore::X86State::REG_RAX] = static_cast<uint64_t>(-error->Error);
       // Still try to deliver if kill arrived while blocked in host HLE.
       FlushPendingOrbisSignal();
+      g_threads_in_hle_syscall.fetch_sub(1, std::memory_order_acq_rel);
       return frame->State.gregs[FEXCore::X86State::REG_RAX];
     }
 
@@ -976,6 +983,7 @@ public:
     // Kill often lands while target is blocked inside host futex/HLE. Flush after
     // Invoke so handler runs before returning to pure guest JIT.
     FlushPendingOrbisSignal();
+    g_threads_in_hle_syscall.fetch_sub(1, std::memory_order_acq_rel);
     return invocation->Result;
   }
 
@@ -2053,9 +2061,12 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
     EnsureSafepointHandlerInstalled();
     static_cast<FEXCore::Context::ContextImpl*>(impl->Context.get())
         ->BeginBufferInvalidationSafepoint = [rawImpl](FEXCore::Core::InternalThreadState* CallingThread) {
+      LogMan::Msg::IFmt("BACHATA_SAFEPOINT: begin, CallingThread={:#x}", reinterpret_cast<uintptr_t>(CallingThread));
       g_safepoint_resume.store(false, std::memory_order_release);
       g_safepoint_paused_count.store(0, std::memory_order_release);
       int signaled = 0;
+      int skipped_no_handle = 0;
+      int skipped_not_started = 0;
       {
         std::scoped_lock threadsLock {rawImpl->ThreadsMutex};
         for (auto* t : rawImpl->Threads) {
@@ -2064,24 +2075,45 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
           }
           const pthread_t handle = t->NativeHandle.load(std::memory_order_acquire);
           if (handle == pthread_t {}) {
-            // Hasn't started running guest code yet, so it can't be mid-execution of
-            // anything that needs pausing.
+            ++skipped_not_started;
             continue;
           }
           if (pthread_kill(handle, kSafepointSignal) == 0) {
             ++signaled;
+          } else {
+            ++skipped_no_handle;
           }
         }
       }
-      // Bounded wait, not indefinite: a thread parked in a genuine blocking host syscall may
-      // not run the signal handler until that syscall returns on its own, which could be
-      // arbitrarily long -- but such a thread isn't executing guest code during that time
-      // either, so there's nothing at risk from proceeding without it. Timing out is strictly
-      // no worse than this whole mechanism not existing.
-      const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(20);
+      LogMan::Msg::IFmt("BACHATA_SAFEPOINT: signaled={} skipped_no_handle={} skipped_not_started={} hle_syscall_count={}",
+                        signaled, skipped_no_handle, skipped_not_started,
+                        g_threads_in_hle_syscall.load(std::memory_order_acquire));
+      // Bounded wait for paused threads (SIGINFO handler). A thread parked in a genuine
+      // blocking host syscall may not run the signal handler until that syscall returns on
+      // its own, which could be arbitrarily long -- but such a thread isn't executing guest
+      // code during that time either, so there's nothing at risk from proceeding without it.
+      // Timing out is strictly no worse than this whole mechanism not existing.
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
       while (g_safepoint_paused_count.load(std::memory_order_acquire) < signaled &&
              std::chrono::steady_clock::now() < deadline) {
         sched_yield();
+      }
+      int final_paused = g_safepoint_paused_count.load(std::memory_order_acquire);
+      LogMan::Msg::IFmt("BACHATA_SAFEPOINT: paused wait done, final_paused={} expected={}", final_paused, signaled);
+      // Additionally wait for any threads currently in HLE syscalls to complete. These threads
+      // are executing host code (not guest JIT) and will return to guest code after the syscall.
+      // If we reuse the JIT buffer while they're in the syscall, they'll return to stale code.
+      // We track this with g_threads_in_hle_syscall and wait for it to drain.
+      const auto hle_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2000);
+      while (g_threads_in_hle_syscall.load(std::memory_order_acquire) > 0 &&
+             std::chrono::steady_clock::now() < hle_deadline) {
+        sched_yield();
+      }
+      int final_hle = g_threads_in_hle_syscall.load(std::memory_order_acquire);
+      LogMan::Msg::IFmt("BACHATA_SAFEPOINT: hle wait done, final_hle_count={}", final_hle);
+      if (final_paused < signaled || final_hle > 0) {
+        LogMan::Msg::IFmt("BACHATA_SAFEPOINT: WARNING - incomplete pause! paused={}/{} hle={}",
+                          final_paused, signaled, final_hle);
       }
     };
     static_cast<FEXCore::Context::ContextImpl*>(impl->Context.get())
