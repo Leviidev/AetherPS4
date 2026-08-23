@@ -31,10 +31,10 @@ constexpr static auto SpirvVersion1_6 = 0x00010600U;
 
 constexpr static std::array DescriptorHeapSizes = {
     vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer, 512},
-    vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, 8192},
-    vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, 8192},
-    vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 1024},
-    vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 1024},
+    vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, 2048},
+    vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, 2048},
+    vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 512},
+    vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 512},
 };
 
 static u32 MapOutputs(std::span<Shader::OutputMap, 3> outputs, const AmdGpu::VsOutputControl& ctl) {
