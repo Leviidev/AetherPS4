@@ -25,8 +25,9 @@ typedef struct ShadPS4Options {
     // Overrides the user data directory (settings, saves, logs, etc). Must be
     // writable. Pass the app's Application Support / Documents directory on iOS.
     const char* user_dir;
-    int show_fps;   // 0/1
-    int fullscreen; // -1 = leave at whatever EmulatorSettings already has, 0 = false, 1 = true
+    int show_fps;       // 0/1
+    int fullscreen;     // -1 = leave at whatever EmulatorSettings already has, 0 = false, 1 = true
+    int network_enabled; // 0/1 - enable network (ShadNet + system network)
 } ShadPS4Options;
 
 // Performs one-time engine bring-up (IPC, EmulatorState, UserSettings, KeyManager,

@@ -60,6 +60,7 @@ final class EmulatorProcess {
                 var options = ShadPS4Options()
                 options.user_dir = dirPtr
                 options.show_fps = UserDefaults.standard.bool(forKey: "showFpsCounter") ? 1 : 0
+                options.network_enabled = UserDefaults.standard.bool(forKey: "networkEnabled") ? 1 : 0
                 options.fullscreen = 1
                 return shadps4_init(&options)
             }

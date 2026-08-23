@@ -86,6 +86,10 @@ extern "C" int shadps4_init(const ShadPS4Options* options) {
             } else if (options->fullscreen == 1) {
                 EmulatorSettings.SetFullScreen(true);
             }
+            if (options->network_enabled) {
+                EmulatorSettings.SetShadNetEnabled(true);
+                EmulatorSettings.SetConnectedToNetwork(true);
+            }
         }
 
         g_init_ok = true;
