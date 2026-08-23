@@ -690,6 +690,14 @@ void Instance::CreateAllocator() {
         .vulkanApiVersion = TargetVulkanApiVersion,
     };
 
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    // iOS/MoltenVK: use VMA_ALLOCATOR_CREATE_KHR_DEDICATED_ALLOCATION_BIT for better
+    // memory management with Metal's dedicated allocation model. Also avoid
+    // VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT on iOS where it can cause
+    // issues with MoltenVK's memory model.
+    const_cast<VmaAllocatorCreateInfo&>(allocator_info).flags |= VMA_ALLOCATOR_CREATE_KHR_DEDICATED_ALLOCATION_BIT;
+#endif
+
     const VkResult result = vmaCreateAllocator(&allocator_info, &allocator);
     if (result != VK_SUCCESS) {
         UNREACHABLE_MSG("Failed to initialize VMA with error {}",
@@ -758,10 +766,20 @@ void Instance::CollectPhysicalMemoryInfo() {
         total_memory_budget -= system_memory;
         return;
     }
-    // Leave at least 8 GB for the system on integrated GPUs.
+
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    // iOS: total_memory_budget from VK_EXT_MEMORY_BUDGET on MoltenVK reports the
+    // total *shared* system memory (~8GB), not GPU-dedicated. Don't subtract 8GB
+    // (would leave 0). Instead reserve a conservative fixed amount for OS/UI.
+    const u64 system_reserve = 2_GB; // Leave 2GB for OS/UI on iOS
+    const s64 available_memory = static_cast<s64>(total_memory_budget) - static_cast<s64>(device_initial_usage);
+    total_memory_budget = static_cast<u64>(std::max<s64>(available_memory - static_cast<s64>(system_reserve), static_cast<s64>(local_memory)));
+#else
+    // Leave at least 8 GB for the system on integrated GPUs (desktop Linux/macOS).
     const s64 available_memory = static_cast<s64>(total_memory_budget - device_initial_usage);
     total_memory_budget =
         static_cast<u64>(std::max<s64>(available_memory - 8_GB, static_cast<s64>(local_memory)));
+#endif
 }
 
 void Instance::CollectImageFormatInfo() {
