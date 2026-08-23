@@ -21,6 +21,11 @@
 #else
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <unistd.h>
+#endif
+
+#ifdef __APPLE__
+#include <TargetConditionals.h>
 #endif
 
 #if defined(__APPLE__) && defined(ARCH_X86_64)
@@ -34,13 +39,27 @@ namespace Core {
 
 // Constants used for mapping address space.
 constexpr VAddr SYSTEM_MANAGED_MIN = 0x400000ULL;
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+// DIAGNOSTIC: even the ~256GB reduced reservation below (matching Android's
+// ENABLE_BACHATA_RUNTIME window) still fails with ENOMEM on iOS. Before assuming this is
+// a debugger-mediated-allocation problem, first find out whether size is even the right
+// axis at all: shrink every region drastically (~1GB/~1GB/~16GB, ~18GB total, vs. the
+// desktop path's ~96TB) and see whether *that* succeeds. If it still fails at this size,
+// the ENOMEM isn't really about the requested size.
+constexpr VAddr SYSTEM_MANAGED_MAX = 0x400000ULL + 0x40000000ULL - 1;
+#else
 constexpr VAddr SYSTEM_MANAGED_MAX = 0x7FFFFBFFFULL;
+#endif
 constexpr VAddr SYSTEM_RESERVED_MIN = 0x7FFFFC000ULL;
 #if defined(__APPLE__) && defined(ARCH_X86_64)
 // Commpage ranges from 0xFC0000000 - 0xFFFFFFFFF, so decrease the system reserved maximum.
 constexpr VAddr SYSTEM_RESERVED_MAX = 0xFBFFFFFFFULL;
 // GPU-reserved memory ranges from 0x1000000000 - 0x6FFFFFFFFF, so increase the user minimum.
 constexpr VAddr USER_MIN = 0x7000000000ULL;
+#elif defined(__APPLE__) && TARGET_OS_IPHONE
+// See the SYSTEM_MANAGED_MAX comment above -- same diagnostic shrink.
+constexpr VAddr SYSTEM_RESERVED_MAX = 0x7FFFFC000ULL + 0x40000000ULL - 1;
+constexpr VAddr USER_MIN = 0x1000000000ULL;
 #else
 constexpr VAddr SYSTEM_RESERVED_MAX = 0xFFFFFFFFFULL;
 constexpr VAddr USER_MIN = 0x1000000000ULL;
@@ -55,6 +74,9 @@ constexpr VAddr USER_MAX = 0x54FFFFFFFFFFULL;
 #elif defined(__FreeBSD__)
 // FreeBSD address space is extremely volatile, keep this lower for safety.
 constexpr VAddr USER_MAX = 0xFFFFFFFFFFFULL;
+#elif defined(__APPLE__) && TARGET_OS_IPHONE
+// See the SYSTEM_MANAGED_MAX comment above -- same diagnostic shrink (~16GB user window).
+constexpr VAddr USER_MAX = 0x1000000000ULL + 0x400000000ULL - 1;
 #else
 constexpr VAddr USER_MAX = 0x5FFFFFFFFFFFULL;
 #endif
@@ -693,6 +715,15 @@ struct AddressSpace::Impl {
         // On ARM64 Macs, we run into limitations due to the commpage from 0xFC0000000 - 0xFFFFFFFFF
         // and the GPU carveout region from 0x1000000000 - 0x6FFFFFFFFF. Because this creates gaps
         // in the available virtual memory region, we map memory space using three distinct parts.
+        //
+        // NOTE: iOS was briefly routed through this same branch, on the theory that it wouldn't
+        // share FreeBSD's "can't stand MAP_FIXED" problem below. Confirmed on-device that's
+        // wrong: iOS's sandbox refuses these specific low absolute addresses outright (mmap
+        // failed with EACCES, "Permission denied", on the very first reservation attempt) --
+        // stricter than even Apple Silicon macOS, which this branch's own name suggests already
+        // works fine with MAP_FIXED at these same addresses. iOS needs the offset-based fallback
+        // below after all, just fixed to use offsets that actually fit (see that branch's own
+        // comment).
         system_managed_base =
             reinterpret_cast<u8*>(mmap(reinterpret_cast<void*>(SYSTEM_MANAGED_MIN),
                                        system_managed_size, protection_flags, map_flags, -1, 0));
@@ -718,8 +749,23 @@ struct AddressSpace::Impl {
         const auto virtual_base =
             reinterpret_cast<u8*>(mmap(nullptr, virtual_size, protection_flags, map_flags, -1, 0));
         system_managed_base = virtual_base;
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+        // iOS reaches this branch too (its sandbox refuses MAP_FIXED at the desktop platforms'
+        // fixed absolute addresses outright -- EACCES, confirmed on-device -- ruling out the
+        // three-separate-mmaps branch above). SYSTEM_RESERVED_MIN/USER_MIN - SYSTEM_MANAGED_MIN
+        // are ~34GB/~68GB gaps sized for the desktop platforms' multi-terabyte layout; iOS's
+        // actual combined reservation (virtual_size) is only ~19GB, deliberately shrunk (see
+        // the SYSTEM_MANAGED_MAX comment above). Using those literal gaps here placed user_base
+        // ~68GB past the end of anything actually mapped -- confirmed as the exact cause of
+        // Rocket League's ENOMEM, regardless of request size or chunking, since the target
+        // address itself was never valid. Pack the three windows back-to-back within the
+        // reservation that's actually there instead.
+        system_reserved_base = virtual_base + system_managed_size;
+        user_base = virtual_base + system_managed_size + system_reserved_size;
+#else
         system_reserved_base = virtual_base + SYSTEM_RESERVED_MIN - SYSTEM_MANAGED_MIN;
         user_base = virtual_base + USER_MIN - SYSTEM_MANAGED_MIN;
+#endif
 #endif
 #endif
         if (system_managed_base == MAP_FAILED || system_reserved_base == MAP_FAILED ||
@@ -738,7 +784,7 @@ struct AddressSpace::Impl {
                  fmt::ptr(user_base + user_size - 1));
 
         const VAddr system_managed_addr = reinterpret_cast<VAddr>(system_managed_base);
-        const VAddr system_reserved_addr = reinterpret_cast<VAddr>(system_managed_base);
+        const VAddr system_reserved_addr = reinterpret_cast<VAddr>(system_reserved_base);
         const VAddr user_addr = reinterpret_cast<VAddr>(user_base);
         m_free_regions.insert({system_managed_addr, system_managed_addr + system_managed_size});
         m_free_regions.insert({system_reserved_addr, system_reserved_addr + system_reserved_size});
@@ -753,7 +799,25 @@ struct AddressSpace::Impl {
         }
 #endif
 
-#ifdef __APPLE__
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+        // iOS sandboxes shm_open() (fails with EPERM, "Operation not permitted") -- POSIX
+        // named shared memory lives in a system-wide /tmp-adjacent namespace the app sandbox
+        // doesn't allow touching at all, unlike desktop macOS. The portable workaround: open a
+        // regular file inside the app's own container tmp directory (which the sandbox does
+        // allow) and unlink it immediately. The fd stays valid with the directory entry gone,
+        // so it behaves exactly like an anonymous shared-memory object for our purposes --
+        // mmap(MAP_SHARED, fd, offset) from multiple places (see backing_fd's reuse in Map())
+        // all alias the same physical pages, which is the whole reason this isn't just
+        // MAP_ANONYMOUS.
+        const char* tmp_dir = getenv("TMPDIR");
+        const auto shm_path = fmt::format("{}/BackingDmem{}", tmp_dir != nullptr ? tmp_dir : "/tmp", getpid());
+        backing_fd = open(shm_path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
+        if (backing_fd < 0) {
+            LOG_CRITICAL(Kernel_Vmm, "open (iOS shared-memory workaround) failed: {}", strerror(errno));
+            throw std::bad_alloc{};
+        }
+        unlink(shm_path.c_str());
+#elif defined(__APPLE__)
         const auto shm_path = fmt::format("/BackingDmem{}", getpid());
         backing_fd = shm_open(shm_path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
         if (backing_fd < 0) {
@@ -805,8 +869,73 @@ struct AddressSpace::Impl {
         const int handle = phys_addr != -1 ? (fd == -1 ? backing_fd : fd) : -1;
         const off_t host_offset = phys_addr != -1 ? phys_addr : 0;
         const int flag = phys_addr != -1 ? MAP_SHARED : (MAP_ANONYMOUS | MAP_PRIVATE);
+        // Diagnostic: mmap(MAP_SHARED) against an offset+size that exceeds the backing file's
+        // actual size (BackingSize, set once via ftruncate at startup) still succeeds here --
+        // the failure is deferred until something actually touches a page past the file's real
+        // end, which then SIGBUSes (not SIGSEGV) far away from this call site with no obvious
+        // link back to it. Checking eagerly, right where the offset is known, turns that into
+        // an immediate, attributable log line instead of a mystery crash minutes later.
+        if (handle == backing_fd &&
+            static_cast<u64>(host_offset) + size > BackingSize) {
+            LOG_CRITICAL(Kernel_Vmm,
+                         "Impl::Map: backing offset {:#x} + size {:#x} = {:#x} exceeds "
+                         "BackingSize {:#x} by {:#x} bytes -- this mapping (virtual_addr={:#x}) "
+                         "will SIGBUS on first access past the backing file's actual end",
+                         host_offset, size, static_cast<u64>(host_offset) + size, BackingSize,
+                         static_cast<u64>(host_offset) + size - BackingSize, virtual_addr);
+        }
         void* ret = mmap(reinterpret_cast<void*>(virtual_addr), size, prot, MAP_FIXED | flag,
                          handle, host_offset);
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+        if (ret == MAP_FAILED && errno == ENOMEM) {
+            // iOS's mmap(MAP_FIXED) can refuse one very large request outright with ENOMEM even
+            // when far more than `size` remains free in this process's whole address-space
+            // budget, and even when the shared backing file is large enough (the BackingSize
+            // check above did not fire for this same call) -- confirmed on-device: Rocket
+            // League's ~1.25GB flexible-memory reservation failed here every time, well within
+            // the ~16GB user window and the ~8GB backing file. The guest only cares that the
+            // resulting virtual range ends up mapped and contiguous, not how many syscalls built
+            // it, so retry as a sequence of smaller MAP_FIXED mmaps covering the same span
+            // instead of one huge one.
+            constexpr u64 ChunkSize = 128_MB;
+            LOG_WARNING(Kernel_Vmm,
+                        "Impl::Map: single mmap of size {:#x} at {:#x} failed with ENOMEM, "
+                        "retrying as {} chunk(s) of up to {:#x} bytes",
+                        size, virtual_addr, (size + ChunkSize - 1) / ChunkSize, ChunkSize);
+            u64 mapped = 0;
+            bool chunk_failed = false;
+            while (mapped < size) {
+                const u64 remaining = size - mapped;
+                const u64 chunk = remaining < ChunkSize ? remaining : ChunkSize;
+                void* chunk_ret = mmap(reinterpret_cast<void*>(virtual_addr + mapped), chunk, prot,
+                                       MAP_FIXED | flag, handle,
+                                       host_offset + static_cast<off_t>(mapped));
+                if (chunk_ret == MAP_FAILED) {
+                    LOG_CRITICAL(Kernel_Vmm,
+                                 "Impl::Map: chunked fallback also failed at offset {:#x}/{:#x}: {}",
+                                 mapped, size, strerror(errno));
+                    chunk_failed = true;
+                    break;
+                }
+                mapped += chunk;
+            }
+            if (chunk_failed) {
+                // Tear down whatever we did manage to map so we don't leave a torn, partially
+                // mapped region behind -- the caller's ASSERT_MSG below still fires as if the
+                // original single mmap had simply failed outright.
+                if (mapped > 0) {
+                    munmap(reinterpret_cast<void*>(virtual_addr), mapped);
+                }
+                ret = MAP_FAILED;
+                errno = ENOMEM;
+            } else {
+                LOG_WARNING(Kernel_Vmm,
+                            "Impl::Map: chunked fallback succeeded for {:#x} bytes at {:#x}", size,
+                            virtual_addr);
+                ret = reinterpret_cast<void*>(virtual_addr);
+            }
+        }
+#endif
         ASSERT_MSG(ret != MAP_FAILED, "mmap failed: {}", strerror(errno));
         return ret;
     }
@@ -845,8 +974,17 @@ struct AddressSpace::Impl {
             flags |= PROT_EXEC;
         }
 #endif
+#ifdef __APPLE__
+        const size_t host_page_size = sysconf(_SC_PAGESIZE);
+        const VAddr aligned_addr = virtual_addr & ~(static_cast<VAddr>(host_page_size) - 1);
+        const u64 aligned_size =
+            Common::AlignUp((virtual_addr + size) - aligned_addr, host_page_size);
+        int ret = mprotect(reinterpret_cast<void*>(aligned_addr), aligned_size, flags);
+#else
         int ret = mprotect(reinterpret_cast<void*>(virtual_addr), size, flags);
-        ASSERT_MSG(ret == 0, "mprotect failed: {}", strerror(errno));
+#endif
+        ASSERT_MSG(ret == 0, "mprotect failed: {} (addr={:#x}, size={:#x})", strerror(errno),
+                   virtual_addr, size);
     }
 
     int backing_fd;
