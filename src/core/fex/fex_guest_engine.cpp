@@ -2104,7 +2104,7 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
       // are executing host code (not guest JIT) and will return to guest code after the syscall.
       // If we reuse the JIT buffer while they're in the syscall, they'll return to stale code.
       // We track this with g_threads_in_hle_syscall and wait for it to drain.
-      const auto hle_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2000);
+      const auto hle_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(30000);
       while (g_threads_in_hle_syscall.load(std::memory_order_acquire) > 0 &&
              std::chrono::steady_clock::now() < hle_deadline) {
         sched_yield();
