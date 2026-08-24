@@ -20,7 +20,13 @@ enum GameOverlayHost {
     static func attach() {
         guard hostingController == nil else { return }
         guard let raw = shadps4_get_uikit_window() else {
-            aelog("GameOverlayHost: shadps4_get_uikit_window() returned nil, cannot attach")
+            // print(), not aelog()/NSLog -- confirmed via a real crash log that print()
+            // reliably reaches aether_crash.log (CrashLogger.swift's stdout freopen), while
+            // whether NSLog's output does too was unconfirmed and mattered here: an earlier
+            // test showed zero GameOverlayHost lines despite 172 frames rendering, and
+            // without a reliable log there was no way to tell "never ran" from "ran, logged
+            // via a channel that isn't captured."
+            print("[AetherPS4] GameOverlayHost: shadps4_get_uikit_window() returned nil, cannot attach")
             return
         }
         let window = Unmanaged<UIWindow>.fromOpaque(raw).takeUnretainedValue()
@@ -44,12 +50,16 @@ enum GameOverlayHost {
         }
 
         hostingController = controller
-        aelog("GameOverlayHost: attached SwiftUI overlay to SDL's UIWindow")
+        print("[AetherPS4] GameOverlayHost: attached SwiftUI overlay to SDL's UIWindow")
     }
 
     /// Call once the game session ends (shadps4_run() returning in EmulatorProcess.launch()),
-    /// so a stale controller doesn't linger pointing at a torn-down window.
+    /// so a stale controller doesn't linger pointing at a torn-down window, and a poll timer
+    /// that never found a window (e.g. the game crashed before SDL's window ever appeared)
+    /// doesn't keep firing into the next launch.
     static func detach() {
+        pollTimer?.invalidate()
+        pollTimer = nil
         guard let controller = hostingController else { return }
         controller.willMove(toParent: nil)
         controller.view.removeFromSuperview()
@@ -59,6 +69,9 @@ enum GameOverlayHost {
 }
 
 extension GameOverlayHost {
+    private static var pollTimer: Timer?
+    private static var pollAttempt = 0
+
     // shadps4_register_first_frame_callback() looks like the natural fit here, but its
     // underlying flag is scoped to the whole process's lifetime, not one shadps4_run() call
     // -- "never resets to 0 again, even across game restarts within the same process" (its
@@ -67,22 +80,40 @@ extension GameOverlayHost {
     // needs. Polling shadps4_get_uikit_window() instead sidesteps that entirely -- it's a
     // plain pointer read with no per-process state, safe to call as often as needed, and
     // naturally becomes non-nil exactly once SDL's window exists for THIS run.
-    static func pollUntilAttached(attempt: Int = 0) {
-        guard hostingController == nil else { return }
-        if attempt == 0 {
-            aelog("GameOverlayHost: starting to poll for SDL's UIWindow")
+    //
+    // Uses an actual Timer added to RunLoop.main in .common modes, not a chain of
+    // DispatchQueue.main.asyncAfter calls: a real on-device test showed zero evidence this
+    // ever ran (not even the "started polling" breadcrumb) despite the game rendering 172
+    // frames -- plenty of time for a 100ms-interval poll to have found the window. That's
+    // consistent with shadps4_run()'s internal SDL loop only servicing certain run-loop
+    // modes on the main thread once it takes over, in which case .asyncAfter's GCD-timer
+    // path might just never get drained. RunLoop.common explicitly covers the modes UIKit
+    // itself relies on for its own tracking/animation work, so this is the most likely
+    // alternative to actually fire if that's really what's happening -- still needs
+    // confirming with a fresh log now that logging goes through print(), not NSLog.
+    static func pollUntilAttached() {
+        guard hostingController == nil, pollTimer == nil else { return }
+        pollAttempt = 0
+        print("[AetherPS4] GameOverlayHost: starting to poll for SDL's UIWindow (Timer/.common)")
+        let timer = Timer(timeInterval: 0.1, repeats: true) { _ in
+            pollTick()
         }
+        RunLoop.main.add(timer, forMode: .common)
+        pollTimer = timer
+    }
+
+    private static func pollTick() {
+        pollAttempt += 1
         if shadps4_get_uikit_window() != nil {
+            pollTimer?.invalidate()
+            pollTimer = nil
             attach()
             return
         }
         // Breadcrumb every ~2s (not every 100ms) so a run that never finds the window
         // leaves clear evidence in the log without spamming it.
-        if attempt > 0 && attempt % 20 == 0 {
-            aelog("GameOverlayHost: still polling for SDL's UIWindow (attempt \(attempt))")
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            pollUntilAttached(attempt: attempt + 1)
+        if pollAttempt % 20 == 0 {
+            print("[AetherPS4] GameOverlayHost: still polling for SDL's UIWindow (attempt \(pollAttempt))")
         }
     }
 }
