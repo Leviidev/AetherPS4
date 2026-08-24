@@ -54,12 +54,13 @@ enum GameOverlayHost {
     }
 
     /// Call once the game session ends (shadps4_run() returning in EmulatorProcess.launch()),
-    /// so a stale controller doesn't linger pointing at a torn-down window, and a poll timer
-    /// that never found a window (e.g. the game crashed before SDL's window ever appeared)
-    /// doesn't keep firing into the next launch.
+    /// so a stale controller doesn't linger pointing at a torn-down window. Any in-flight
+    /// background poll that never found a window (e.g. the game crashed or exited before
+    /// SDL ever created one) is left to run out on its own -- see pollLoopNonisolated's
+    /// bounded attempt count -- rather than torn down here, since doing that safely would
+    /// need touching @MainActor state from the background poll again, the exact class of
+    /// thing that caused the crash this whole redesign is working around.
     static func detach() {
-        pollTimer?.invalidate()
-        pollTimer = nil
         guard let controller = hostingController else { return }
         controller.willMove(toParent: nil)
         controller.view.removeFromSuperview()
@@ -69,9 +70,6 @@ enum GameOverlayHost {
 }
 
 extension GameOverlayHost {
-    private static var pollTimer: Timer?
-    private static var pollAttempt = 0
-
     // shadps4_register_first_frame_callback() looks like the natural fit here, but its
     // underlying flag is scoped to the whole process's lifetime, not one shadps4_run() call
     // -- "never resets to 0 again, even across game restarts within the same process" (its
@@ -81,40 +79,49 @@ extension GameOverlayHost {
     // plain pointer read with no per-process state, safe to call as often as needed, and
     // naturally becomes non-nil exactly once SDL's window exists for THIS run.
     //
-    // Uses an actual Timer added to RunLoop.main in .common modes, not a chain of
-    // DispatchQueue.main.asyncAfter calls: a real on-device test showed zero evidence this
-    // ever ran (not even the "started polling" breadcrumb) despite the game rendering 172
-    // frames -- plenty of time for a 100ms-interval poll to have found the window. That's
-    // consistent with shadps4_run()'s internal SDL loop only servicing certain run-loop
-    // modes on the main thread once it takes over, in which case .asyncAfter's GCD-timer
-    // path might just never get drained. RunLoop.common explicitly covers the modes UIKit
-    // itself relies on for its own tracking/animation work, so this is the most likely
-    // alternative to actually fire if that's really what's happening -- still needs
-    // confirming with a fresh log now that logging goes through print(), not NSLog.
+    // Polls on a plain background thread (Thread.sleep, no RunLoop/@MainActor involvement
+    // at all) rather than a Timer on RunLoop.main: an earlier Timer-based version (added to
+    // RunLoop.main in .common mode specifically to survive shadps4_run() taking over the
+    // main run loop) was confirmed on-device as the actual cause of a real crash with no
+    // catchable signal -- disabling only that one call site was enough to make the exact
+    // same crash disappear, with Sonic Mania then booting successfully. Best explanation:
+    // repeatedly waking the main run loop for this, however cheap each individual tick is,
+    // was enough extra main-thread contention against whatever shadps4_run() needs to push
+    // it over some watchdog-style threshold. This version never touches the main thread (or
+    // any @MainActor-isolated state) at all until it has *found* the window, and then only
+    // once -- a single DispatchQueue.main.async to call attach(), which is already safely
+    // idempotent (guard hostingController == nil) if this somehow overlaps a fresh poll.
     static func pollUntilAttached() {
-        guard hostingController == nil, pollTimer == nil else { return }
-        pollAttempt = 0
-        print("[AetherPS4] GameOverlayHost: starting to poll for SDL's UIWindow (Timer/.common)")
-        let timer = Timer(timeInterval: 0.1, repeats: true) { _ in
-            pollTick()
+        guard hostingController == nil else { return }
+        print("[AetherPS4] GameOverlayHost: starting to poll for SDL's UIWindow (background thread)")
+        DispatchQueue.global(qos: .utility).async {
+            pollLoopNonisolated(attempt: 0)
         }
-        RunLoop.main.add(timer, forMode: .common)
-        pollTimer = timer
     }
 
-    private static func pollTick() {
-        pollAttempt += 1
+    // Deliberately nonisolated and free of any @MainActor-isolated state (including
+    // GameOverlayHost's own hostingController) -- see pollUntilAttached's doc comment for
+    // why. Bounded at 300 attempts (~30s) rather than running forever: a game that crashes
+    // or exits before SDL ever creates a window should let this loop give up instead of
+    // polling for the rest of the app's lifetime.
+    nonisolated private static func pollLoopNonisolated(attempt: Int) {
         if shadps4_get_uikit_window() != nil {
-            pollTimer?.invalidate()
-            pollTimer = nil
-            attach()
+            DispatchQueue.main.async {
+                attach()
+            }
+            return
+        }
+        guard attempt < 300 else {
+            print("[AetherPS4] GameOverlayHost: giving up polling for SDL's UIWindow after \(attempt) attempts")
             return
         }
         // Breadcrumb every ~2s (not every 100ms) so a run that never finds the window
         // leaves clear evidence in the log without spamming it.
-        if pollAttempt % 20 == 0 {
-            print("[AetherPS4] GameOverlayHost: still polling for SDL's UIWindow (attempt \(pollAttempt))")
+        if attempt > 0 && attempt % 20 == 0 {
+            print("[AetherPS4] GameOverlayHost: still polling for SDL's UIWindow (attempt \(attempt))")
         }
+        Thread.sleep(forTimeInterval: 0.1)
+        pollLoopNonisolated(attempt: attempt + 1)
     }
 }
 

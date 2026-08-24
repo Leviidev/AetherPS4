@@ -81,17 +81,13 @@ final class EmulatorProcess {
         // app delegate rather than a SwiftUI API.
         lockToLandscape()
 
-        // TEMPORARILY DISABLED: isolating whether GameOverlayHost's polling/UIHostingController
-        // work is what's actually behind a real crash seen after this session's veneer-batching
-        // boot-time fix -- Sonic Mania now gets much further (into GPU pipeline setup instead of
-        // hanging in early module loading) but still crashes with no catchable signal, and it
-        // was suspected this Swift-side code could be involved. No direct evidence points at it
-        // specifically (no exception log, no confirmation attach() even started), but removing
-        // it as a variable entirely is the cleanest way to find out. Re-enable once a test
-        // confirms Sonic Mania boots cleanly without it, or investigate here further if it
-        // still crashes with this disabled too. See GameOverlayHost's own header comment for
-        // the original design rationale.
-        // GameOverlayHost.pollUntilAttached()
+        // Loading state and the console log attach as a SwiftUI subview of SDL's own UIWindow
+        // once it exists (GameOverlay.swift's GameOverlayHost). Confirmed on-device that the
+        // previous Timer-on-RunLoop.main version of this polling was the actual cause of a
+        // real crash (disabling this one call site made it disappear); pollUntilAttached() now
+        // polls on a plain background thread instead and never touches the main thread until
+        // it has found the window -- see its own doc comment for the full story.
+        GameOverlayHost.pollUntilAttached()
 
         // shadps4_run() MUST run on the main thread: SDL's UIKit backend creates the
         // window and drives its own event loop from whatever thread calls this, and
