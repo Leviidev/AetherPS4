@@ -176,7 +176,13 @@ bool ProcessEvent(SDL_Event* event) {
     // Don't block release/up events
     case SDL_EVENT_MOUSE_MOTION:
     case SDL_EVENT_MOUSE_WHEEL:
-    case SDL_EVENT_MOUSE_BUTTON_DOWN: {
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    // iOS raw touch (see imgui_impl_sdl3.cpp's ProcessEvent for why these are handled
+    // directly rather than relying on synthetic SDL_TOUCH_MOUSEID mouse events) -- same
+    // gating as the mouse cases above, so a tap that lands on an ImGui widget (e.g. the
+    // mobile overlay's toggle button) doesn't also leak through as game touch input.
+    case SDL_EVENT_FINGER_DOWN:
+    case SDL_EVENT_FINGER_MOTION: {
         const auto& io = GetIO();
         return io.WantCaptureMouse && io.Ctx->NavWindow != nullptr &&
                (io.Ctx->NavWindow->Flags & ImGuiWindowFlags_NoNav) == 0;

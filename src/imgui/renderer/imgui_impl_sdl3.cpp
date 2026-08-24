@@ -449,6 +449,41 @@ bool ProcessEvent(const SDL_Event* event) {
                                      : (bd->mouse_buttons_down & ~(1 << mouse_button));
         return true;
     }
+    // iOS delivers raw finger events (SDL_EVENT_FINGER_*); nothing upstream of this
+    // backend translates them into the SDL_TOUCH_MOUSEID-tagged synthetic mouse events
+    // the MOUSE_MOTION/MOUSE_BUTTON_DOWN cases above are written to expect (that
+    // synthesis is an SDL default on some platforms, but not something this codebase
+    // can rely on happening here) -- without this, on-screen ImGui buttons (the mobile
+    // loading/console panel's toggle, MobileOverlayLayer) never receive any input on
+    // iOS at all. Treated as a single mouse-button-0 pointer, same simplification
+    // ImGui itself has no native multi-touch concept beyond.
+    case SDL_EVENT_FINGER_DOWN:
+    case SDL_EVENT_FINGER_UP:
+    case SDL_EVENT_FINGER_MOTION: {
+        if (GetViewportForWindowId(event->tfinger.windowID) == NULL)
+            return false;
+        SDL_Window* window = SDL_GetWindowFromID(event->tfinger.windowID);
+        if (window == nullptr)
+            return false;
+        // io.DisplaySize (and therefore every ImGui window/widget coordinate) is in
+        // POINTS, not pixels -- see NewFrame() below, which sets DisplaySize from
+        // SDL_GetWindowSize and keeps the pixel ratio separately in
+        // DisplayFramebufferScale. Scaling normalized touch coordinates by the PIXEL
+        // size here (confirmed on-device: SDL_GetWindowSizeInPixels) put every touch
+        // position off by the Retina scale factor (3x on most iPhones), landing far
+        // outside any actual widget bounds -- which is exactly why buttons never
+        // responded to taps.
+        int width_pt = 0, height_pt = 0;
+        SDL_GetWindowSize(window, &width_pt, &height_pt);
+        io.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
+        io.AddMousePosEvent(event->tfinger.x * (float)width_pt, event->tfinger.y * (float)height_pt);
+        if (event->type != SDL_EVENT_FINGER_MOTION) {
+            const bool down = (event->type == SDL_EVENT_FINGER_DOWN);
+            io.AddMouseButtonEvent(0, down);
+            bd->mouse_buttons_down = down ? (bd->mouse_buttons_down | 1) : (bd->mouse_buttons_down & ~1);
+        }
+        return true;
+    }
     case SDL_EVENT_TEXT_INPUT: {
         if (GetViewportForWindowId(event->text.windowID) == NULL)
             return false;

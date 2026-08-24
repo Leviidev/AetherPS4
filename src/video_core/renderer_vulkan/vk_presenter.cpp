@@ -3,6 +3,7 @@
 
 #include "common/debug.h"
 #include "common/elf_info.h"
+#include "common/frame_presented_flag.h"
 #include "common/io_file.h"
 #include "common/path_util.h"
 #include "common/singleton.h"
@@ -13,6 +14,7 @@
 #include "imgui/notifications_layer.h"
 #include "imgui/renderer/imgui_core.h"
 #include "imgui/renderer/imgui_impl_vulkan.h"
+#include "platform/ios/mobile_overlay.h"
 #include "sdl_window.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderdoc.h"
@@ -522,10 +524,16 @@ Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_
                    swapchain.GetSurfaceFormat().format);
 
     ImGui::Layer::AddLayer(Common::Singleton<Core::Devtools::Layer>::Instance());
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    ImGui::Layer::AddLayer(Common::Singleton<Platform::iOS::MobileOverlayLayer>::Instance());
+#endif
 }
 
 Presenter::~Presenter() {
     ImGui::Layer::RemoveLayer(Common::Singleton<Core::Devtools::Layer>::Instance());
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    ImGui::Layer::RemoveLayer(Common::Singleton<Platform::iOS::MobileOverlayLayer>::Instance());
+#endif
 
     draw_scheduler.Finish();
     present_scheduler.Finish();
@@ -709,7 +717,24 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
                                VAddr cpu_address) {
     auto desc = VideoCore::TextureCache::ImageDesc{attribute, cpu_address};
     const auto image_id = texture_cache.FindImage(desc);
+    auto& image = texture_cache.GetImage(image_id);
+    image.usage.vo_surface = 1u;
     texture_cache.UpdateImage(image_id);
+
+    static std::atomic<u32> prepare_count{0};
+    if (prepare_count.fetch_add(1, std::memory_order_relaxed) < 30) {
+        const u32* px = reinterpret_cast<const u32*>(cpu_address);
+        u32 sample0 = px ? px[0] : 0;
+        u32 sample1 = px ? px[1] : 0;
+        u32 sampleMid = px ? px[(image.info.size.width * image.info.size.height) / 2] : 0;
+        LOG_INFO(Render_Vulkan,
+                 "PREPARE_FRAME_DIAG addr={:#x} size={:#x} w={} h={} pitch={} tiled={} format={} "
+                 "px[0]={:#010x} px[1]={:#010x} px[mid]={:#010x}",
+                 cpu_address, image.info.guest_size, image.info.size.width, image.info.size.height,
+                 image.info.pitch, image.info.props.is_tiled ? 1 : 0,
+                 static_cast<u32>(attribute.attrib.pixel_format),
+                 sample0, sample1, sampleMid);
+    }
 
     Frame* frame = GetRenderFrame();
 
@@ -744,7 +769,6 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     // Exclude alpha from output frame to avoid blending with UI.
     view_info.mapping.a = vk::ComponentSwizzle::eOne;
 
-    auto& image = texture_cache.GetImage(image_id);
     auto image_view = *image.FindView(view_info).image_view;
     const vk::Extent2D image_size = {image.info.size.width, image.info.size.height};
     expected_ratio = static_cast<float>(image_size.width) / static_cast<float>(image_size.height);
@@ -997,7 +1021,18 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame) {
             ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
             ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
-            ImGui::SetNextWindowDockID(dockId, ImGuiCond_Once);
+            // ImGuiCond_Always, not _Once: ImGui persists window/dock state to imgui.ini
+            // (see imgui_core.cpp's ConfigPath), and "Once" only assigns a dock ID if this
+            // window doesn't already have one recorded there. A stale entry from any
+            // earlier session (a crashed run, a layout from before this window ever
+            // rendered anything real) silently overrides it forever after, potentially
+            // leaving the one window that actually shows game video undocked, minimized,
+            // or off in some detached position -- confirmed as exactly this failure mode
+            // for a different window (MobileOverlayLayer's loading/console panel, see
+            // mobile_overlay.cpp) this same session. There's no legitimate case where a
+            // user wants the primary game view NOT docked into the main passthrough node,
+            // unlike the genuinely optional/draggable debug panels elsewhere in this file.
+            ImGui::SetNextWindowDockID(dockId, ImGuiCond_Always);
             if (ImGui::Begin("Display##game_display", nullptr, ImGuiWindowFlags_NoNav)) {
                 auto game_texture = frame->imgui_texture;
                 auto game_width = frame->width;
@@ -1142,7 +1177,18 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame) {
             LOG_INFO(Render_Vulkan, "BACHATA_PRESENT_TRACE id={} stage=present_done ok={}", trace_id,
                      presented);
         }
-        if (!presented) {
+        if (presented) {
+            // exchange (not store) so the callback below only ever fires on the genuine
+            // first transition false -> true, even though every present thereafter also
+            // takes this branch.
+            const bool was_already_presented =
+                Common::FramePresentedFlag().exchange(true, std::memory_order_relaxed);
+            if (!was_already_presented) {
+                if (auto* callback = Common::FramePresentedCallback().load(std::memory_order_relaxed)) {
+                    callback();
+                }
+            }
+        } else {
             swapchain.Recreate(window.GetWidth(), window.GetHeight());
         }
     }
