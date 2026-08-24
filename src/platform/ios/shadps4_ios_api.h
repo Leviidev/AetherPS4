@@ -72,6 +72,25 @@ int shadps4_has_presented_frame(void);
 // nullptr clears any previously registered callback.
 void shadps4_register_first_frame_callback(void (*callback)(void));
 
+// Probes whether the JIT-granting protocol actually works right now: allocates a
+// minimal dual-mapped JIT region (see core/ios/ios_jit_allocator.h) and immediately
+// releases it. That allocation only succeeds if an external debugger (StikDebug) is
+// attached AND is actively running the JIT script to service the BRK-trap handshake --
+// unlike just checking whether *some* debugger is attached, this exercises the real
+// end-to-end path the emulator itself depends on for JIT memory. Independent of
+// shadps4_init()/shadps4_run() -- safe (and intended) to call before either, e.g. from
+// a host UI's one-time setup check at launch. Returns non-zero on success.
+//
+// CALLER MUST confirm a debugger is actually attached (e.g. Swift's checkDebugged(),
+// which only inspects the process's own codesign/csops state and never touches the
+// BRK path) before calling this. The BRK instruction this triggers is unconditional --
+// with no debugger attached to service it, it raises a raw, unhandled SIGTRAP that
+// terminates the process outright, not a graceful failure (confirmed on-device; see
+// fex_guest_engine.cpp's "Do NOT detach the debugger here" comment for the same
+// failure mode hit via a different call site). Calling this blind, before any
+// attachment check, WILL crash the app when StikDebug isn't attached.
+int shadps4_probe_jit(void);
+
 #ifdef __cplusplus
 }
 #endif

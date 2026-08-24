@@ -101,9 +101,15 @@ struct DualMappedRegion {
     // branch (addr == nullptr -- see this file's top comment) for the executable side, then a
     // local mach_vm_remap for the writable side.
     //
-    // Returns an invalid (nullptr) region if BreakGetJITMapping returns nullptr (StikDebug not
-    // attached, script not running, or JIT26 protocol error), or if the remap/protect step
-    // fails (check device logs either way).
+    // Returns an invalid (nullptr) region if BreakGetJITMapping returns nullptr (script not
+    // running, or a JIT26 protocol error while a debugger IS attached), or if the
+    // remap/protect step fails (check device logs either way). CALLER MUST already know a
+    // debugger is attached before calling this -- if none is, the BRK instruction this issues
+    // has no debugger to route to and raises a raw, unhandled SIGTRAP that kills the process
+    // outright rather than returning here at all (confirmed on-device: fex_guest_engine.cpp's
+    // "Do NOT detach the debugger here" comment documents the same failure mode from a
+    // different call site). This was previously (wrongly) documented here as a graceful
+    // "StikDebug not attached" case; it is not.
     [[nodiscard]] static DualMappedRegion Allocate(size_t bytes) noexcept;
 
     // Releases both mappings. Safe to call on an invalid region.
