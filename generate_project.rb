@@ -54,6 +54,13 @@ resources_dir = project.main_group.new_group('Resources', 'Resources')
 info_plist_ref = resources_dir.new_file(File.absolute_path("#{project_dir}/Info.plist"))
 # app_target.resources_build_phase.add_file_reference(info_plist_ref, true)
 
+# App icon asset catalog (Resources/Assets.xcassets/AppIcon.appiconset, single 1024x1024
+# "universal" source image -- Xcode's asset catalog compiler generates every device-specific
+# size from it at build time). Without this the app builds and runs fine but has no icon at
+# all, and ASSETCATALOG_COMPILER_APPICON_NAME below has nothing to point at.
+assets_ref = resources_dir.new_file(File.absolute_path("#{project_dir}/Resources/Assets.xcassets"))
+app_target.resources_build_phase.add_file_reference(assets_ref)
+
 # Bridging header
 bridging_header = project.main_group.new_file(File.absolute_path("#{project_dir}/AetherPS4-iOS-Bridging-Header.h"))
 
@@ -94,6 +101,7 @@ app_target.frameworks_build_phase.add_file_reference(project.frameworks_group.ne
 # Configure Build Settings
 app_target.build_configurations.each do |config|
   config.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = "com.aether.ps4ios"
+  config.build_settings['ASSETCATALOG_COMPILER_APPICON_NAME'] = "AppIcon"
   config.build_settings['INFOPLIST_FILE'] = "Info.plist"
   config.build_settings['CODE_SIGN_ENTITLEMENTS'] = "AetherPS4-iOS.entitlements"
   config.build_settings['SWIFT_VERSION'] = '5.0'

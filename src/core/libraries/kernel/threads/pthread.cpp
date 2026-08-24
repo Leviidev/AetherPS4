@@ -234,6 +234,8 @@ static DWORD RunThread(void* arg) {
 static void* RunThread(void* arg) {
 #endif
     auto* curthread = static_cast<Pthread*>(arg);
+    LOG_INFO(Kernel_Pthread, "BACHATA_RUNTHREAD: begin tid={} name={} start_routine={:#x}",
+             curthread->tid.load(), curthread->name, reinterpret_cast<u64>(curthread->start_routine));
     g_curthread = curthread;
     Common::SetCurrentThreadName(curthread->name.c_str());
     DebugState.AddCurrentThreadToGuestList();
