@@ -17,6 +17,7 @@
 #include "core/emulator_settings.h"
 #include "core/emulator_state.h"
 #include "core/file_sys/fs.h"
+#include "core/ios/ios_jit_allocator.h"
 #include "core/ipc/ipc.h"
 #include "core/loader/elf.h"
 #include "core/user_settings.h"
@@ -151,4 +152,13 @@ extern "C" int shadps4_has_presented_frame() {
 
 extern "C" void shadps4_register_first_frame_callback(void (*callback)(void)) {
     Common::FramePresentedCallback().store(callback, std::memory_order_relaxed);
+}
+
+extern "C" int shadps4_probe_jit() {
+    // A page's worth is the smallest size the underlying protocol handles cleanly;
+    // this is purely a functional probe, the region is released immediately either way.
+    auto region = Core::DualMappedRegion::Allocate(4096);
+    const bool ok = region.IsValid();
+    region.Release();
+    return ok ? 1 : 0;
 }
