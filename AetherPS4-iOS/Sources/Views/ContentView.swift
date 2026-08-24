@@ -8,6 +8,15 @@ struct ContentView: View {
     @Environment(EmulatorProcess.self) private var emulator
 
     var body: some View {
+        // @Observable's dependency tracking is fine-grained: it only tracks properties
+        // actually read during body's OWN evaluation, not ones read later inside a closure
+        // SwiftUI invokes separately (like a Binding's get). isRunning was only ever read
+        // inside the fullScreenCover binding's get closure below, so changing
+        // emulator.state never actually triggered a re-render of this view at all --
+        // confirmed on-device as the real cause of the loading cover not appearing.
+        // Reading it here, directly in body, makes it a tracked dependency.
+        let isRunning = emulator.isRunning
+
         TabView {
             NavigationStack {
                 LibraryView()
@@ -41,7 +50,7 @@ struct ContentView: View {
         // actually works reliably, after several attempts at a live-updating version that
         // depended on getting new work serviced on the main thread during shadps4_run()
         // did not.
-        .fullScreenCover(isPresented: Binding(get: { emulator.isRunning }, set: { _ in })) {
+        .fullScreenCover(isPresented: Binding(get: { isRunning }, set: { _ in })) {
             GameLoadingCoverView(gameName: emulator.runningGameName)
         }
     }
