@@ -55,6 +55,7 @@
 #include "core/libraries/random/random.h"
 #include "core/libraries/razor_cpu/razor_cpu.h"
 #include "core/libraries/remote_play/remoteplay.h"
+#include "core/libraries/rtc/rtc.h"
 #include "core/libraries/rudp/rudp.h"
 #include "core/libraries/save_data/dialog/savedatadialog.h"
 #include "core/libraries/save_data/savedata.h"
@@ -164,6 +165,12 @@ void InitHLELibs(Core::Loader::SymbolsResolver* sym) {
     Libraries::VrTracker::RegisterLib(sym);
     Libraries::ContentExport::RegisterLib(sym);
     Libraries::VideoRecording::RegisterLib(sym);
+    // Real Time Clock is a basic utility library like the ones above -- most games call
+    // it without ever explicitly calling sceSysmoduleLoadModule("libSceRtc.sprx") first
+    // (confirmed on-device: Rocket League statically imports sceRtcGetCurrentClock etc.
+    // but never loads the module, so the sysmodule-table-gated registration in
+    // sysmodule_internal.cpp never fires and every RTC call falls through to ENOSYS).
+    Libraries::Rtc::RegisterLib(sym);
 
     // Loading libSceSsl is locked behind a title workaround that currently applies to nothing.
     // Libraries::Ssl::RegisterLib(sym);

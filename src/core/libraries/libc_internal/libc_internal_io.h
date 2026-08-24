@@ -5,6 +5,7 @@
 
 #include <mutex>
 #include "common/types.h"
+#include "common/va_ctx.h"
 #include "core/libraries/kernel/threads.h"
 
 namespace Core::Loader {
@@ -78,6 +79,16 @@ struct OrbisFILE {
 };
 
 s32 PS4_SYSV_ABI internal_snprintf(char* s, u64 n, VA_ARGS);
+s32 PS4_SYSV_ABI internal_printf(VA_ARGS);
+s32 PS4_SYSV_ABI internal_sprintf(char* s, VA_ARGS);
+s32 PS4_SYSV_ABI internal_puts(const char* s);
+s32 PS4_SYSV_ABI internal_vprintf(const char* format, Common::VaList* arg);
+s32 PS4_SYSV_ABI internal_vsprintf(char* s, const char* format, Common::VaList* arg);
+s32 PS4_SYSV_ABI internal_vsnprintf(char* s, u64 n, const char* format, Common::VaList* arg);
+u64 PS4_SYSV_ABI internal_fwrite(const char* ptr, u64 size, u64 nmemb, OrbisFILE* file);
+s64 PS4_SYSV_ABI internal_ftell(OrbisFILE* file);
+void PS4_SYSV_ABI internal_rewind(OrbisFILE* file);
+char* PS4_SYSV_ABI internal_fgets(char* s, s32 size, OrbisFILE* file);
 void PS4_SYSV_ABI internal__Lockfilelock(OrbisFILE* file);
 void PS4_SYSV_ABI internal__Unlockfilelock(OrbisFILE* file);
 OrbisFILE* PS4_SYSV_ABI internal__Fofind();
@@ -95,4 +106,7 @@ s32 PS4_SYSV_ABI internal_fclose(OrbisFILE* file);
 
 void RegisterlibSceLibcInternalIo(Core::Loader::SymbolsResolver* sym);
 void ForceRegisterlibSceLibcInternalIo(Core::Loader::SymbolsResolver* sym);
+#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
+void RegisterFexLibcIoAliases(Core::Loader::SymbolsResolver* sym);
+#endif
 } // namespace Libraries::LibcInternal

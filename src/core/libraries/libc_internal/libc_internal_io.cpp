@@ -25,6 +25,40 @@ s32 PS4_SYSV_ABI internal_snprintf(char* s, u64 n, VA_ARGS) {
     return snprintf_ctx(s, n, &ctx);
 }
 
+s32 PS4_SYSV_ABI internal_printf(VA_ARGS) {
+    VA_CTX(ctx);
+    return printf_ctx(&ctx);
+}
+
+s32 PS4_SYSV_ABI internal_sprintf(char* s, VA_ARGS) {
+    VA_CTX(ctx);
+    return fprintf_ctx(&ctx, s);
+}
+
+s32 PS4_SYSV_ABI internal_puts(const char* s) {
+    return std::puts(s);
+}
+
+s32 PS4_SYSV_ABI internal_vprintf(const char* format, Common::VaList* arg) {
+    std::vector<char> buffer(4096);
+    const s32 result = vsnprintf_ctx(buffer.data(), buffer.size(), format, arg);
+    std::printf("%s", buffer.data());
+    return result;
+}
+
+s32 PS4_SYSV_ABI internal_vsprintf(char* s, const char* format, Common::VaList* arg) {
+    // No caller-provided size -- matches the real vsprintf's contract (and this codebase's
+    // 256-byte fprintf_ctx/printf_ctx buffers) rather than inventing a limit of its own.
+    std::vector<char> buffer(4096);
+    const s32 result = vsnprintf_ctx(buffer.data(), buffer.size(), format, arg);
+    std::strcpy(s, buffer.data());
+    return result;
+}
+
+s32 PS4_SYSV_ABI internal_vsnprintf(char* s, u64 n, const char* format, Common::VaList* arg) {
+    return vsnprintf_ctx(s, n, format, arg);
+}
+
 std::map<s32, OrbisFILE*> g_files{};
 // Constants for tracking accurate file indexes.
 // Since the file struct is exposed to the application, accuracy is important.
@@ -438,6 +472,76 @@ void PS4_SYSV_ABI internal__Fofree(OrbisFILE* file) {
     }
 }
 
+u64 PS4_SYSV_ABI internal_fwrite(const char* ptr, u64 size, u64 nmemb, OrbisFILE* file) {
+    if (size == 0 || nmemb == 0 || file == nullptr) {
+        return 0;
+    }
+    internal__Lockfilelock(file);
+    // Writes straight through to the kernel fd rather than replicating Sony's internal
+    // write-buffering bit-for-bit (see internal_fread's _Buf/_Next/_Rend juggling for how
+    // involved that state machine is) -- correctness-equivalent from the guest's
+    // perspective as long as any pending buffered *read* state is flushed/invalidated
+    // first, since a game alternating fread/fwrite on the same handle would otherwise see
+    // stale read-ahead data after this write.
+    file->_Next = file->_Buf;
+    file->_Rend = file->_Buf;
+    file->_WRend = file->_Buf;
+    const u64 total_size = size * nmemb;
+    const s64 written = Libraries::Kernel::sceKernelWrite(file->_Handle, ptr, total_size);
+    internal__Unlockfilelock(file);
+    if (written < 0) {
+        return 0;
+    }
+    return static_cast<u64>(written) / size;
+}
+
+s64 PS4_SYSV_ABI internal_ftell(OrbisFILE* file) {
+    if (file == nullptr) {
+        return -1;
+    }
+    internal__Lockfilelock(file);
+    const s64 kernel_pos = Libraries::Kernel::posix_lseek(file->_Handle, 0, 1 /* SEEK_CUR */);
+    // Subtract bytes already read into the buffer but not yet consumed by the caller --
+    // otherwise this reports the kernel's read-ahead position rather than the logical
+    // position the game's own fread() calls have reached.
+    const s64 buffered_unread = file->_Rend - file->_Next;
+    internal__Unlockfilelock(file);
+    if (kernel_pos < 0) {
+        return -1;
+    }
+    return kernel_pos - buffered_unread;
+}
+
+void PS4_SYSV_ABI internal_rewind(OrbisFILE* file) {
+    if (file == nullptr) {
+        return;
+    }
+    internal__Fspos(file, nullptr, 0, 0 /* SEEK_SET */);
+}
+
+char* PS4_SYSV_ABI internal_fgets(char* s, s32 size, OrbisFILE* file) {
+    if (s == nullptr || size <= 0 || file == nullptr) {
+        return nullptr;
+    }
+    s32 i = 0;
+    for (; i < size - 1; ++i) {
+        char c;
+        if (internal_fread(&c, 1, 1, file) != 1) {
+            break;
+        }
+        s[i] = c;
+        if (c == '\n') {
+            ++i;
+            break;
+        }
+    }
+    if (i == 0) {
+        return nullptr;
+    }
+    s[i] = '\0';
+    return s;
+}
+
 s32 PS4_SYSV_ABI internal_fclose(OrbisFILE* file) {
     if (file == nullptr) {
         return -1;
@@ -477,6 +581,12 @@ void RegisterlibSceLibcInternalIo(Core::Loader::SymbolsResolver* sym) {
                  internal__Lockfilelock);
     LIB_FUNCTION("0x7rx8TKy2Y", "libSceLibcInternal", 1, "libSceLibcInternal",
                  internal__Unlockfilelock);
+    LIB_FUNCTION("hcuQgD53UxM", "libSceLibcInternal", 1, "libSceLibcInternal", internal_printf);
+    LIB_FUNCTION("tcVi5SivF7Q", "libSceLibcInternal", 1, "libSceLibcInternal", internal_sprintf);
+    LIB_FUNCTION("YQ0navp+YIc", "libSceLibcInternal", 1, "libSceLibcInternal", internal_puts);
+    LIB_FUNCTION("GMpvxPFW924", "libSceLibcInternal", 1, "libSceLibcInternal", internal_vprintf);
+    LIB_FUNCTION("jbz9I9vkqkk", "libSceLibcInternal", 1, "libSceLibcInternal", internal_vsprintf);
+    LIB_FUNCTION("Q2V+iqvjgC0", "libSceLibcInternal", 1, "libSceLibcInternal", internal_vsnprintf);
 }
 
 void ForceRegisterlibSceLibcInternalIo(Core::Loader::SymbolsResolver* sym) {
@@ -485,6 +595,31 @@ void ForceRegisterlibSceLibcInternalIo(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("rQFVBXp-Cxg", "libSceLibcInternal", 1, "libSceLibcInternal", internal_fseek);
     LIB_FUNCTION("lbB+UlZqVG0", "libSceLibcInternal", 1, "libSceLibcInternal", internal_fread);
     LIB_FUNCTION("uodLYyUip20", "libSceLibcInternal", 1, "libSceLibcInternal", internal_fclose);
+    LIB_FUNCTION("MpxhMh8QFro", "libSceLibcInternal", 1, "libSceLibcInternal", internal_fwrite);
+    LIB_FUNCTION("Qazy8LmXTvw", "libSceLibcInternal", 1, "libSceLibcInternal", internal_ftell);
+    LIB_FUNCTION("3QIPIh-GDjw", "libSceLibcInternal", 1, "libSceLibcInternal", internal_rewind);
+    LIB_FUNCTION("KdP-nULpuGw", "libSceLibcInternal", 1, "libSceLibcInternal", internal_fgets);
 }
+
+#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
+void RegisterFexLibcIoAliases(Core::Loader::SymbolsResolver* sym) {
+    LIB_FUNCTION("eLdDw6l0-bU", "libc", 1, "libc", internal_snprintf);
+    LIB_FUNCTION("hcuQgD53UxM", "libc", 1, "libc", internal_printf);
+    LIB_FUNCTION("tcVi5SivF7Q", "libc", 1, "libc", internal_sprintf);
+    LIB_FUNCTION("YQ0navp+YIc", "libc", 1, "libc", internal_puts);
+    LIB_FUNCTION("GMpvxPFW924", "libc", 1, "libc", internal_vprintf);
+    LIB_FUNCTION("jbz9I9vkqkk", "libc", 1, "libc", internal_vsprintf);
+    LIB_FUNCTION("Q2V+iqvjgC0", "libc", 1, "libc", internal_vsnprintf);
+    LIB_FUNCTION("xeYO4u7uyJ0", "libc", 1, "libc", internal_fopen);
+    LIB_FUNCTION("rQFVBXp-Cxg", "libc", 1, "libc", internal_fseek);
+    LIB_FUNCTION("lbB+UlZqVG0", "libc", 1, "libc", internal_fread);
+    LIB_FUNCTION("uodLYyUip20", "libc", 1, "libc", internal_fclose);
+    LIB_FUNCTION("MpxhMh8QFro", "libc", 1, "libc", internal_fwrite);
+    LIB_FUNCTION("Qazy8LmXTvw", "libc", 1, "libc", internal_ftell);
+    LIB_FUNCTION("3QIPIh-GDjw", "libc", 1, "libc", internal_rewind);
+    LIB_FUNCTION("KdP-nULpuGw", "libc", 1, "libc", internal_fgets);
+    LIB_FUNCTION("MUjC4lbHrK4", "libc", 1, "libc", internal_fflush);
+}
+#endif
 
 } // namespace Libraries::LibcInternal
