@@ -9,7 +9,13 @@
 #include <mutex>
 
 namespace {
-constexpr uint32_t HleTraceLimit = 256;
+// Temporarily widened from 256 while chasing a deterministic early-startup crash (Rocket
+// League: a wild guest branch to an unmapped address, always right at/after the old trace
+// limit's boundary -- the log went dark with nothing between the last traced call and the
+// crash, giving no visibility into what happened in between). Still nowhere near the
+// "millions of calls" scale the original comment above (now below) warns about avoiding
+// contention for. Revert to 256 once this specific investigation is done.
+constexpr uint32_t HleTraceLimit = 4096;
 std::atomic_uint32_t HleTraceCount{};
 
 thread_local Core::GuestCpu::HleCallFrame* ActiveHleCallFrame{};
@@ -59,12 +65,12 @@ HleGuestBridge::HleGuestBridge(HleCallRegistry& registry_, RangeValidator valida
       reporter{reporter_}, reporter_context{reporter_context_},
       executable_query{executable_query_}, executable_query_context{executable_query_context_} {}
 
-Fex::EngineResult<bool> HleGuestBridge::Invoke(HleCallFrame& frame) {
+AetherPS4::Fex::EngineResult<bool> HleGuestBridge::Invoke(HleCallFrame& frame) {
     const auto adapter = registry.Find(frame.operation);
     if (adapter == nullptr) {
         const HleCallFailure failure{ENOSYS, "unregistered HLE operation"};
         Report(failure);
-        return Fex::EngineFailure{Fex::EngineStage::Bridge, failure.error};
+        return AetherPS4::Fex::EngineFailure{AetherPS4::Fex::EngineStage::Bridge, failure.error};
     }
     // Tracing is intentionally bounded. Avoid a contended read-modify-write on every HLE call
     // after the trace window has filled; hot polling APIs can cross this bridge millions of times.
@@ -96,7 +102,7 @@ Fex::EngineResult<bool> HleGuestBridge::Invoke(HleCallFrame& frame) {
                          failure->error);
         }
         Report(*failure);
-        return Fex::EngineFailure{Fex::EngineStage::Bridge, failure->error};
+        return AetherPS4::Fex::EngineFailure{AetherPS4::Fex::EngineStage::Bridge, failure->error};
     }
     if (trace) {
         std::fprintf(stderr,
