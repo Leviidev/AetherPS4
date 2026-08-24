@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <boost/container/small_vector.hpp>
+#include "common/alignment.h"
 #include "common/assert.h"
 #include "common/debug.h"
 #include "common/div_ceil.h"
@@ -181,13 +182,22 @@ struct PageManager::Impl {
     std::jthread ufd_thread;
     int uffd;
 #else
+    inline static Impl* s_instance = nullptr;
+
     Impl(Vulkan::Rasterizer* rasterizer_) {
         rasterizer = rasterizer_;
+        s_instance = this;
 
         // Should be called first.
         constexpr auto priority = std::numeric_limits<u32>::min();
         Core::Signals::Instance()->RegisterAccessViolationHandler(GuestFaultSignalHandler,
                                                                   priority);
+    }
+
+    ~Impl() {
+        if (s_instance == this) {
+            s_instance = nullptr;
+        }
     }
 
     void OnMap(VAddr address, size_t size) {
@@ -209,7 +219,31 @@ struct PageManager::Impl {
 
     static bool GuestFaultSignalHandler(void* context, void* fault_address) {
         const auto addr = reinterpret_cast<VAddr>(fault_address);
-        if (Common::IsWriteError(context)) {
+        bool is_write = Common::IsWriteError(context);
+        size_t write_watcher_count = 0;
+        size_t read_watcher_count = 0;
+        if (s_instance) {
+            const size_t page = addr >> PM_PAGE_BITS;
+            // On 16KB host page systems (Darwin ARM64), 4 4KB PS4 pages share 1 host page.
+            constexpr size_t SUBPAGES_PER_HOST_PAGE = 16_KB / PM_PAGE_SIZE;
+            const size_t host_page_start = (page / SUBPAGES_PER_HOST_PAGE) * SUBPAGES_PER_HOST_PAGE;
+            for (size_t p = host_page_start;
+                 p < host_page_start + SUBPAGES_PER_HOST_PAGE && p < NUM_ADDRESS_PAGES; ++p) {
+                const auto state = s_instance->cached_pages[p];
+                write_watcher_count += state.num_write_watchers;
+                read_watcher_count += state.num_read_watchers;
+                if (state.num_write_watchers > 0) {
+                    is_write = true;
+                    if (p != page) {
+                        rasterizer->InvalidateMemory(p << PM_PAGE_BITS, PM_PAGE_SIZE);
+                    }
+                }
+            }
+        }
+        if (write_watcher_count == 0 && read_watcher_count == 0) {
+            return false;
+        }
+        if (is_write) {
             return rasterizer->InvalidateMemory(addr, 8);
         } else {
             return rasterizer->ReadMemory(addr, 8);
@@ -238,8 +272,38 @@ struct PageManager::Impl {
         const auto release_pending = [&] {
             if (range_bytes > 0) {
                 RENDERER_TRACE;
+                auto effective_perms = perms;
+#ifdef __APPLE__
+                // AddressSpace::Protect (address_space.cpp) rounds every mprotect() call out to
+                // the full enclosing HOST page on Apple platforms (16KB on Apple Silicon/iOS
+                // ARM64), not the PS4's own 4KB page granularity `perms` was computed at above.
+                // Passing `perms` (this range's own watcher state only) straight through would
+                // silently also change the REAL hardware permission of up to 3 sibling 4KB
+                // PS4-pages sharing that host page, with no update to THEIR watcher bookkeeping
+                // in `cached_pages` -- leaving them mprotected in a state their own watcher
+                // count doesn't reflect. GuestFaultSignalHandler already aggregates watcher
+                // counts across a full host page when deciding whether a fault belongs to it
+                // (see the SUBPAGES_PER_HOST_PAGE loop above); mirror that here on the write
+                // side, widening the permission actually applied to the intersection
+                // (most-restrictive) of every sub-page sharing a host page with this range, so
+                // the real hardware state always matches what that aggregate check expects.
+                const size_t host_page_size = sysconf(_SC_PAGESIZE);
+                if (host_page_size > PM_PAGE_SIZE) {
+                    const u64 range_addr = range_begin << PM_PAGE_BITS;
+                    const u64 range_end_addr = range_addr + range_bytes;
+                    const u64 host_aligned_begin =
+                        range_addr & ~(static_cast<u64>(host_page_size) - 1);
+                    const u64 host_aligned_end = Common::AlignUp(range_end_addr, host_page_size);
+                    for (u64 a = host_aligned_begin; a < host_aligned_end; a += PM_PAGE_SIZE) {
+                        const size_t p = a >> PM_PAGE_BITS;
+                        if (p < NUM_ADDRESS_PAGES) {
+                            effective_perms &= cached_pages[p].Perms();
+                        }
+                    }
+                }
+#endif
                 // Perform pending (un)protect action
-                Protect(range_begin << PM_PAGE_BITS, range_bytes, perms);
+                Protect(range_begin << PM_PAGE_BITS, range_bytes, effective_perms);
                 range_bytes = 0;
                 potential_range_bytes = 0;
             }
