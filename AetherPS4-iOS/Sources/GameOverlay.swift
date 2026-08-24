@@ -94,7 +94,11 @@ extension GameOverlayHost {
     static func pollUntilAttached() {
         guard hostingController == nil else { return }
         print("[AetherPS4] GameOverlayHost: starting to poll for SDL's UIWindow (background thread)")
-        DispatchQueue.global(qos: .utility).async {
+        // .userInitiated, not .utility: boot is exactly when the CPU-heavy JIT/module-loading
+        // work this poll needs to survive is happening, and .utility threads are among the
+        // first the scheduler starves under that kind of load -- a low-priority poll could
+        // stretch its nominal 100ms interval out far longer right when it matters most.
+        DispatchQueue.global(qos: .userInitiated).async {
             pollLoopNonisolated(attempt: 0)
         }
     }
