@@ -1038,9 +1038,17 @@ bool Rasterizer::InvalidateMemory(VAddr addr, u64 size) {
         // Not GPU mapped memory, can skip invalidation logic entirely.
         return false;
     }
-    buffer_cache.InvalidateMemory(addr, size);
-    texture_cache.InvalidateMemory(addr, size);
-    return true;
+    // IsMapped only confirms this address falls inside one of the broad windows the GPU
+    // *could* use -- not that a buffer or image is actually registered here. Reporting
+    // "handled" based on IsMapped alone (regardless of whether either cache below found
+    // anything to actually invalidate) was confirmed on-device as the cause of an
+    // infinite SIGBUS retry loop: ordinary CPU writes that merely land inside the same
+    // address range were swallowed here, the underlying page protection was never
+    // touched, and the exact same instruction faulted again on every retry forever. Only
+    // report handled when one of the caches actually did something.
+    const bool buffer_handled = buffer_cache.InvalidateMemory(addr, size);
+    const bool texture_handled = texture_cache.InvalidateMemory(addr, size);
+    return buffer_handled || texture_handled;
 }
 
 bool Rasterizer::ReadMemory(VAddr addr, u64 size) {

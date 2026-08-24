@@ -109,8 +109,11 @@ public:
         }
     }
 
-    /// Invalidates any buffer in the logical page range.
-    void InvalidateMemory(VAddr device_addr, u64 size);
+    /// Invalidates any buffer in the logical page range. Returns false if no registered
+    /// buffer actually covers this range (the page fault that triggered this call will
+    /// not have been resolved -- see the false-return path's own comment for why the
+    /// caller must not treat a false return here as "handled").
+    bool InvalidateMemory(VAddr device_addr, u64 size);
 
     /// Flushes any GPU modified buffer in the logical page range back to CPU memory.
     void ReadMemory(VAddr device_addr, u64 size, bool is_write = false);

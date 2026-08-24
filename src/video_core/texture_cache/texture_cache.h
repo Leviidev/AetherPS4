@@ -84,8 +84,10 @@ public:
         return tile_manager;
     }
 
-    /// Invalidates any image in the logical page range.
-    void InvalidateMemory(VAddr addr, size_t size);
+    /// Invalidates any image in the logical page range. Returns false if no image
+    /// actually overlaps this range (see BufferCache::InvalidateMemory's matching
+    /// comment -- the same "fault landed outside anything actually tracked" case).
+    bool InvalidateMemory(VAddr addr, size_t size);
 
     /// Marks an image as dirty if it exists at the provided address.
     void InvalidateMemoryFromGPU(VAddr address, size_t max_size);
