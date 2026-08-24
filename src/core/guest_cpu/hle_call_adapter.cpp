@@ -46,18 +46,9 @@ HleVeneerResult HleVeneerAllocator::Allocate(const HleCallAdapter& adapter) {
     if (const auto cached = veneers.find(adapter.Operation()); cached != veneers.end()) {
         return cached->second;
     }
-    const auto page_size = sysconf(_SC_PAGESIZE);
-    if (page_size <= 0) {
-        return HleVeneerFailure{errno == 0 ? EIO : errno};
-    }
-    const auto size = static_cast<std::size_t>(page_size);
-    void* const page = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (page == MAP_FAILED) {
-        return HleVeneerFailure{errno};
-    }
 
     constexpr std::size_t veneer_size = 16;
-    auto* const code = static_cast<u8*>(page);
+    u8 code[veneer_size];
     // mov r10, rcx preserves the fourth SysV argument across syscall's RCX clobber.
     // mov rax, operation; syscall; ret
     constexpr u8 preserve_fourth_argument[]{0x49, 0x89, 0xca};
@@ -69,7 +60,46 @@ HleVeneerResult HleVeneerAllocator::Allocate(const HleCallAdapter& adapter) {
     const auto operation_offset = sizeof(preserve_fourth_argument) + sizeof(prefix);
     std::memcpy(code + operation_offset, &operation, sizeof(operation));
     std::memcpy(code + operation_offset + sizeof(operation), suffix, sizeof(suffix));
-    __builtin___clear_cache(reinterpret_cast<char*>(code), reinterpret_cast<char*>(code + veneer_size));
+
+    u64 address;
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    // See VeneerBatch's own doc comment (hle_call_adapter.h) for why this batches into a
+    // shared dual-mapped region instead of one mmap+mprotect page per veneer.
+    constexpr std::size_t kVeneerBatchSize = 16 * 1024;
+    if (batches.empty() || batches.back().used + veneer_size > batches.back().region.size) {
+        auto region = Core::DualMappedRegion::Allocate(kVeneerBatchSize);
+        if (!region.IsValid()) {
+            return HleVeneerFailure{ENOMEM};
+        }
+        executable_ranges.push_back(
+            {reinterpret_cast<std::uintptr_t>(region.rx_addr), region.size, true, false});
+        batches.push_back(VeneerBatch{std::move(region), 0});
+    }
+    auto& batch = batches.back();
+    auto* const write_ptr = batch.region.rw_addr + batch.used;
+    auto* const exec_ptr = batch.region.rx_addr + batch.used;
+    std::memcpy(write_ptr, code, veneer_size);
+    // Both aliases need their own cache maintenance: dcache was dirtied at write_ptr, icache
+    // is what actually gets fetched from at exec_ptr (see ios_jit_allocator.h's own comments
+    // on this same requirement elsewhere in the codebase).
+    __builtin___clear_cache(reinterpret_cast<char*>(write_ptr),
+                            reinterpret_cast<char*>(write_ptr + veneer_size));
+    __builtin___clear_cache(reinterpret_cast<char*>(exec_ptr),
+                            reinterpret_cast<char*>(exec_ptr + veneer_size));
+    address = reinterpret_cast<u64>(exec_ptr);
+    batch.used += veneer_size;
+#else
+    const auto page_size = sysconf(_SC_PAGESIZE);
+    if (page_size <= 0) {
+        return HleVeneerFailure{errno == 0 ? EIO : errno};
+    }
+    const auto size = static_cast<std::size_t>(page_size);
+    void* const page = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page == MAP_FAILED) {
+        return HleVeneerFailure{errno};
+    }
+    std::memcpy(page, code, veneer_size);
+    __builtin___clear_cache(reinterpret_cast<char*>(page), reinterpret_cast<char*>(page) + veneer_size);
     if (mprotect(page, size, PROT_READ | PROT_EXEC) != 0) {
         const int error = errno;
         if (munmap(page, size) != 0) {
@@ -77,10 +107,11 @@ HleVeneerResult HleVeneerAllocator::Allocate(const HleCallAdapter& adapter) {
         }
         return HleVeneerFailure{error};
     }
-
     allocations.emplace_back(page, size);
     executable_ranges.push_back({reinterpret_cast<std::uintptr_t>(page), size, true, false});
-    const auto address = reinterpret_cast<u64>(page);
+    address = reinterpret_cast<u64>(page);
+#endif
+
     std::fprintf(stderr, "BACHATA_FEX_VENEER address=%#llx operation=%llu name=%.*s\n",
                  static_cast<unsigned long long>(address),
                  static_cast<unsigned long long>(adapter.Operation()),
