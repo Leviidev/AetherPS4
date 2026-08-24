@@ -174,6 +174,12 @@ private:
         RENDERER_TRACE;
         RegionBits mask = is_read ? (~gpu ^ readable) : (cpu ^ writeable);
         if (mask.None()) {
+            if constexpr (!is_read) {
+                LOG_CRITICAL(Render_Vulkan,
+                             "BACHATA_UPDATEPROT_NOOP: cpu_addr={:#x} track={} -- cpu/writeable "
+                             "bits already agree, no tracker call issued",
+                             cpu_addr, track);
+            }
             return;
         }
         if constexpr (is_read) {

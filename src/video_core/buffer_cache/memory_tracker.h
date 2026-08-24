@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "common/debug.h"
+#include "common/logging/log.h"
 #include "common/types.h"
 #include "core/emulator_settings.h"
 #include "video_core/buffer_cache/region_manager.h"
@@ -161,6 +162,11 @@ private:
                 } else {
                     func(manager, page_offset, copy_amount);
                 }
+            } else {
+                LOG_CRITICAL(Render_Vulkan,
+                             "BACHATA_NO_MANAGER: page_index={:#x} addr={:#x} -- no RegionManager "
+                             "was ever created for this 4MB region, call silently skipped",
+                             page_index, page_index << TRACKER_HIGHER_PAGE_BITS);
             }
             page_index++;
             page_offset = 0;
