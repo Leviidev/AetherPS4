@@ -45,6 +45,13 @@ public:
     void TogglePause();
     bool IsPaused() const;
 
+    /// Returns the SDL window for the currently-running game, or nullptr before Run() has
+    /// created one / after it has torn one down. See shadps4_ios_api.cpp's
+    /// shadps4_get_uikit_window() for why a host UI needs this.
+    Frontend::WindowSDL* GetWindow() const {
+        return window.get();
+    }
+
     /**
      * This will kill the current process and launch a new process with the same configuration
      * (using CLI args) but replacing the eboot image and guest arguments

@@ -91,6 +91,21 @@ void shadps4_register_first_frame_callback(void (*callback)(void));
 // attachment check, WILL crash the app when StikDebug isn't attached.
 int shadps4_probe_jit(void);
 
+// Returns the raw UIWindow* SDL created for the currently-running game (as an untyped
+// pointer, so this header stays C/Objective-C-agnostic; bridge it back with
+// `(__bridge UIWindow *)` or Swift's `Unmanaged<UIWindow>.fromOpaque(...).takeUnretainedValue()`
+// on the caller side), or NULL if no game is running. SDL creates this window itself --
+// it is a separate UIWindow from whatever hosts the app's own SwiftUI content, not a view
+// inside it -- so a host UI that wants native controls visible over gameplay must add them
+// as a subview of THIS window (or of its rootViewController's view), not of its own
+// window, since a second independent UIWindow was already confirmed on-device not to
+// repaint reliably once shadps4_run() takes the main thread's SDL run loop (see
+// mobile_overlay.h's header comment for that history). Only meaningful once SDL's window
+// actually exists -- call this from a shadps4_register_first_frame_callback() callback (or
+// later), not before shadps4_run() starts. Must be called from the main thread, same as
+// every other UIKit-touching call in this API.
+void* shadps4_get_uikit_window(void);
+
 #ifdef __cplusplus
 }
 #endif

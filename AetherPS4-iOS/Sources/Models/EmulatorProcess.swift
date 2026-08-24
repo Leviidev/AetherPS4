@@ -81,16 +81,17 @@ final class EmulatorProcess {
         // app delegate rather than a SwiftUI API.
         lockToLandscape()
 
-        // Loading state and the console log used to be a second UIWindow hosting
-        // SwiftUI, dismissed via shadps4_register_first_frame_callback -- confirmed
-        // on-device that nothing hosted there reliably repaints once shadps4_run()
-        // hands the screen/run loop to SDL (even a passive dismiss driven from a
-        // background-thread callback never visibly applied). That's now
-        // MobileOverlayLayer (src/platform/ios/mobile_overlay.cpp), rendered directly
-        // inside the Vulkan/ImGui frame loop -- the same mechanism the existing FPS
-        // counter uses, which keeps updating every frame regardless of what SDL is
-        // doing on the main thread. Nothing on the Swift side needs to drive it.
-        //
+        // Loading state and the console log now attach as a SwiftUI subview of SDL's own
+        // UIWindow once it exists (GameOverlay.swift's GameOverlayHost, triggered by the
+        // first-frame callback registered below) -- an experimental replacement for
+        // MobileOverlayLayer's ImGui-in-the-Vulkan-frame version (src/platform/ios/
+        // mobile_overlay.cpp), which itself exists because an *independent* second
+        // UIWindow was confirmed on-device to never reliably repaint once shadps4_run()
+        // hands the screen/run loop to SDL. See GameOverlayHost's own header comment for
+        // why attaching to SDL's window instead of a separate one might behave
+        // differently -- this still needs on-device confirmation.
+        shadps4_register_first_frame_callback(aetherGameOverlayFirstFrameCallback)
+
         // shadps4_run() MUST run on the main thread: SDL's UIKit backend creates the
         // window and drives its own event loop from whatever thread calls this, and
         // that has to be the app's real main thread. Once it starts, SDL owns the
@@ -103,6 +104,8 @@ final class EmulatorProcess {
         DispatchQueue.main.async { [weak self] in
             let result = pkgPath.withCString { shadps4_run($0) }
             guard let self else { return }
+            GameOverlayHost.detach()
+            shadps4_register_first_frame_callback(nil)
             self.appendLine(.stdout, "[AetherPS4] shadPS4 exited with status \(result)")
             self.state = .exited(status: result)
             self.unlockOrientation()

@@ -8,6 +8,9 @@
 #include <string>
 #include <string_view>
 
+#include <SDL3/SDL_properties.h>
+#include <SDL3/SDL_video.h>
+
 #include "common/frame_presented_flag.h"
 #include "common/key_manager.h"
 #include "common/logging/log.h"
@@ -161,4 +164,21 @@ extern "C" int shadps4_probe_jit() {
     const bool ok = region.IsValid();
     region.Release();
     return ok ? 1 : 0;
+}
+
+extern "C" void* shadps4_get_uikit_window() {
+    if (!g_init_ok) {
+        return nullptr;
+    }
+    auto* emulator = Common::Singleton<Core::Emulator>::Instance();
+    auto* window = emulator->GetWindow();
+    if (window == nullptr) {
+        return nullptr;
+    }
+    auto* sdl_window = window->GetSDLWindow();
+    if (sdl_window == nullptr) {
+        return nullptr;
+    }
+    return SDL_GetPointerProperty(SDL_GetWindowProperties(sdl_window),
+                                  SDL_PROP_WINDOW_UIKIT_WINDOW_POINTER, nullptr);
 }
