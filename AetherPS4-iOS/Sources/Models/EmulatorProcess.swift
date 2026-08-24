@@ -81,13 +81,12 @@ final class EmulatorProcess {
         // app delegate rather than a SwiftUI API.
         lockToLandscape()
 
-        // Loading state and the console log attach as a SwiftUI subview of SDL's own UIWindow
-        // once it exists (GameOverlay.swift's GameOverlayHost). Confirmed on-device that the
-        // previous Timer-on-RunLoop.main version of this polling was the actual cause of a
-        // real crash (disabling this one call site made it disappear); pollUntilAttached() now
-        // polls on a plain background thread instead and never touches the main thread until
-        // it has found the window -- see its own doc comment for the full story.
-        GameOverlayHost.pollUntilAttached()
+        // The loading screen is now GameLoadingCoverView, shown by ContentView the instant
+        // state flips to .running below -- not attached to SDL's window at all (see its own
+        // header comment for why GameOverlay.swift's GameOverlayHost approach, attaching a
+        // live-updating subview to SDL's window, never worked: confirmed on-device that no
+        // *new* work can be scheduled onto the main thread once shadps4_run() owns it, one way
+        // or another, across several different attempts at it).
 
         // shadps4_run() MUST run on the main thread: SDL's UIKit backend creates the
         // window and drives its own event loop from whatever thread calls this, and
@@ -101,7 +100,6 @@ final class EmulatorProcess {
         DispatchQueue.main.async { [weak self] in
             let result = pkgPath.withCString { shadps4_run($0) }
             guard let self else { return }
-            GameOverlayHost.detach()
             self.appendLine(.stdout, "[AetherPS4] shadPS4 exited with status \(result)")
             self.state = .exited(status: result)
             self.unlockOrientation()
