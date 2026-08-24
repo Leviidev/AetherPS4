@@ -238,10 +238,14 @@ static void* RunThread(void* arg) {
              curthread->tid.load(), curthread->name, reinterpret_cast<u64>(curthread->start_routine));
     g_curthread = curthread;
     Common::SetCurrentThreadName(curthread->name.c_str());
+    LOG_INFO(Kernel_Pthread, "BACHATA_RUNTHREAD: named tid={}", curthread->tid.load());
     DebugState.AddCurrentThreadToGuestList();
+    LOG_INFO(Kernel_Pthread, "BACHATA_RUNTHREAD: added to guest list tid={}", curthread->tid.load());
     Core::InitializeTLS();
+    LOG_INFO(Kernel_Pthread, "BACHATA_RUNTHREAD: TLS initialized tid={}", curthread->tid.load());
 
     curthread->native_thr.Initialize();
+    LOG_INFO(Kernel_Pthread, "BACHATA_RUNTHREAD: native_thr initialized tid={}", curthread->tid.load());
 
 #ifdef WIN32
     std::set_terminate(Common::Log::Terminate);
@@ -252,8 +256,11 @@ static void* RunThread(void* arg) {
         (void*)(((size_t)curthread->attr.stackaddr_attr + curthread->attr.stacksize_attr) & (~15));
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
     void* ret{};
-    if (Core::GuestCpu::IsGuestFunctionAddress(
-            reinterpret_cast<const void*>(curthread->start_routine))) {
+    const bool is_guest_addr = Core::GuestCpu::IsGuestFunctionAddress(
+        reinterpret_cast<const void*>(curthread->start_routine));
+    LOG_INFO(Kernel_Pthread, "BACHATA_RUNTHREAD: is_guest_addr={} tid={}", is_guest_addr,
+             curthread->tid.load());
+    if (is_guest_addr) {
         const std::array<u64, 1> start_arguments{reinterpret_cast<u64>(curthread->arg)};
         const auto guest_result = Core::GuestCpu::RunGuestFunctionOrAbort(
             reinterpret_cast<void*>(curthread->start_routine), start_arguments,
