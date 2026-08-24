@@ -82,15 +82,16 @@ final class EmulatorProcess {
         lockToLandscape()
 
         // Loading state and the console log now attach as a SwiftUI subview of SDL's own
-        // UIWindow once it exists (GameOverlay.swift's GameOverlayHost, triggered by the
-        // first-frame callback registered below) -- an experimental replacement for
-        // MobileOverlayLayer's ImGui-in-the-Vulkan-frame version (src/platform/ios/
-        // mobile_overlay.cpp), which itself exists because an *independent* second
-        // UIWindow was confirmed on-device to never reliably repaint once shadps4_run()
-        // hands the screen/run loop to SDL. See GameOverlayHost's own header comment for
-        // why attaching to SDL's window instead of a separate one might behave
-        // differently -- this still needs on-device confirmation.
-        shadps4_register_first_frame_callback(aetherGameOverlayFirstFrameCallback)
+        // UIWindow once it exists (GameOverlay.swift's GameOverlayHost, polling for the
+        // window rather than using shadps4_register_first_frame_callback -- see
+        // pollUntilAttached()'s own comment for why that callback doesn't fit here) -- an
+        // experimental replacement for MobileOverlayLayer's ImGui-in-the-Vulkan-frame
+        // version (src/platform/ios/mobile_overlay.cpp), which itself exists because an
+        // *independent* second UIWindow was confirmed on-device to never reliably repaint
+        // once shadps4_run() hands the screen/run loop to SDL. See GameOverlayHost's own
+        // header comment for why attaching to SDL's window instead of a separate one might
+        // behave differently -- this still needs on-device confirmation.
+        GameOverlayHost.pollUntilAttached()
 
         // shadps4_run() MUST run on the main thread: SDL's UIKit backend creates the
         // window and drives its own event loop from whatever thread calls this, and
@@ -105,7 +106,6 @@ final class EmulatorProcess {
             let result = pkgPath.withCString { shadps4_run($0) }
             guard let self else { return }
             GameOverlayHost.detach()
-            shadps4_register_first_frame_callback(nil)
             self.appendLine(.stdout, "[AetherPS4] shadPS4 exited with status \(result)")
             self.state = .exited(status: result)
             self.unlockOrientation()

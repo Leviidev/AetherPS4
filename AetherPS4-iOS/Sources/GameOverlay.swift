@@ -58,13 +58,32 @@ enum GameOverlayHost {
     }
 }
 
-// C-callable, non-capturing top-level function -- shadps4_register_first_frame_callback()
-// takes a plain C function pointer, so this can't be a closure with captures. Fires on the
-// Vulkan presenter's own render thread, never the main thread (see the C header's own doc
-// comment), so this hops to main before touching any UIKit/SwiftUI state.
-func aetherGameOverlayFirstFrameCallback() {
-    DispatchQueue.main.async {
-        GameOverlayHost.attach()
+extension GameOverlayHost {
+    // shadps4_register_first_frame_callback() looks like the natural fit here, but its
+    // underlying flag is scoped to the whole process's lifetime, not one shadps4_run() call
+    // -- "never resets to 0 again, even across game restarts within the same process" (its
+    // own doc comment). Confirmed on-device: it silently never fires for a second-or-later
+    // game launch in the same app session, which is exactly what a launch-time overlay
+    // needs. Polling shadps4_get_uikit_window() instead sidesteps that entirely -- it's a
+    // plain pointer read with no per-process state, safe to call as often as needed, and
+    // naturally becomes non-nil exactly once SDL's window exists for THIS run.
+    static func pollUntilAttached(attempt: Int = 0) {
+        guard hostingController == nil else { return }
+        if attempt == 0 {
+            aelog("GameOverlayHost: starting to poll for SDL's UIWindow")
+        }
+        if shadps4_get_uikit_window() != nil {
+            attach()
+            return
+        }
+        // Breadcrumb every ~2s (not every 100ms) so a run that never finds the window
+        // leaves clear evidence in the log without spamming it.
+        if attempt > 0 && attempt % 20 == 0 {
+            aelog("GameOverlayHost: still polling for SDL's UIWindow (attempt \(attempt))")
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            pollUntilAttached(attempt: attempt + 1)
+        }
     }
 }
 
