@@ -49,6 +49,15 @@ final class EmulatorProcess {
 
         configureJITEnvVars()
 
+        // Locking/forcing the rotation *before* state flips to .running and the loading
+        // cover starts presenting, not after: confirmed on-device that presenting a
+        // fullScreenCover while a forced interface rotation is also in flight is what was
+        // making the cover disappear once the rotation settled (visible mid-rotation, gone
+        // once it completed) -- a SwiftUI/UIKit modal-presentation-during-rotation
+        // interaction, not anything to do with SDL's window. See lockToLandscape's own
+        // comment for why the rotation itself is needed here at all.
+        lockToLandscape()
+
         self.runningGameName = gameName
         self.state = .running
 
@@ -74,15 +83,8 @@ final class EmulatorProcess {
 
         appendLine(.stdout, "[AetherPS4] Launching \(gameName)...")
 
-        // PS4 games are landscape-only; lock and force the rotation now so SDL's window
-        // is created in the right orientation from the start instead of the user having
-        // to manually rotate to fix content that renders "off screen" in portrait. See
-        // AppDelegate's doc comment (AetherPS4App.swift) for why this goes through the
-        // app delegate rather than a SwiftUI API.
-        lockToLandscape()
-
         // The loading screen is now GameLoadingCoverView, shown by ContentView the instant
-        // state flips to .running below -- not attached to SDL's window at all (see its own
+        // state flipped to .running above -- not attached to SDL's window at all (see its own
         // header comment for why GameOverlay.swift's GameOverlayHost approach, attaching a
         // live-updating subview to SDL's window, never worked: confirmed on-device that no
         // *new* work can be scheduled onto the main thread once shadps4_run() owns it, one way
@@ -106,6 +108,11 @@ final class EmulatorProcess {
         }
     }
 
+    // PS4 games are landscape-only; lock and force the rotation now so SDL's window is
+    // created in the right orientation from the start instead of the user having to
+    // manually rotate to fix content that renders "off screen" in portrait. Goes through
+    // the app delegate rather than a SwiftUI API -- see AppDelegate's doc comment
+    // (AetherPS4App.swift) for why.
     private func lockToLandscape() {
         AppDelegate.orientationLock = .landscape
         guard let scene = UIApplication.shared.connectedScenes
