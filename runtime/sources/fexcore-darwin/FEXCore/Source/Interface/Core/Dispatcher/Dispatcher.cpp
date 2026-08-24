@@ -2744,6 +2744,8 @@ Dispatcher::DiagnosticAddresses Dispatcher::GetDiagnosticAddresses() const {
     .Start = Start,
     .End = End,
     .ExitFunctionLinkerAddress = GetExitFunctionLinkerAddress(),
+    .DispatcherLoopTopAddress = reinterpret_cast<uint64_t>(
+        FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(AbsoluteLoopTopAddress))),
   };
 }
 

@@ -9,7 +9,13 @@
 #include <mutex>
 
 namespace {
-constexpr uint32_t HleTraceLimit = 256;
+// Temporarily widened from 256 while chasing a deterministic early-startup crash (Rocket
+// League: a wild guest branch to an unmapped address, always right at/after the old trace
+// limit's boundary -- the log went dark with nothing between the last traced call and the
+// crash, giving no visibility into what happened in between). Still nowhere near the
+// "millions of calls" scale the original comment above (now below) warns about avoiding
+// contention for. Revert to 256 once this specific investigation is done.
+constexpr uint32_t HleTraceLimit = 4096;
 std::atomic_uint32_t HleTraceCount{};
 
 thread_local Core::GuestCpu::HleCallFrame* ActiveHleCallFrame{};

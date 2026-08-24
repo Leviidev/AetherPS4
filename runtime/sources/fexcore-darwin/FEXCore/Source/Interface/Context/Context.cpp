@@ -74,14 +74,16 @@ bool FEXCore::Context::ContextImpl::DumpDispatcherStateForDiagnostics(FEXCore::C
   // (wrong) value in both columns.
   const int Written = std::snprintf(
     OutBuf, OutBufSize,
-    "dispatcher known-good: DispatchPtr=%#llx Start=%#llx End=%#llx ExitFunctionLinker=%#llx | "
+    "dispatcher known-good: DispatchPtr=%#llx Start=%#llx End=%#llx ExitFunctionLinker=%#llx "
+    "DispatcherLoopTop=%#llx | "
     "thread live Pointers: DispatcherLoopTop=%#llx%s ExitFunctionLinker=%#llx%s "
     "DispatcherLoopTopFillSRA=%#llx DispatcherLoopTopEnterEC=%#llx DispatcherLoopTopEnterECFillSRA=%#llx "
     "SignalReturnHandler=%#llx SignalReturnHandlerRT=%#llx ThreadStopHandlerSpillSRA=%#llx ThreadPauseHandlerSpillSRA=%#llx",
     static_cast<unsigned long long>(Known.DispatchPtr), static_cast<unsigned long long>(Known.Start),
     static_cast<unsigned long long>(Known.End), static_cast<unsigned long long>(Known.ExitFunctionLinkerAddress),
+    static_cast<unsigned long long>(Known.DispatcherLoopTopAddress),
     static_cast<unsigned long long>(Live.DispatcherLoopTop),
-    (Live.DispatcherLoopTop == Known.DispatchPtr ? "(matches DispatchPtr)" : "(MISMATCH vs DispatchPtr)"),
+    (Live.DispatcherLoopTop == Known.DispatcherLoopTopAddress ? "(matches)" : "(MISMATCH)"),
     static_cast<unsigned long long>(Live.ExitFunctionLinker),
     (Live.ExitFunctionLinker == Known.ExitFunctionLinkerAddress ? "(matches)" : "(MISMATCH)"),
     static_cast<unsigned long long>(Live.DispatcherLoopTopFillSRA), static_cast<unsigned long long>(Live.DispatcherLoopTopEnterEC),

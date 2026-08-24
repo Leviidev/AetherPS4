@@ -67,14 +67,21 @@ public:
   // Crash-diagnostic only: the dispatcher's own known-good, already-RX-translated entry
   // addresses, for direct comparison against whatever is actually stored in a live thread's
   // CpuStateFrame::Pointers at the moment of a crash (see BachataDumpDispatcherState in
-  // fex_guest_engine.cpp). If DispatchPtr here doesn't match what a crashing thread's
-  // Pointers.DispatcherLoopTop holds, that's a corrupted/stale/never-updated copy, not a
-  // translation bug in Dispatcher.cpp itself.
+  // fex_guest_engine.cpp). DispatchPtr is the dispatcher's function entry point (its very
+  // first emitted byte); DispatcherLoopTopAddress is a separate label further into the same
+  // generated code, past the prologue -- these are two genuinely different addresses by
+  // construction (confirmed: ~0xa0 bytes apart in EmitDispatcher, matching AbsoluteLoopTop's
+  // Bind() coming after several prologue instructions), not two copies of the same value.
+  // Compare each live Pointers field against its OWN matching field here, never against
+  // DispatchPtr for anything but Pointers.DispatchPtr itself -- an earlier version of this
+  // comparison did exactly that (Live.DispatcherLoopTop vs Known.DispatchPtr) and reported a
+  // permanent, meaningless "MISMATCH" on every single run, real corruption or not.
   struct DiagnosticAddresses {
     uint64_t DispatchPtr;
     uint64_t Start;
     uint64_t End;
     uint64_t ExitFunctionLinkerAddress;
+    uint64_t DispatcherLoopTopAddress;
   };
   DiagnosticAddresses GetDiagnosticAddresses() const;
 
