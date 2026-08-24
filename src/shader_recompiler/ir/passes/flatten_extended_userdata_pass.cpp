@@ -35,6 +35,19 @@
 #include <unistd.h>
 #endif
 
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
+#if defined(ARCH_ARM64) && defined(__APPLE__) && TARGET_OS_IPHONE
+// Darwin's <ucontext.h> hard-errors on the deprecated getcontext/setcontext/swapcontext
+// declarations unless _XOPEN_SOURCE is defined; only the ucontext_t/mcontext_t *types* are
+// needed below (matching common/sigsys_trap.cpp's identical guard for the same header).
+#define _XOPEN_SOURCE 1
+#include <ucontext.h>
+#include <mach/arm/thread_status.h>
+#include "core/ios/ios_jit_allocator.h"
+#endif
+
 #ifdef ARCH_X86_64
 
 using namespace Xbyak::util;
@@ -319,7 +332,7 @@ void FlattenExtendedUserdataPass(IR::Program& program) {
 
 } // namespace Shader::Optimization
 
-#elif defined(ARCH_ARM64) && defined(__linux__)
+#elif defined(ARCH_ARM64) && (defined(__linux__) || (defined(__APPLE__) && TARGET_OS_IPHONE))
 
 namespace {
 
@@ -338,6 +351,16 @@ struct SrtCodeRange {
     uintptr_t end{};
 };
 
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+// iOS can't flip a single mapping between writable and executable (no W^X toggle available
+// to a sideloaded app) -- Core::DualMappedRegion gives two separate virtual addresses backed
+// by the same physical pages instead, matching the pattern used everywhere else this port
+// needs to generate and run code at runtime (see core/ios/ios_jit_allocator.h). Its own
+// destructor already releases both mappings, so this struct needs nothing beyond the member.
+struct SrtCodeMapping {
+    Core::DualMappedRegion region;
+};
+#else
 struct SrtCodeMapping {
     u8* data{};
     size_t size{};
@@ -348,6 +371,7 @@ struct SrtCodeMapping {
         }
     }
 };
+#endif
 
 std::array<SrtCodeRange, MaxSrtCodeRanges> g_srt_code_ranges{};
 std::atomic_size_t g_srt_code_range_count{};
@@ -374,6 +398,22 @@ bool SrtWalkerSignalHandler(void* context, void* fault_address) {
 
     u32 instruction{};
     std::memcpy(&instruction, reinterpret_cast<const void*>(pc), sizeof(instruction));
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    // General-purpose x-registers (unlike pc/sp/fp/lr) aren't pointer-authentication-opaque
+    // on Apple Silicon, so they're addressable directly through __x[] rather than needing
+    // the arm_thread_state64_get_*/set_* accessor macros (see sigsys_trap.cpp's equivalent
+    // direct __x[8]/__x[0..5] reads for the same reasoning).
+    auto* signal_context = static_cast<ucontext_t*>(context);
+    auto& ts = signal_context->uc_mcontext->__ss;
+    if (instruction == Arm64LoadPointer) {
+        ts.__x[2] = 0;
+    } else if ((instruction & 0xffc003ffu) == 0xb9400043u ||
+               instruction == Arm64LoadDataRegisterOffset) {
+        ts.__x[3] = 0;
+    } else {
+        return false;
+    }
+#else
     auto* signal_context = static_cast<ucontext_t*>(context);
     if (instruction == Arm64LoadPointer) {
         signal_context->uc_mcontext.regs[2] = 0;
@@ -383,6 +423,7 @@ bool SrtWalkerSignalHandler(void* context, void* fault_address) {
     } else {
         return false;
     }
+#endif
     Common::IncrementRip(context, sizeof(u32));
     return true;
 }
@@ -501,6 +542,28 @@ PFN_SrtWalker RegisterWalkerCode(const u8* ptr, size_t size) {
         std::abort();
     }
 
+    auto mapping = std::make_unique<SrtCodeMapping>();
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    // Allocation, not "grant an address I already own" -- see ios_jit_allocator.h's top
+    // comment for why that second branch is a known-bad path this codebase avoids
+    // everywhere. rw_addr and rx_addr back the same physical pages, so writing through the
+    // former is immediately visible when later executed through the latter; both aliases
+    // still need their own cache maintenance (icache is fetched from rx_addr, dcache was
+    // dirtied at rw_addr -- one alias's invalidate does not cover the other's).
+    mapping->region = Core::DualMappedRegion::Allocate(size);
+    if (!mapping->region.IsValid()) {
+        LOG_CRITICAL(Render_Recompiler, "Unable to allocate ARM64 SRT walker (iOS dual-mapped JIT)");
+        std::abort();
+    }
+    std::memcpy(mapping->region.rw_addr, ptr, size);
+    __builtin___clear_cache(reinterpret_cast<char*>(mapping->region.rw_addr),
+                            reinterpret_cast<char*>(mapping->region.rw_addr + size));
+    __builtin___clear_cache(reinterpret_cast<char*>(mapping->region.rx_addr),
+                            reinterpret_cast<char*>(mapping->region.rx_addr + size));
+
+    const auto begin = reinterpret_cast<uintptr_t>(mapping->region.rx_addr);
+    auto* function = reinterpret_cast<PFN_SrtWalker>(mapping->region.rx_addr);
+#else
     const long page_size_result = sysconf(_SC_PAGESIZE);
     if (page_size_result <= 0) {
         LOG_CRITICAL(Render_Recompiler, "Unable to query host page size for ARM64 SRT walker");
@@ -508,7 +571,6 @@ PFN_SrtWalker RegisterWalkerCode(const u8* ptr, size_t size) {
     }
     const size_t page_size = static_cast<size_t>(page_size_result);
     const size_t mapping_size = (size + page_size - 1) & ~(page_size - 1);
-    auto mapping = std::make_unique<SrtCodeMapping>();
     mapping->data = static_cast<u8*>(
         mmap(nullptr, mapping_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
     mapping->size = mapping_size;
@@ -525,13 +587,15 @@ PFN_SrtWalker RegisterWalkerCode(const u8* ptr, size_t size) {
         std::abort();
     }
 
+    const auto begin = reinterpret_cast<uintptr_t>(mapping->data);
+    auto* function = reinterpret_cast<PFN_SrtWalker>(mapping->data);
+#endif
+
     std::call_once(g_srt_signal_once, [] {
         constexpr u32 priority = 1;
         Core::Signals::Instance()->RegisterAccessViolationHandler(SrtWalkerSignalHandler, priority);
     });
 
-    const auto begin = reinterpret_cast<uintptr_t>(mapping->data);
-    auto* function = reinterpret_cast<PFN_SrtWalker>(mapping->data);
     g_srt_code_mappings.push_back(std::move(mapping));
     g_srt_code_ranges[range_index] = {begin, begin + size};
     g_srt_code_range_count.store(range_index + 1, std::memory_order_release);
