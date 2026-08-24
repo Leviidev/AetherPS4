@@ -114,6 +114,46 @@ float PS4_SYSV_ABI internal_log10f(float x) {
     return log10f(x);
 }
 
+float PS4_SYSV_ABI internal_fmaxf(float x, float y) {
+    return std::fmax(x, y);
+}
+
+double PS4_SYSV_ABI internal_fmin(double x, double y) {
+    return std::fmin(x, y);
+}
+
+float PS4_SYSV_ABI internal_fminf(float x, float y) {
+    return std::fmin(x, y);
+}
+
+double PS4_SYSV_ABI internal_fmod(double x, double y) {
+    return std::fmod(x, y);
+}
+
+float PS4_SYSV_ABI internal_fmodf(float x, float y) {
+    return std::fmod(x, y);
+}
+
+float PS4_SYSV_ABI internal_frexpf(float x, int* exp) {
+    return std::frexp(x, exp);
+}
+
+double PS4_SYSV_ABI internal_ldexp(double x, int exp) {
+    return std::ldexp(x, exp);
+}
+
+float PS4_SYSV_ABI internal_ldexpf(float x, int exp) {
+    return std::ldexp(x, exp);
+}
+
+double PS4_SYSV_ABI internal_modf(double x, double* iptr) {
+    return std::modf(x, iptr);
+}
+
+float PS4_SYSV_ABI internal_roundf(float x) {
+    return std::round(x);
+}
+
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
 float PS4_SYSV_ABI fex_libc_fsin(float arg, u32 m, s32 n) {
     ASSERT(n == 0);
@@ -126,6 +166,26 @@ void RegisterFexLibcMathAliases(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("GZWjF-YIFFk", "libc", 1, "libc", internal_asinf);
     LIB_FUNCTION("QI-x0SL8jhw", "libc", 1, "libc", internal_acosf);
     LIB_FUNCTION("EH-x713A99c", "libc", 1, "libc", internal_atan2f);
+    LIB_FUNCTION("JBcgYuW8lPU", "libc", 1, "libc", internal_acos);
+    LIB_FUNCTION("7Ly52zaL44Q", "libc", 1, "libc", internal_asin);
+    LIB_FUNCTION("OXmauLdQ8kY", "libc", 1, "libc", internal_atan);
+    LIB_FUNCTION("HUbZmOnT-Dg", "libc", 1, "libc", internal_atan2);
+    LIB_FUNCTION("weDug8QD-lE", "libc", 1, "libc", internal_atanf);
+    LIB_FUNCTION("NVadfnzQhHQ", "libc", 1, "libc", internal_exp);
+    LIB_FUNCTION("wuAQt-j+p4o", "libc", 1, "libc", internal_exp2f);
+    LIB_FUNCTION("8zsu04XNsZ4", "libc", 1, "libc", internal_expf);
+    LIB_FUNCTION("Lyx2DzUL7Lc", "libc", 1, "libc", internal_fmaxf);
+    LIB_FUNCTION("iU0z6SdUNbI", "libc", 1, "libc", internal_fmin);
+    LIB_FUNCTION("uVRcM2yFdP4", "libc", 1, "libc", internal_fminf);
+    LIB_FUNCTION("pKwslsMUmSk", "libc", 1, "libc", internal_fmod);
+    LIB_FUNCTION("88Vv-AzHVj8", "libc", 1, "libc", internal_fmodf);
+    LIB_FUNCTION("aaDMGGkXFxo", "libc", 1, "libc", internal_frexpf);
+    LIB_FUNCTION("JrwFIMzKNr0", "libc", 1, "libc", internal_ldexp);
+    LIB_FUNCTION("kn0yiYeExgA", "libc", 1, "libc", internal_ldexpf);
+    LIB_FUNCTION("0WMHDb5Dt94", "libc", 1, "libc", internal_modf);
+    LIB_FUNCTION("1D0H2KNjshE", "libc", 1, "libc", internal_powf);
+    LIB_FUNCTION("DDHG1a6+3q0", "libc", 1, "libc", internal_roundf);
+    LIB_FUNCTION("T7uyNqP7vQA", "libc", 1, "libc", internal_tan);
 }
 #endif
 

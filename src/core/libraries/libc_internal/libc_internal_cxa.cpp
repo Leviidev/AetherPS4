@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <cstdlib>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
@@ -111,10 +112,70 @@ int PS4_SYSV_ABI fex_libc_cxa_atexit(void (*func)(void*), void* arg, void* dso_h
     return 0;
 }
 
+// __cxa_pure_virtual: called if a vtable slot for a pure virtual function is ever actually
+// invoked (should never happen with a correctly-formed vtable; if this fires it means our
+// vtable/RTTI translation has drifted from what the guest expects). No sane way to "return"
+// from this -- the real libstdc++/libc++ implementations abort too.
+[[noreturn]] void PS4_SYSV_ABI fex_libc_cxa_pure_virtual() {
+    LOG_CRITICAL(Lib_LibcInternal, "__cxa_pure_virtual: pure virtual function called");
+    std::abort();
+}
+
+[[noreturn]] void PS4_SYSV_ABI fex_libc_std_terminate() {
+    LOG_CRITICAL(Lib_LibcInternal, "std::terminate() called by guest code");
+    std::abort();
+}
+
+[[noreturn]] void PS4_SYSV_ABI fex_libc_xbad_alloc() {
+    LOG_CRITICAL(Lib_LibcInternal, "std::bad_alloc thrown by guest code (no exception "
+                                   "unwinding support -- terminating)");
+    std::abort();
+}
+
+[[noreturn]] void PS4_SYSV_ABI fex_libc_xlength_error(const char* msg) {
+    LOG_CRITICAL(Lib_LibcInternal, "std::length_error thrown by guest code: {} (no exception "
+                                   "unwinding support -- terminating)",
+                msg ? msg : "(null)");
+    std::abort();
+}
+
+[[noreturn]] void PS4_SYSV_ABI fex_libc_xout_of_range(const char* msg) {
+    LOG_CRITICAL(Lib_LibcInternal, "std::out_of_range thrown by guest code: {} (no exception "
+                                   "unwinding support -- terminating)",
+                msg ? msg : "(null)");
+    std::abort();
+}
+
+void* PS4_SYSV_ABI fex_libc_operator_new(u64 size) {
+    return ::operator new(size);
+}
+
+void* PS4_SYSV_ABI fex_libc_operator_new_array(u64 size) {
+    return ::operator new[](size);
+}
+
+void PS4_SYSV_ABI fex_libc_operator_delete(void* ptr) {
+    ::operator delete(ptr);
+}
+
+void PS4_SYSV_ABI fex_libc_operator_delete_array(void* ptr) {
+    ::operator delete[](ptr);
+}
+
 void RegisterFexLibcCxaAliases(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("3GPpjQdAMTw", "libc", 1, "libc", fex_libc_cxa_guard_acquire);
     LIB_FUNCTION("9rAeANT2tyE", "libc", 1, "libc", fex_libc_cxa_guard_release);
     LIB_FUNCTION("2emaaluWzUw", "libc", 1, "libc", fex_libc_cxa_guard_abort);
+    LIB_FUNCTION("tsvEmnenz48", "libc", 1, "libc", fex_libc_cxa_atexit);
+    LIB_FUNCTION("zr094EQ39Ww", "libc", 1, "libc", fex_libc_cxa_pure_virtual);
+    LIB_FUNCTION("qYhnoevd9bI", "libc", 1, "libc", fex_libc_std_terminate);
+    LIB_FUNCTION("eT2UsmTewbU", "libc", 1, "libc", fex_libc_xbad_alloc);
+    LIB_FUNCTION("tQIo+GIPklo", "libc", 1, "libc", fex_libc_xlength_error);
+    LIB_FUNCTION("ozMAr28BwSY", "libc", 1, "libc", fex_libc_xout_of_range);
+    LIB_FUNCTION("fJnpuVVBbKk", "libc", 1, "libc", fex_libc_operator_new);
+    LIB_FUNCTION("hdm0YfMa7TQ", "libc", 1, "libc", fex_libc_operator_new_array);
+    LIB_FUNCTION("z+P+xCnWLBk", "libc", 1, "libc", fex_libc_operator_delete);
+    LIB_FUNCTION("MLWl90SFWNE", "libc", 1, "libc", fex_libc_operator_delete_array);
     // FEX adapter looks up C++ runtime symbols under libSceLibcInternal.
     LIB_FUNCTION("3GPpjQdAMTw", "libSceLibcInternal", 1, "libSceLibcInternal",
                  fex_libc_cxa_guard_acquire);

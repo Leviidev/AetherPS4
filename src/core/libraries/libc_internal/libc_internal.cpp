@@ -7,6 +7,7 @@
 #include "core/libraries/error_codes.h"
 #include "core/libraries/libs.h"
 #include "libc_internal.h"
+#include "libc_internal_crt.h"
 #include "libc_internal_cxa.h"
 #include "libc_internal_io.h"
 #include "libc_internal_math.h"
@@ -23,6 +24,7 @@ void RegisterLib(Core::Loader::SymbolsResolver* sym) {
     RegisterlibSceLibcInternalMemory(sym);
     RegisterlibSceLibcInternalIo(sym);
     RegisterlibSceLibcInternalThreads(sym);
+    RegisterlibSceLibcInternalCrt(sym);
 }
 
 void ForceRegisterLib(Core::Loader::SymbolsResolver* sym) {
@@ -33,6 +35,8 @@ void ForceRegisterLib(Core::Loader::SymbolsResolver* sym) {
     RegisterFexLibcMathAliases(sym);
     RegisterFexLibcStrAliases(sym);
     RegisterFexLibcCxaAliases(sym);
+    RegisterFexLibcIoAliases(sym);
+    RegisterFexLibcCrtAliases(sym);
 #endif
 }
 } // namespace Libraries::LibcInternal
