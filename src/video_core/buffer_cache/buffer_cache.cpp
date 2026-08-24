@@ -78,17 +78,23 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
 
 BufferCache::~BufferCache() = default;
 
-void BufferCache::InvalidateMemory(VAddr device_addr, u64 size) {
+bool BufferCache::InvalidateMemory(VAddr device_addr, u64 size) {
     if (!IsRegionRegistered(device_addr, size)) {
-        LOG_CRITICAL(Render_Vulkan,
-                     "BACHATA_INVALIDATE_NOOP: addr={:#x} size={:#x} not registered as a "
-                     "tracked buffer region -- page fault will not actually be resolved, "
-                     "caller will still report this as handled",
-                     device_addr, size);
-        return;
+        // Confirmed on-device as the root cause of an infinite SIGBUS retry loop: this
+        // address isn't a buffer this cache is tracking at all (e.g. ordinary loader/CPU
+        // writes to module or stack memory that merely happen to fall inside the same
+        // broad "GPU-mappable" address windows a real buffer could occupy -- see
+        // Rasterizer::InvalidateMemory's IsMapped check, which is deliberately broader
+        // than "is a buffer actually registered here"). Returning false lets the caller
+        // correctly report this fault as NOT handled by the buffer cache, so signals.cpp's
+        // handler chain can fall through to whichever handler (or the real diagnostic/
+        // crash path) can actually resolve it, instead of retrying the same faulting
+        // instruction forever against a page whose protection was never touched.
+        return false;
     }
     memory_tracker->InvalidateRegion(
         device_addr, size, [this, device_addr, size] { ReadMemory(device_addr, size, true); });
+    return true;
 }
 
 void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write) {
