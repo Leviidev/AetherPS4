@@ -200,6 +200,15 @@ s32 PS4_SYSV_ABI sceNpCreateAsyncRequest(const OrbisNpCreateAsyncRequestParamete
     return CreateNpRequest(true);
 }
 
+s32 PS4_SYSV_ABI sceNpNotifyPlusFeature(s32 feature) {
+    // Notifies the OS which PS Plus-gated feature the game is about to use (for the
+    // system's own PS Plus upsell/requirement UI, not something the game reads a result
+    // from) -- accept unconditionally since there is no PS Plus subscription state to
+    // check against here.
+    LOG_INFO(Lib_NpManager, "called, feature = {}", feature);
+    return ORBIS_OK;
+}
+
 s32 PS4_SYSV_ABI sceNpCheckNpAvailability(s32 req_id, OrbisNpOnlineId* online_id) {
     if (online_id == nullptr) {
         return ORBIS_NP_ERROR_INVALID_ARGUMENT;
@@ -278,7 +287,7 @@ s32 PS4_SYSV_ABI sceNpCheckPlus(s32 req_id, const OrbisNpCheckPlusParameter* par
         return CompleteRequest(*req, ORBIS_NP_ERROR_SIGNED_OUT);
     }
     LOG_DEBUG(Lib_NpManager, "req_id = {:#x}, features = {:#x}", req_id, param->features);
-    // Grant PS+ — shadNet has no subscription gating.
+    // Grant PS+ ï¿½ shadNet has no subscription gating.
     result->authorized = true;
     return CompleteRequest(*req, ORBIS_OK);
 }
@@ -1073,6 +1082,7 @@ void RegisterLib(Core::Loader::SymbolsResolver* sym) {
                  sceNpGetGamePresenceStatus);
     LIB_FUNCTION("ilwLM4zOmu4", "libSceNpManagerCompat", 1, "libSceNpManager",
                  sceNpGetParentalControlInfo);
+    LIB_FUNCTION("Gaxrp3EWY-M", "libSceNpManager", 1, "libSceNpManager", sceNpNotifyPlusFeature);
 };
 
 } // namespace Libraries::Np::NpManager

@@ -716,6 +716,10 @@ set(NP_LIBS src/core/libraries/np/np_error.h
             src/core/libraries/np/np_sns_facebook_dialog.h
             src/core/libraries/np/np_partner.cpp
             src/core/libraries/np/np_partner.h
+            src/core/libraries/np/np_misc_dialogs.cpp
+            src/core/libraries/np/np_misc_dialogs.h
+            src/core/libraries/np/np_misc_apis.cpp
+            src/core/libraries/np/np_misc_apis.h
             src/core/libraries/np/object_manager.h
             src/core/libraries/np/np_handler.cpp
             src/core/libraries/np/np_handler.h
