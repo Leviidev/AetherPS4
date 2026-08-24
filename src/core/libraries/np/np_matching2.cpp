@@ -768,6 +768,216 @@ int PS4_SYSV_ABI sceNpMatching2SetRoomDataInternal(OrbisNpMatching2ContextId ctx
     return ORBIS_OK;
 }
 
+int PS4_SYSV_ABI sceNpMatching2ContextStop(OrbisNpMatching2ContextId ctxId) {
+    LOG_DEBUG(Lib_NpMatching2, "called, ctxId = {}", ctxId);
+    if (!g_initialized) {
+        return ORBIS_NP_MATCHING2_ERROR_NOT_INITIALIZED;
+    }
+    return ORBIS_OK;
+}
+
+int PS4_SYSV_ABI sceNpMatching2DestroyContext(OrbisNpMatching2ContextId ctxId) {
+    LOG_DEBUG(Lib_NpMatching2, "called, ctxId = {}", ctxId);
+    if (!g_initialized) {
+        return ORBIS_NP_MATCHING2_ERROR_NOT_INITIALIZED;
+    }
+    return ORBIS_OK;
+}
+
+int PS4_SYSV_ABI sceNpMatching2JoinRoom(OrbisNpMatching2ContextId ctxId, void* request,
+                                        OrbisNpMatching2RequestOptParam* requestOpt,
+                                        OrbisNpMatching2RequestId* requestId) {
+    // No real matchmaking server exists to have a room to join -- reported as invalid
+    // argument up front (matching the pattern of the null-request checks above) rather
+    // than accepting a request whose response can never legitimately arrive.
+    LOG_DEBUG(Lib_NpMatching2, "called, ctxId = {}, requestOpt = {}", ctxId, fmt::ptr(requestOpt));
+    if (!g_initialized) {
+        return ORBIS_NP_MATCHING2_ERROR_NOT_INITIALIZED;
+    }
+    if (!request || !requestId) {
+        return ORBIS_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
+    }
+    static OrbisNpMatching2RequestId id = 1500;
+    *requestId = id++;
+    return ORBIS_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
+}
+
+// Room-membership actions below (grant owner, kick, per-member data, chat) all target a
+// specific other room member -- something that can't exist without real network
+// matchmaking. Accepted and reported successful with no lasting effect (there is nothing
+// to fail against with only the local player ever in a room), same honest-limitation
+// approach as CreateJoinRoomA's single-member room.
+int PS4_SYSV_ABI sceNpMatching2GrantRoomOwner(OrbisNpMatching2ContextId ctxId, void* request,
+                                              OrbisNpMatching2RequestOptParam* requestOpt,
+                                              OrbisNpMatching2RequestId* requestId) {
+    LOG_DEBUG(Lib_NpMatching2, "called, ctxId = {}, requestOpt = {}", ctxId, fmt::ptr(requestOpt));
+    if (!g_initialized) {
+        return ORBIS_NP_MATCHING2_ERROR_NOT_INITIALIZED;
+    }
+    if (!request || !requestId) {
+        return ORBIS_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
+    }
+    static OrbisNpMatching2RequestId id = 1600;
+    *requestId = id++;
+    return ORBIS_OK;
+}
+
+int PS4_SYSV_ABI sceNpMatching2KickoutRoomMember(OrbisNpMatching2ContextId ctxId, void* request,
+                                                 OrbisNpMatching2RequestOptParam* requestOpt,
+                                                 OrbisNpMatching2RequestId* requestId) {
+    LOG_DEBUG(Lib_NpMatching2, "called, ctxId = {}, requestOpt = {}", ctxId, fmt::ptr(requestOpt));
+    if (!g_initialized) {
+        return ORBIS_NP_MATCHING2_ERROR_NOT_INITIALIZED;
+    }
+    if (!request || !requestId) {
+        return ORBIS_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
+    }
+    static OrbisNpMatching2RequestId id = 1700;
+    *requestId = id++;
+    return ORBIS_OK;
+}
+
+int PS4_SYSV_ABI sceNpMatching2SetRoomMemberDataInternal(OrbisNpMatching2ContextId ctxId,
+                                                         void* request,
+                                                         OrbisNpMatching2RequestOptParam* requestOpt,
+                                                         OrbisNpMatching2RequestId* requestId) {
+    LOG_DEBUG(Lib_NpMatching2, "called, ctxId = {}, requestOpt = {}", ctxId, fmt::ptr(requestOpt));
+    if (!g_initialized) {
+        return ORBIS_NP_MATCHING2_ERROR_NOT_INITIALIZED;
+    }
+    if (!request || !requestId) {
+        return ORBIS_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
+    }
+    static OrbisNpMatching2RequestId id = 1800;
+    *requestId = id++;
+    return ORBIS_OK;
+}
+
+int PS4_SYSV_ABI sceNpMatching2SendRoomChatMessage(OrbisNpMatching2ContextId ctxId, void* request,
+                                                   OrbisNpMatching2RequestOptParam* requestOpt,
+                                                   OrbisNpMatching2RequestId* requestId) {
+    LOG_DEBUG(Lib_NpMatching2, "called, ctxId = {}, requestOpt = {}", ctxId, fmt::ptr(requestOpt));
+    if (!g_initialized) {
+        return ORBIS_NP_MATCHING2_ERROR_NOT_INITIALIZED;
+    }
+    if (!request || !requestId) {
+        return ORBIS_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
+    }
+    static OrbisNpMatching2RequestId id = 1900;
+    *requestId = id++;
+    return ORBIS_OK;
+}
+
+// Stored but never invoked: no real remote room member will ever send a message for this
+// to deliver (matches sceNpMatching2RegisterRoomEventCallback's storage pattern above,
+// but there is no ProcessEvents queue feeding it since nothing produces chat events).
+std::function<void(OrbisNpMatching2ContextId, OrbisNpMatching2RoomId, void*, void*)>
+    npMatching2RoomMessageCallback = nullptr;
+
+int PS4_SYSV_ABI sceNpMatching2RegisterRoomMessageCallback(
+    OrbisNpMatching2ContextId ctxId,
+    void PS4_SYSV_ABI (*callback)(OrbisNpMatching2ContextId, OrbisNpMatching2RoomId, void*, void*,
+                                  void*),
+    void* userdata) {
+    LOG_DEBUG(Lib_NpMatching2, "called, ctxId = {}, userdata = {}", ctxId, userdata);
+    if (!g_initialized) {
+        return ORBIS_NP_MATCHING2_ERROR_NOT_INITIALIZED;
+    }
+    npMatching2RoomMessageCallback = [callback, userdata](auto ctx, auto room, auto from,
+                                                          auto data) {
+        callback(ctx, room, from, data, userdata);
+    };
+    return ORBIS_OK;
+}
+
+struct OrbisNpMatching2SignalingConnectionInfo {
+    s32 connStatus;
+    u32 peerAddr;
+    u16 peerPort;
+    u8 padding[2];
+};
+
+int PS4_SYSV_ABI sceNpMatching2SignalingGetConnectionStatus(
+    OrbisNpMatching2ContextId ctxId, OrbisNpMatching2RoomId roomId,
+    OrbisNpMatching2RoomMemberId peerMemberId, s32* connStatus, u32* peerAddr, u16* peerPort) {
+    LOG_DEBUG(Lib_NpMatching2, "called, ctxId = {}, roomId = {}, peerMemberId = {}", ctxId, roomId,
+              peerMemberId);
+    if (!g_initialized) {
+        return ORBIS_NP_MATCHING2_ERROR_NOT_INITIALIZED;
+    }
+    // No real P2P signaling is implemented -- report "not connected" (0) rather than
+    // fabricating a connected state the game would then try to actually use.
+    if (connStatus != nullptr) {
+        *connStatus = 0;
+    }
+    if (peerAddr != nullptr) {
+        *peerAddr = 0;
+    }
+    if (peerPort != nullptr) {
+        *peerPort = 0;
+    }
+    return ORBIS_OK;
+}
+
+int PS4_SYSV_ABI sceNpMatching2SignalingGetLocalNetInfo(OrbisNpMatching2ContextId ctxId,
+                                                        void* netInfo) {
+    LOG_DEBUG(Lib_NpMatching2, "called, ctxId = {}, netInfo = {}", ctxId, netInfo);
+    if (!g_initialized) {
+        return ORBIS_NP_MATCHING2_ERROR_NOT_INITIALIZED;
+    }
+    if (netInfo == nullptr) {
+        return ORBIS_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
+    }
+    // No real NAT/network-type detection is implemented; zeroed output rather than a
+    // guessed struct layout beyond what the connection-status accessors above return.
+    std::memset(netInfo, 0, 64);
+    return ORBIS_OK;
+}
+
+int PS4_SYSV_ABI sceNpMatching2SignalingGetPingInfo(OrbisNpMatching2ContextId ctxId,
+                                                     OrbisNpMatching2RoomId roomId,
+                                                     OrbisNpMatching2RoomMemberId peerMemberId,
+                                                     void* pingInfo) {
+    LOG_DEBUG(Lib_NpMatching2, "called, ctxId = {}, roomId = {}, peerMemberId = {}", ctxId, roomId,
+              peerMemberId);
+    if (!g_initialized) {
+        return ORBIS_NP_MATCHING2_ERROR_NOT_INITIALIZED;
+    }
+    if (pingInfo == nullptr) {
+        return ORBIS_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
+    }
+    std::memset(pingInfo, 0, 32);
+    return ORBIS_OK;
+}
+
+int PS4_SYSV_ABI sceNpMatching2CreateJoinRoom(OrbisNpMatching2ContextId ctxId, void* request,
+                                              OrbisNpMatching2RequestOptParam* requestOpt,
+                                              OrbisNpMatching2RequestId* requestId) {
+    // Older (pre-"A" suffix) struct variant of sceNpMatching2CreateJoinRoomA. Rather than
+    // duplicate that function's real single-member room construction against a second,
+    // unverified struct layout, delegate the request-id/init bookkeeping here and let the
+    // caller's own optParam callback (if any) fire with a generic success -- accurate
+    // enough for games using the older API purely to establish a local-only session.
+    LOG_DEBUG(Lib_NpMatching2, "called, ctxId = {}, requestOpt = {}", ctxId, fmt::ptr(requestOpt));
+    if (!g_initialized) {
+        return ORBIS_NP_MATCHING2_ERROR_NOT_INITIALIZED;
+    }
+    if (!request || !requestId) {
+        return ORBIS_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
+    }
+    static OrbisNpMatching2RequestId id = 2000;
+    *requestId = id++;
+    if (auto optParam = GetOptParam(requestOpt); optParam) {
+        std::scoped_lock lk{g_responses_mutex};
+        auto reqIdCopy = *requestId;
+        g_responses.emplace_back([=]() {
+            optParam->callback(ctxId, reqIdCopy, ORBIS_NP_MATCHING2_REQUEST_EVENT_CREATE_JOIN_ROOM,
+                               0, nullptr, optParam->arg);
+        });
+    }
+    return ORBIS_OK;
+}
+
 void RegisterLib(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("10t3e5+JPnU", "libSceNpMatching2", 1, "libSceNpMatching2",
                  sceNpMatching2Initialize);
@@ -807,6 +1017,30 @@ void RegisterLib(Core::Loader::SymbolsResolver* sym) {
                  sceNpMatching2SetRoomDataExternal);
     LIB_FUNCTION("S9D8JSYIrjE", "libSceNpMatching2", 1, "libSceNpMatching2",
                  sceNpMatching2SetRoomDataInternal);
+    LIB_FUNCTION("-f6M4caNe8k", "libSceNpMatching2", 1, "libSceNpMatching2",
+                 sceNpMatching2ContextStop);
+    LIB_FUNCTION("Nz-ZE7ur32I", "libSceNpMatching2", 1, "libSceNpMatching2",
+                 sceNpMatching2DestroyContext);
+    LIB_FUNCTION("CSIMDsVjs-g", "libSceNpMatching2", 1, "libSceNpMatching2",
+                 sceNpMatching2JoinRoom);
+    LIB_FUNCTION("NCP3bLGPt+o", "libSceNpMatching2", 1, "libSceNpMatching2",
+                 sceNpMatching2GrantRoomOwner);
+    LIB_FUNCTION("AUVfU6byg3c", "libSceNpMatching2", 1, "libSceNpMatching2",
+                 sceNpMatching2KickoutRoomMember);
+    LIB_FUNCTION("HoqTrkS9c5Q", "libSceNpMatching2", 1, "libSceNpMatching2",
+                 sceNpMatching2SetRoomMemberDataInternal);
+    LIB_FUNCTION("opDpl74pi2E", "libSceNpMatching2", 1, "libSceNpMatching2",
+                 sceNpMatching2SendRoomChatMessage);
+    LIB_FUNCTION("uBESzz4CQws", "libSceNpMatching2", 1, "libSceNpMatching2",
+                 sceNpMatching2RegisterRoomMessageCallback);
+    LIB_FUNCTION("tHD5FPFXtu4", "libSceNpMatching2", 1, "libSceNpMatching2",
+                 sceNpMatching2SignalingGetConnectionStatus);
+    LIB_FUNCTION("380EWm2DrVg", "libSceNpMatching2", 1, "libSceNpMatching2",
+                 sceNpMatching2SignalingGetLocalNetInfo);
+    LIB_FUNCTION("wUmwXZHaX1w", "libSceNpMatching2", 1, "libSceNpMatching2",
+                 sceNpMatching2SignalingGetPingInfo);
+    LIB_FUNCTION("zCWZmXXN600", "libSceNpMatching2", 1, "libSceNpMatching2",
+                 sceNpMatching2CreateJoinRoom);
 };
 
 } // namespace Libraries::Np::NpMatching2

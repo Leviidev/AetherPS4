@@ -34,11 +34,14 @@
 #include "core/libraries/network/netctl.h"
 #include "core/libraries/network/ssl.h"
 #include "core/libraries/network/ssl2.h"
+#include "core/libraries/ngs2/ngs2.h"
 #include "core/libraries/np/np_auth.h"
 #include "core/libraries/np/np_commerce.h"
 #include "core/libraries/np/np_common.h"
 #include "core/libraries/np/np_manager.h"
 #include "core/libraries/np/np_matching2.h"
+#include "core/libraries/np/np_misc_apis.h"
+#include "core/libraries/np/np_misc_dialogs.h"
 #include "core/libraries/np/np_partner.h"
 #include "core/libraries/np/np_party.h"
 #include "core/libraries/np/np_profile_dialog/np_profile_dialog.h"
@@ -94,6 +97,11 @@ void InitHLELibs(Core::Loader::SymbolsResolver* sym) {
     Libraries::CommonDialog::RegisterLib(sym);
     Libraries::MsgDialog::RegisterLib(sym);
     Libraries::AudioOut::RegisterLib(sym);
+    // Same class of gap as libSceRtc above: fully implemented but only ever registered
+    // via the sysmodule-load-gated table, so any game using NGS2 audio without an
+    // explicit sceSysmoduleLoadModule("libSceNgs2.sprx") call got ENOSYS for every
+    // sceNgs2* function.
+    Libraries::Ngs2::RegisterLib(sym);
     Libraries::Http::RegisterLib(sym);
     Libraries::Http2::RegisterLib(sym);
     Libraries::Net::RegisterLib(sym);
@@ -119,6 +127,8 @@ void InitHLELibs(Core::Loader::SymbolsResolver* sym) {
     Libraries::Np::NpParty::RegisterLib(sym);
     Libraries::Np::NpPartner::RegisterLib(sym);
     Libraries::Np::NpTus::RegisterLib(sym);
+    Libraries::Np::MiscDialogs::RegisterLib(sym);
+    Libraries::Np::MiscApis::RegisterLib(sym);
     Libraries::ScreenShot::RegisterLib(sym);
     Libraries::AppContent::RegisterLib(sym);
     Libraries::PngDec::RegisterLib(sym);
