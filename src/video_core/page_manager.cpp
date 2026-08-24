@@ -324,6 +324,15 @@ struct PageManager::Impl {
             // Apply the change to the page state
             const u8 new_count = state.AddDelta<track ? 1 : -1, is_read>();
 
+            if constexpr (!track && !is_read) {
+                if (new_count != 0) {
+                    LOG_CRITICAL(Render_Vulkan,
+                                 "BACHATA_STILL_PROTECTED: addr={:#x} new_count={} -- another "
+                                 "reference is still holding write-protection on this page",
+                                 page << PM_PAGE_BITS, new_count);
+                }
+            }
+
             if (auto new_perms = state.Perms(); new_perms != perms) [[unlikely]] {
                 // If the protection changed add pending (un)protect action
                 release_pending();
@@ -388,6 +397,15 @@ struct PageManager::Impl {
             // Apply the change to the page state
             const u8 new_count =
                 update ? state.AddDelta<track ? 1 : -1, is_read>() : state.AddDelta<0, is_read>();
+
+            if constexpr (!track && !is_read) {
+                if (update && new_count != 0) {
+                    LOG_CRITICAL(Render_Vulkan,
+                                 "BACHATA_STILL_PROTECTED: addr={:#x} new_count={} -- another "
+                                 "reference is still holding write-protection on this page",
+                                 (base_page + page) << PM_PAGE_BITS, new_count);
+                }
+            }
 
             if (auto new_perms = state.Perms(); new_perms != perms) [[unlikely]] {
                 // If the protection changed add pending (un)protect action
