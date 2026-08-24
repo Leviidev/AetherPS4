@@ -80,6 +80,11 @@ BufferCache::~BufferCache() = default;
 
 void BufferCache::InvalidateMemory(VAddr device_addr, u64 size) {
     if (!IsRegionRegistered(device_addr, size)) {
+        LOG_CRITICAL(Render_Vulkan,
+                     "BACHATA_INVALIDATE_NOOP: addr={:#x} size={:#x} not registered as a "
+                     "tracked buffer region -- page fault will not actually be resolved, "
+                     "caller will still report this as handled",
+                     device_addr, size);
         return;
     }
     memory_tracker->InvalidateRegion(
