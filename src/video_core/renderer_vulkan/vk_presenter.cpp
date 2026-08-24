@@ -524,14 +524,18 @@ Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_
                    swapchain.GetSurfaceFormat().format);
 
     ImGui::Layer::AddLayer(Common::Singleton<Core::Devtools::Layer>::Instance());
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(__APPLE__) && TARGET_OS_IPHONE && defined(BACHATA_USE_IMGUI_MOBILE_OVERLAY)
+    // Superseded by GameOverlay.swift's GameOverlayHost (a real SwiftUI subview of SDL's own
+    // UIWindow, see shadps4_get_uikit_window()'s doc comment). Left compiled but disabled
+    // rather than deleted: mobile_overlay.cpp is a known-working fallback if the SwiftUI
+    // path ever needs to be reverted. Define BACHATA_USE_IMGUI_MOBILE_OVERLAY to bring it back.
     ImGui::Layer::AddLayer(Common::Singleton<Platform::iOS::MobileOverlayLayer>::Instance());
 #endif
 }
 
 Presenter::~Presenter() {
     ImGui::Layer::RemoveLayer(Common::Singleton<Core::Devtools::Layer>::Instance());
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(__APPLE__) && TARGET_OS_IPHONE && defined(BACHATA_USE_IMGUI_MOBILE_OVERLAY)
     ImGui::Layer::RemoveLayer(Common::Singleton<Platform::iOS::MobileOverlayLayer>::Instance());
 #endif
 

@@ -1,10 +1,41 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum LibrarySortOrder: String, CaseIterable {
+    case nameAscending = "Name (A–Z)"
+    case nameDescending = "Name (Z–A)"
+    case dateAddedNewest = "Recently Added"
+    case dateAddedOldest = "Oldest Added"
+}
+
 struct LibraryView: View {
     @Environment(GameLibrary.self) private var library
+    @State private var searchText = ""
+    @State private var sortOrder: LibrarySortOrder = .dateAddedNewest
 
     private let columns = [GridItem(.adaptive(minimum: 150, maximum: 180), spacing: 20)]
+
+    private var visibleGames: [Game] {
+        let filtered: [Game]
+        if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            filtered = library.games
+        } else {
+            filtered = library.games.filter { game in
+                game.name.localizedCaseInsensitiveContains(searchText)
+                    || (game.titleId?.localizedCaseInsensitiveContains(searchText) ?? false)
+            }
+        }
+        switch sortOrder {
+        case .nameAscending:
+            return filtered.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        case .nameDescending:
+            return filtered.sorted { $0.name.localizedStandardCompare($1.name) == .orderedDescending }
+        case .dateAddedNewest:
+            return filtered.sorted { $0.dateAdded > $1.dateAdded }
+        case .dateAddedOldest:
+            return filtered.sorted { $0.dateAdded < $1.dateAdded }
+        }
+    }
 
     var body: some View {
         Group {
@@ -12,10 +43,12 @@ struct LibraryView: View {
                 importingState
             } else if library.games.isEmpty {
                 emptyState
+            } else if visibleGames.isEmpty {
+                noResultsState
             } else {
                 ScrollView {
                     LazyVGrid(columns: columns, spacing: 20) {
-                        ForEach(library.games) { game in
+                        ForEach(visibleGames) { game in
                             NavigationLink(value: game) {
                                 GameCardView(game: game, isSelected: false)
                             }
@@ -30,7 +63,19 @@ struct LibraryView: View {
         .navigationDestination(for: Game.self) { game in
             GameDetailView(game: game)
         }
+        .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search games")
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Menu {
+                    Picker("Sort", selection: $sortOrder) {
+                        ForEach(LibrarySortOrder.allCases, id: \.self) { order in
+                            Text(order.rawValue).tag(order)
+                        }
+                    }
+                } label: {
+                    Label("Sort", systemImage: "arrow.up.arrow.down")
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     library.refresh()
@@ -91,6 +136,17 @@ struct LibraryView: View {
             Text("Extracting game…")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var noResultsState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 44))
+                .foregroundStyle(.secondary)
+            Text("No games match \"\(searchText)\"")
+                .font(.headline)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

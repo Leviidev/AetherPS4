@@ -15,6 +15,8 @@
 #include "core/libraries/content_export/content_export.h"
 #include "core/libraries/disc_map/disc_map.h"
 #include "core/libraries/fiber/fiber.h"
+#include "core/libraries/font/font.h"
+#include "core/libraries/font/fontft.h"
 #include "core/libraries/game_live_streaming/gamelivestreaming.h"
 #include "core/libraries/gnmdriver/gnmdriver.h"
 #include "core/libraries/hmd/hmd.h"
@@ -22,9 +24,11 @@
 #include "core/libraries/ime/error_dialog.h"
 #include "core/libraries/ime/ime.h"
 #include "core/libraries/ime/ime_dialog.h"
+#include "core/libraries/jpeg/jpegenc.h"
 #include "core/libraries/kernel/kernel.h"
 #include "core/libraries/libc_internal/libc_internal.h"
 #include "core/libraries/libpng/pngdec.h"
+#include "core/libraries/libpng/pngenc.h"
 #include "core/libraries/libs.h"
 #include "core/libraries/mouse/mouse.h"
 #include "core/libraries/move/move.h"
@@ -65,6 +69,7 @@
 #include "core/libraries/screenshot/screenshot.h"
 #include "core/libraries/share_play/shareplay.h"
 #include "core/libraries/signin_dialog/signindialog.h"
+#include "core/libraries/system_gesture/system_gesture.h"
 #include "core/libraries/sysmodule/sysmodule.h"
 #include "core/libraries/system/commondialog.h"
 #include "core/libraries/system/msgdialog.h"
@@ -90,6 +95,17 @@ void InitHLELibs(Core::Loader::SymbolsResolver* sym) {
     LOG_INFO(Lib_Kernel, "Initializing HLE libraries");
     Libraries::Kernel::RegisterLib(sym);
     Libraries::LibcInternal::ForceRegisterLib(sym);
+    // The same gap as libSceRtc/libSceNgs2 below, but far higher impact: RegisterLib (as
+    // opposed to ForceRegisterLib just above, which only covers the FEX-interception "libc"
+    // tag and one forced Io override) registers every math/string/memory/threads/CRT
+    // function under the actual "libSceLibcInternal" tag PS4 games import against -- and
+    // was ONLY ever reachable via the sysmodule-load-gated table in
+    // sysmodule_internal.cpp. Since libSceLibcInternal is a core system library nearly
+    // every commercial title links against, any game that doesn't happen to call
+    // sceSysmoduleLoadModule("libSceLibcInternal.sprx") explicitly got ENOSYS for all of
+    // it -- every function implemented under this tag this session was silently
+    // unreachable until now.
+    Libraries::LibcInternal::RegisterLib(sym);
     Libraries::GnmDriver::RegisterLib(sym);
     Libraries::VideoOut::RegisterLib(sym);
     Libraries::UserService::RegisterLib(sym);
@@ -181,6 +197,14 @@ void InitHLELibs(Core::Loader::SymbolsResolver* sym) {
     // but never loads the module, so the sysmodule-table-gated registration in
     // sysmodule_internal.cpp never fires and every RTC call falls through to ENOSYS).
     Libraries::Rtc::RegisterLib(sym);
+    // Same gated-but-fully-implemented pattern as Rtc/Ngs2/LibcInternal above, found by
+    // cross-referencing sysmodule_internal.cpp's gated table against this list: these four
+    // were never registered anywhere except behind an explicit sceSysmoduleLoadModule call.
+    Libraries::JpegEnc::RegisterLib(sym);
+    Libraries::PngEnc::RegisterLib(sym);
+    Libraries::Font::RegisterlibSceFont(sym);
+    Libraries::FontFt::RegisterlibSceFontFt(sym);
+    Libraries::SystemGesture::RegisterLib(sym);
 
     // Loading libSceSsl is locked behind a title workaround that currently applies to nothing.
     // Libraries::Ssl::RegisterLib(sym);

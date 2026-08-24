@@ -9,13 +9,13 @@
 #include <mutex>
 
 namespace {
-// Temporarily widened from 256 while chasing a deterministic early-startup crash (Rocket
-// League: a wild guest branch to an unmapped address, always right at/after the old trace
-// limit's boundary -- the log went dark with nothing between the last traced call and the
-// crash, giving no visibility into what happened in between). Still nowhere near the
-// "millions of calls" scale the original comment above (now below) warns about avoiding
-// contention for. Revert to 256 once this specific investigation is done.
-constexpr uint32_t HleTraceLimit = 4096;
+// Was temporarily widened to 4096 while chasing a deterministic Rocket League crash; reverted
+// back to 256 since that investigation is on hold and every extra traced call is an
+// unbuffered, synchronous write(2) at boot (see CrashLogger.swift's setvbuf(..., _IONBF, ...))
+// -- real, avoidable per-boot cost for every game, not just the one under investigation. Avoid
+// a contended read-modify-write on every HLE call after the trace window has filled; hot
+// polling APIs can cross this bridge millions of times.
+constexpr uint32_t HleTraceLimit = 256;
 std::atomic_uint32_t HleTraceCount{};
 
 thread_local Core::GuestCpu::HleCallFrame* ActiveHleCallFrame{};
