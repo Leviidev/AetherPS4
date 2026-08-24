@@ -23,6 +23,13 @@
 #include <unordered_map>
 #include <vector>
 
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+#include "core/ios/ios_jit_allocator.h"
+#endif
+
 namespace AetherPS4::GuestCpu {
 
 // This is the x86-64 SysV state at the FEX syscall boundary. Guest pointers
@@ -111,6 +118,27 @@ private:
         void* page{};
         std::size_t size{};
     };
+
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    // Every veneer is only 16 bytes, but allocating one mmap+mprotect(PROT_EXEC) page per
+    // veneer individually (the non-iOS path below still does exactly that) was confirmed
+    // on-device as severe enough to hang app launch entirely for a game referencing a few
+    // hundred distinct system functions -- likely each mprotect(PROT_EXEC) transition
+    // paying real per-call codesign/AMFI verification overhead on iOS, unlike the
+    // effectively-free page-table bit flip it is on Linux. Batches many veneers into one
+    // shared dual-mapped region instead (same mechanism as everywhere else in this port
+    // needs for runtime code generation -- see ios_jit_allocator.h): rw_addr is where new
+    // veneers get written, rx_addr is what gets handed out as the callable address, and
+    // neither alias's protection ever changes after the batch is created. That matters for
+    // correctness, not just speed -- toggling a single mmap+mprotect page back to writable
+    // to add more veneers to it would race any guest thread already executing an earlier
+    // veneer in that same page; two permanently-separate aliases have no such race.
+    struct VeneerBatch final {
+        Core::DualMappedRegion region;
+        std::size_t used{};
+    };
+    std::vector<VeneerBatch> batches;
+#endif
 
     mutable std::mutex allocator_mutex;
     std::vector<Allocation> allocations;
