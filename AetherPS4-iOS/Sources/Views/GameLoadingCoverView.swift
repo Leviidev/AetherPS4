@@ -13,16 +13,18 @@ import SwiftUI
 // once shadPS4 owns it -- one crashed the app outright, the other's dispatched work
 // silently never ran, even across an 11,000-line, clearly-long session.
 //
-// What actually works: present this before calling shadps4_run() (EmulatorProcess.launch()
-// sets state = .running synchronously, before deferring the shadps4_run() call itself by one
-// run loop turn), using ordinary, already-reliable SwiftUI presentation. SDL creates its own
-// new UIWindow once it starts up and that window naturally ends up on top by normal z-order
-// once it's shown, covering this one automatically -- no explicit dismiss needed. The
-// visible result is a frozen "Loading..." screen for as long as boot takes, then the game's
-// own video underneath it becomes visible once SDL's window appears in front.
+// What actually works: present this before calling shadps4_run(), using ordinary,
+// already-reliable SwiftUI presentation, AFTER EmulatorProcess.launch() has already
+// requested the landscape rotation and waited for it to finish animating (see launch()'s
+// own comment -- presenting this concurrently with an in-flight forced rotation is what
+// was making it disappear once the rotation settled, confirmed on-device across multiple
+// attempts at timing the two against each other). SDL creates its own new UIWindow once it
+// starts up and that window naturally ends up on top by normal z-order once it's shown,
+// covering this one automatically -- no explicit dismiss needed. The visible result is a
+// frozen "Loading..." screen for as long as boot takes, then the game's own video
+// underneath it becomes visible once SDL's window appears in front.
 struct GameLoadingCoverView: View {
     let gameName: String?
-    @Environment(EmulatorProcess.self) private var emulator
 
     var body: some View {
         ZStack {
@@ -38,13 +40,6 @@ struct GameLoadingCoverView: View {
                     .font(.subheadline)
                     .foregroundStyle(.white.opacity(0.7))
             }
-        }
-        // Fired exactly when this view is actually on screen -- see
-        // EmulatorProcess.lockToLandscape's own comment for why triggering the rotation
-        // from launch() itself was never reliably timed against this view's own
-        // (asynchronous) presentation.
-        .onAppear {
-            emulator.lockToLandscape()
         }
     }
 }

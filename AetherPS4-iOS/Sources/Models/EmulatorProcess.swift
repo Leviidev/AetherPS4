@@ -24,6 +24,11 @@ final class EmulatorProcess {
     private(set) var runningGameName: String?
 
     private var didInit = false
+    // Set the instant launch() is called, cleared once the rotation-wait below hands off
+    // to the rest of launch -- guards against a second launch() call re-entering during
+    // that window, since state itself doesn't flip to .running until after it (see
+    // launch()'s own comment for why the wait has to come first).
+    private var isPreparingToLaunch = false
 
     var isRunning: Bool {
         if case .running = state { return true }
@@ -31,6 +36,7 @@ final class EmulatorProcess {
     }
 
     var isBusy: Bool {
+        if isPreparingToLaunch { return true }
         switch state {
         case .running, .extracting: return true
         case .idle, .exited: return false
@@ -48,16 +54,24 @@ final class EmulatorProcess {
         }
 
         configureJITEnvVars()
+        isPreparingToLaunch = true
 
-        // lockToLandscape() is NOT called here anymore -- neither "before" nor "after"
-        // setting state = .running was reliable, since SwiftUI's fullScreenCover
-        // presentation (triggered by that state change) happens asynchronously relative to
-        // this function, on its own timeline. Confirmed on-device: calling it before meant
-        // the rotation raced an not-yet-presented cover; calling it after didn't
-        // guarantee the cover had actually finished presenting yet either. It's called from
-        // GameLoadingCoverView's own onAppear instead, which is guaranteed to fire exactly
-        // when that view is actually on screen -- see lockToLandscape's own comment for why
-        // the rotation itself is needed at all.
+        // Request the rotation and actually wait for it to finish animating before
+        // presenting the loading cover (state = .running below) or doing anything else --
+        // confirmed on-device, twice, that presenting the cover concurrently with an
+        // in-flight forced rotation is what breaks it (visible while it's happening, gone
+        // once it settles), regardless of whether the rotation was requested before the
+        // cover, after it, or from the cover's own onAppear. requestGeometryUpdate has no
+        // real "did finish" callback (its closure is error-only), so this uses a fixed
+        // delay comfortably longer than iOS's own interface rotation animation (~0.3s).
+        lockToLandscape()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.continueLaunch(pkgPath: pkgPath, gameName: gameName)
+        }
+    }
+
+    private func continueLaunch(pkgPath: String, gameName: String) {
+        isPreparingToLaunch = false
         self.runningGameName = gameName
         self.state = .running
 
@@ -112,8 +126,8 @@ final class EmulatorProcess {
     // created in the right orientation from the start instead of the user having to
     // manually rotate to fix content that renders "off screen" in portrait. Goes through
     // the app delegate rather than a SwiftUI API -- see AppDelegate's doc comment
-    // (AetherPS4App.swift) for why. Called from GameLoadingCoverView's onAppear, not from
-    // launch() -- see the comment there for why timing it against launch() wasn't reliable.
+    // (AetherPS4App.swift) for why. Called from launch(), before the loading cover ever
+    // presents -- see its own comment for why.
     func lockToLandscape() {
         AppDelegate.orientationLock = .landscape
         guard let scene = UIApplication.shared.connectedScenes
