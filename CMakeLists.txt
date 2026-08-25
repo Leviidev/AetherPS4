@@ -1521,6 +1521,8 @@ if (ENABLE_SHADPS4_IOS_LIB)
         src/platform/ios/shadps4_ios_api.h
         src/platform/ios/mobile_overlay.cpp
         src/platform/ios/mobile_overlay.h
+        src/platform/ios/touch_controls_layer.cpp
+        src/platform/ios/touch_controls_layer.h
     )
 
     if (CMAKE_SYSTEM_NAME STREQUAL "iOS")

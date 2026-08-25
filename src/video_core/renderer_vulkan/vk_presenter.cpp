@@ -15,6 +15,7 @@
 #include "imgui/renderer/imgui_core.h"
 #include "imgui/renderer/imgui_impl_vulkan.h"
 #include "platform/ios/mobile_overlay.h"
+#include "platform/ios/touch_controls_layer.h"
 #include "sdl_window.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderdoc.h"
@@ -531,12 +532,18 @@ Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_
     // path ever needs to be reverted. Define BACHATA_USE_IMGUI_MOBILE_OVERLAY to bring it back.
     ImGui::Layer::AddLayer(Common::Singleton<Platform::iOS::MobileOverlayLayer>::Instance());
 #endif
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    ImGui::Layer::AddLayer(Common::Singleton<Platform::iOS::TouchControlsLayer>::Instance());
+#endif
 }
 
 Presenter::~Presenter() {
     ImGui::Layer::RemoveLayer(Common::Singleton<Core::Devtools::Layer>::Instance());
 #if defined(__APPLE__) && TARGET_OS_IPHONE && defined(BACHATA_USE_IMGUI_MOBILE_OVERLAY)
     ImGui::Layer::RemoveLayer(Common::Singleton<Platform::iOS::MobileOverlayLayer>::Instance());
+#endif
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    ImGui::Layer::RemoveLayer(Common::Singleton<Platform::iOS::TouchControlsLayer>::Instance());
 #endif
 
     draw_scheduler.Finish();

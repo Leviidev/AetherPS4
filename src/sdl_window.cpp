@@ -1,20 +1,31 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+// This translation unit doesn't define main() itself -- on iOS it's Swift's @main ->
+// UIApplicationMain, and on desktop it's src/main.cpp -- so SDL_main.h must not try to
+// rename ours via its usual "#define main SDL_main" hijack. SDL_SetMainReady() below is the
+// documented pairing for this: it tells SDL_Init()'s startup guard "main was handled
+// properly elsewhere" without going through SDL_main.h's own main -> SDL_main macro path.
+#define SDL_MAIN_HANDLED
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_hints.h>
 #include <SDL3/SDL_init.h>
+#include <SDL3/SDL_main.h>
 #include <SDL3/SDL_properties.h>
 #include <SDL3/SDL_timer.h>
 #include <SDL3/SDL_video.h>
 #include <cmrc/cmrc.hpp>
 #include <stb_image.h>
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
 
 #include "common/assert.h"
 #include "common/elf_info.h"
 #include "common/io_file.h"
 #include "common/logging/formatter.h"
 #include "common/scope_exit.h"
+#include "common/singleton.h"
 #include "core/debug_state.h"
 #include "core/devtools/layer.h"
 #include "core/emulator_settings.h"
@@ -26,6 +37,7 @@
 #include "input/controller.h"
 #include "input/input_handler.h"
 #include "input/input_mouse.h"
+#include "platform/ios/touch_controls_layer.h"
 #include "sdl_window.h"
 #include "video_core/renderdoc.h"
 
@@ -98,6 +110,24 @@ static Uint32 SDLCALL PollControllerLightColour(void* userdata, SDL_TimerID time
 WindowSDL::WindowSDL(s32 width_, s32 height_, Input::GameControllers* controllers_,
                      std::string_view window_title)
     : width{width_}, height{height_}, controllers{*controllers_} {
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    // SDL_Init() refuses to touch video ("did you include SDL_main.h in the file containing
+    // your main() function?") unless something has told it main() was handled properly first.
+    // On desktop platforms that happens automatically via SDL_main.h's own main -> SDL_main
+    // macro rename; this app's real main() is Swift's @main -> UIApplicationMain instead, so
+    // that path never runs. SDL_SetMainReady() is SDL's documented way to satisfy this guard
+    // when embedding SDL inside a host app with its own main() entry point.
+    SDL_SetMainReady();
+    // KosmicKrisp (this project's usual Vulkan-over-Metal driver on Apple platforms) has no
+    // iOS build yet -- Mesa's own build system doesn't offer iOS as a "platforms" choice for
+    // it. MoltenVK is the standard substitute; it's bundled unlinked (like BreakpointJIT.framework
+    // -- see the "Copy BreakpointJIT (unlinked)" Xcode build phase) as Frameworks/libvulkan.dylib,
+    // matching the exact filename SDL's own UIKit Vulkan loader looks for by default. Setting the
+    // hint explicitly avoids depending on dlopen's bare-filename search behavior finding it.
+    if (!SDL_SetHint(SDL_HINT_VULKAN_LIBRARY, "@executable_path/Frameworks/libvulkan.dylib")) {
+        LOG_ERROR(Input, "Failed to set SDL Vulkan library hint: {}", SDL_GetError());
+    }
+#endif
     if (!SDL_SetHint(SDL_HINT_APP_NAME, "shadPS4")) {
         UNREACHABLE_MSG("Failed to set SDL window hint: {}", SDL_GetError());
     }
@@ -176,7 +206,12 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, Input::GameControllers* controller
         window_info.render_surface = SDL_GetPointerProperty(
             SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, NULL);
     }
-#elif defined(SDL_PLATFORM_MACOS)
+#elif defined(SDL_PLATFORM_MACOS) || defined(SDL_PLATFORM_IOS)
+    // SDL_Metal_CreateView()/SDL_Metal_GetLayer() are the same calls on both Apple platforms
+    // (UIKit's CAMetalLayer-backed view on iOS works identically to Cocoa's here) -- this was
+    // previously macOS-only, so on iOS window_info.type never got set to Metal at all and
+    // CreateSurface() (vk_platform.cpp) fell through to "Presentation not supported on this
+    // platform" since none of its platform branches matched.
     window_info.type = WindowSystemType::Metal;
     window_info.render_surface = SDL_Metal_GetLayer(SDL_Metal_CreateView(window));
 #endif
@@ -240,6 +275,18 @@ void WindowSDL::WaitEvent() {
     if (Libraries::Mouse::PushSDLEvent(event)) {
         return;
     }
+
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    // Ahead of ImGui's own event processing, not after: ImGui's SDL backend collapses every
+    // touch to a single emulated mouse pointer (see imgui_impl_sdl3.cpp's own comment on
+    // that), which can't represent holding a stick down with one thumb while pressing a
+    // face button with another -- TouchControlsLayer needs the real, raw multi-touch finger
+    // events for that, and consumes (returns true for) only the ones that actually started
+    // inside one of its own control zones, letting everything else fall through unchanged.
+    if (Common::Singleton<Platform::iOS::TouchControlsLayer>::Instance()->OnFingerEvent(event)) {
+        return;
+    }
+#endif
 
     if (ImGui::Core::ProcessEvent(&event)) {
         return;
@@ -483,7 +530,11 @@ void WindowSDL::OnGamepadEvent(const SDL_Event* event) {
     }
 }
 
-#ifndef __APPLE__
+// macOS uses sdl_window_apple.mm's AppKit-based implementation instead (for the
+// native-look dock icon); iOS has no AppKit and no per-window dock icon concept, but
+// this generic SDL3+stb_image path is otherwise fully portable, so iOS uses it too
+// rather than needing its own port.
+#if !defined(__APPLE__) || TARGET_OS_IPHONE
 void SetWindowIcon(SDL_Window* window, const std::vector<u8>& png) {
     int imageWidth = 0;
     int imageHeight = 0;
