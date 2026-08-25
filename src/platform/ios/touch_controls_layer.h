@@ -31,8 +31,8 @@ namespace Platform::iOS {
 //
 // Reports its state through the same Input::GameControllers::ApplyRemoteState() path an
 // external/network remote controller uses (see main.cpp's Bachata runtime input reader for
-// the other real caller of that same function) -- occupying its own dedicated, high-index
-// controller slot so it never collides with a real physical controller's slot.
+// the other real caller of that same function) -- on the primary player's own controller
+// slot (see the .cpp's kTouchControllerSlot comment for why slot 0, not a separate one).
 class TouchControlsLayer final : public ImGui::Layer {
 public:
     void Draw() override;
