@@ -10,6 +10,7 @@
 #include <SDL3/SDL_events.h>
 #include <imgui.h>
 
+#include "common/frame_presented_flag.h"
 #include "common/singleton.h"
 #include "core/libraries/pad/pad.h"
 #include "input/controller.h"
@@ -19,10 +20,17 @@ namespace Platform::iOS {
 namespace {
 using Libraries::Pad::OrbisPadButtonDataOffset;
 
-// A dedicated slot (the last of GameControllers' 5), never the same one a real physical
-// controller would occupy first -- see TouchControlsLayer's own header comment for why
-// ApplyRemoteState() is the right call to make here at all.
-constexpr size_t kTouchControllerSlot = 4;
+// The primary player's own slot, NOT a dedicated "extra" one: confirmed on-device the
+// touch controls' input was being completely ignored, traced to pad.cpp's scePadOpen --
+// slot 4 is already reserved there for ORBIS_PAD_PORT_TYPE_REMOTE_CONTROL-type pads, while
+// the actual primary controller (the one every normal game reads) maps to
+// controllers[player_index - 1], which is slot 0 for the default/only user. Using slot 4
+// meant every touch was updating a GameController the game was never looking at. This does
+// mean a real physical controller connected at the same time would fight this for slot 0
+// (ApplyRemoteState overwrites the whole button/axis state each call) -- acceptable for
+// now since this is specifically for playing *without* one; worth revisiting if that
+// combination turns out to matter.
+constexpr size_t kTouchControllerSlot = 0;
 
 bool WithinCircle(float px, float py, float cx, float cy, float radius) {
     const float dx = px - cx;
@@ -61,8 +69,11 @@ TouchControlsLayer::Layout TouchControlsLayer::ComputeLayout() const {
     // `u` is 1% of the screen height -- landscape's smaller dimension -- used as the base
     // unit for every radius/offset below so the whole layout scales uniformly regardless of
     // actual device resolution, matching mobile_overlay.cpp's own established
-    // "GetMainViewport(), not raw io.DisplaySize" pattern for this iOS backend.
-    const float u = h * 0.01f;
+    // "GetMainViewport(), not raw io.DisplaySize" pattern for this iOS backend. The 0.75
+    // factor is a straight size-down of the whole control set (reported on-device as too
+    // big) -- shrinks both button/stick radii and their spacing from the screen edges
+    // uniformly, rather than just the shapes alone, so the layout stays proportional.
+    const float u = h * 0.01f * 0.75f;
 
     Layout layout;
     layout.stickRadius = u * 17.0f;
@@ -320,6 +331,15 @@ void TouchControlsLayer::PushControllerState(const Layout& layout) const {
 }
 
 void TouchControlsLayer::Draw() {
+    // Confirmed on-device: without this gate the controls render (and start pushing input)
+    // the instant the Vulkan presenter exists, well before the game has actually finished
+    // loading -- visually replacing GameLoadingCoverView's "Loading..." message with touch
+    // buttons over a still-black, not-yet-playable screen. Same signal MobileOverlayLayer
+    // already uses to distinguish "Loading..." from "Running" for the same reason.
+    if (!Common::FramePresentedFlag().load(std::memory_order_relaxed)) {
+        return;
+    }
+
     const Layout layout = ComputeLayout();
     last_layout = layout;
 

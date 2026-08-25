@@ -20,10 +20,10 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section {
-                Text("Firmware isn't required — shadPS4 re-implements the PS4 system libraries it needs directly, rather than running Sony's own firmware.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            Section("Community") {
+                Link(destination: URL(string: "https://discord.gg/xApMHWAzkh")!) {
+                    Label("Join the Discord", systemImage: "bubble.left.and.bubble.right")
+                }
             }
         }
     }
