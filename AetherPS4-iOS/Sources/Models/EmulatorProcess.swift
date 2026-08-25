@@ -49,15 +49,15 @@ final class EmulatorProcess {
 
         configureJITEnvVars()
 
-        // Locking/forcing the rotation *before* state flips to .running and the loading
-        // cover starts presenting, not after: confirmed on-device that presenting a
-        // fullScreenCover while a forced interface rotation is also in flight is what was
-        // making the cover disappear once the rotation settled (visible mid-rotation, gone
-        // once it completed) -- a SwiftUI/UIKit modal-presentation-during-rotation
-        // interaction, not anything to do with SDL's window. See lockToLandscape's own
-        // comment for why the rotation itself is needed here at all.
-        lockToLandscape()
-
+        // lockToLandscape() is NOT called here anymore -- neither "before" nor "after"
+        // setting state = .running was reliable, since SwiftUI's fullScreenCover
+        // presentation (triggered by that state change) happens asynchronously relative to
+        // this function, on its own timeline. Confirmed on-device: calling it before meant
+        // the rotation raced an not-yet-presented cover; calling it after didn't
+        // guarantee the cover had actually finished presenting yet either. It's called from
+        // GameLoadingCoverView's own onAppear instead, which is guaranteed to fire exactly
+        // when that view is actually on screen -- see lockToLandscape's own comment for why
+        // the rotation itself is needed at all.
         self.runningGameName = gameName
         self.state = .running
 
@@ -112,14 +112,24 @@ final class EmulatorProcess {
     // created in the right orientation from the start instead of the user having to
     // manually rotate to fix content that renders "off screen" in portrait. Goes through
     // the app delegate rather than a SwiftUI API -- see AppDelegate's doc comment
-    // (AetherPS4App.swift) for why.
-    private func lockToLandscape() {
+    // (AetherPS4App.swift) for why. Called from GameLoadingCoverView's onAppear, not from
+    // launch() -- see the comment there for why timing it against launch() wasn't reliable.
+    func lockToLandscape() {
         AppDelegate.orientationLock = .landscape
         guard let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
             .first(where: { $0.activationState == .foregroundActive })
         else { return }
-        scene.windows.first?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+        // Walk to the actual topmost presented view controller, not just the root: telling
+        // only the root to update its supported orientations doesn't reliably propagate to
+        // whatever is actually on screen (e.g. GameLoadingCoverView's own fullScreenCover),
+        // confirmed on-device as part of why the loading cover stopped showing once a
+        // forced rotation completed.
+        var topController = scene.windows.first?.rootViewController
+        while let presented = topController?.presentedViewController {
+            topController = presented
+        }
+        topController?.setNeedsUpdateOfSupportedInterfaceOrientations()
         scene.requestGeometryUpdate(.iOS(interfaceOrientations: .landscape)) { _ in
             // Best-effort: fails harmlessly if e.g. the user has Control Center's
             // portrait orientation lock enabled, in which case they'll need to rotate

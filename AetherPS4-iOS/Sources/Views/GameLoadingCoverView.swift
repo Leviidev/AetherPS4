@@ -22,6 +22,7 @@ import SwiftUI
 // own video underneath it becomes visible once SDL's window appears in front.
 struct GameLoadingCoverView: View {
     let gameName: String?
+    @Environment(EmulatorProcess.self) private var emulator
 
     var body: some View {
         ZStack {
@@ -37,6 +38,13 @@ struct GameLoadingCoverView: View {
                     .font(.subheadline)
                     .foregroundStyle(.white.opacity(0.7))
             }
+        }
+        // Fired exactly when this view is actually on screen -- see
+        // EmulatorProcess.lockToLandscape's own comment for why triggering the rotation
+        // from launch() itself was never reliably timed against this view's own
+        // (asynchronous) presentation.
+        .onAppear {
+            emulator.lockToLandscape()
         }
     }
 }
