@@ -5,6 +5,7 @@
 
 #if defined(__APPLE__) && TARGET_OS_IPHONE
 
+#include <chrono>
 #include <cmath>
 
 #include <SDL3/SDL_events.h>
@@ -337,6 +338,19 @@ void TouchControlsLayer::Draw() {
     // buttons over a still-black, not-yet-playable screen. Same signal MobileOverlayLayer
     // already uses to distinguish "Loading..." from "Running" for the same reason.
     if (!Common::FramePresentedFlag().load(std::memory_order_relaxed)) {
+        return;
+    }
+    // FramePresentedFlag alone isn't enough: confirmed on-device via a boot log showing
+    // ~2600 successful swapchain presents (all at a shrunken 714x402 resolution) between the
+    // very first present and the game's own "At the Title Screen" stdout print -- the first
+    // real frame is typically still a loading/splash screen, not gameplay. There's no
+    // reliable, game-generic signal for "loading has actually finished" (resolution and
+    // frame content vary per game/engine), so fall back to a fixed grace period measured
+    // from the first Draw() call made after FramePresentedFlag went true -- the static below
+    // only initializes once execution first reaches this line, i.e. the first in-game frame.
+    static const auto first_frame_time = std::chrono::steady_clock::now();
+    constexpr auto kLoadingGracePeriod = std::chrono::seconds(5);
+    if (std::chrono::steady_clock::now() - first_frame_time < kLoadingGracePeriod) {
         return;
     }
 
