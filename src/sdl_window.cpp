@@ -25,6 +25,7 @@
 #include "common/io_file.h"
 #include "common/logging/formatter.h"
 #include "common/scope_exit.h"
+#include "common/singleton.h"
 #include "core/debug_state.h"
 #include "core/devtools/layer.h"
 #include "core/emulator_settings.h"
@@ -36,6 +37,7 @@
 #include "input/controller.h"
 #include "input/input_handler.h"
 #include "input/input_mouse.h"
+#include "platform/ios/touch_controls_layer.h"
 #include "sdl_window.h"
 #include "video_core/renderdoc.h"
 
@@ -273,6 +275,18 @@ void WindowSDL::WaitEvent() {
     if (Libraries::Mouse::PushSDLEvent(event)) {
         return;
     }
+
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    // Ahead of ImGui's own event processing, not after: ImGui's SDL backend collapses every
+    // touch to a single emulated mouse pointer (see imgui_impl_sdl3.cpp's own comment on
+    // that), which can't represent holding a stick down with one thumb while pressing a
+    // face button with another -- TouchControlsLayer needs the real, raw multi-touch finger
+    // events for that, and consumes (returns true for) only the ones that actually started
+    // inside one of its own control zones, letting everything else fall through unchanged.
+    if (Common::Singleton<Platform::iOS::TouchControlsLayer>::Instance()->OnFingerEvent(event)) {
+        return;
+    }
+#endif
 
     if (ImGui::Core::ProcessEvent(&event)) {
         return;
