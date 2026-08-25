@@ -28,7 +28,11 @@
 #include "core/linker.h"
 #include "core/memory.h"
 #include "core/tls.h"
+#include "emulator.h"
 #include "ipc/ipc.h"
+
+#include <chrono>
+#include <thread>
 
 #ifndef _WIN32
 #include <signal.h>
@@ -36,8 +40,26 @@
 
 namespace Core {
 
+#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
+namespace {
+// Set by ProgramExitFunc (below) right before it returns, and checked by RunMainEntry's
+// "unexpectedly returned" branch -- distinguishes a game's main() genuinely returning
+// (which routes through this exact veneer, registered as the guest CRT's atexit/rtld_fini
+// handler in RunGuestMain) from a real, unrelated guest-execution failure that also
+// surfaces as a non-failure u64 return. thread_local, not a shared atomic: ProgramExitFunc
+// and the RunMainEntry call that reads this flag always run on the same "Game:Main" OS
+// thread (see Libraries::Kernel::RunThread), so there's no cross-thread synchronization to
+// get right here.
+thread_local bool g_program_exit_requested = false;
+} // namespace
+#endif
+
 static PS4_SYSV_ABI void ProgramExitFunc() {
-    LOG_ERROR(Core_Linker, "Exit function called");
+    LOG_INFO(Core_Linker, "Guest called the program-exit veneer (main() returned) -- "
+                          "requesting a clean emulator stop");
+#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
+    g_program_exit_requested = true;
+#endif
 }
 
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
@@ -144,15 +166,35 @@ static PS4_SYSV_ABI void* RunMainEntry [[noreturn]] (EntryParams* params) {
 #else
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
     auto* linker = Common::Singleton<Linker>::Instance();
+    g_program_exit_requested = false;
     const auto result = linker->RunGuestMain(params);
     if (const auto* failure = std::get_if<GuestExecutionFailure>(&result)) {
         LOG_CRITICAL(Core_Linker, "FEX main entry failed at stage {}: {}",
                      static_cast<int>(failure->Stage), failure->Error);
+        std::abort();
+    } else if (g_program_exit_requested) {
+        // Confirmed on-device: a game's main() returning normally (through the guest CRT's
+        // atexit/rtld_fini handling, which is exactly what m_fex_exit_veneer -> here goes
+        // through -- see RunGuestMain's own Gpr[6] setup) surfaces here as this same
+        // non-failure u64 branch, previously treated identically to a genuine unexplained
+        // failure (an unconditional abort()). That's a real, if less common, PS4 program
+        // structure, not a bug in itself. Request the same clean shutdown the app's own
+        // "Stop" button uses (Emulator::Stop(), safe from any thread) and park this thread
+        // for good instead -- it has nothing left to safely resume into (whatever guest
+        // code runs after an atexit handler that was never supposed to return is
+        // meaningless), and RunMainEntry is declared [[noreturn]].
+        LOG_INFO(Core_Linker, "FEX main entry returned via a clean guest exit ({:#x}); "
+                              "stopping the emulator session",
+                 std::get<u64>(result));
+        Common::Singleton<Core::Emulator>::Instance()->Stop();
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::hours(24));
+        }
     } else {
         LOG_CRITICAL(Core_Linker, "FEX main entry returned unexpectedly with {:#x}",
                      std::get<u64>(result));
+        std::abort();
     }
-    std::abort();
 #else
     UNREACHABLE_MSG("RunMainEntry requires an x86-64 host or FEX guest CPU support.");
 #endif
