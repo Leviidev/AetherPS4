@@ -71,7 +71,7 @@ static bool ValidateGuestMemory(void* context, std::uintptr_t address, std::size
     auto* memory = static_cast<MemoryManager*>(context);
     const auto required = static_cast<u32>(MemoryProt::CpuRead) |
                           (writable ? static_cast<u32>(MemoryProt::CpuWrite) : 0);
-    static thread_local AetherPS4::GuestCpu::GuestMemoryValidationCache validation_cache;
+    static thread_local GuestCpu::GuestMemoryValidationCache validation_cache;
     const auto generation = memory->MappingGeneration();
     if (validation_cache.Contains(memory, generation, address, size, required)) {
         return true;
@@ -111,7 +111,7 @@ static bool SealGuestExecutableMemory(MemoryManager& memory, std::uintptr_t begi
 // loads allocate more of them after the FEX thread snapshot is taken, so the
 // dynamic QueryGuestExecutableRange path must see them here. Context layout
 // matches Linker::FexExecutableQueryContext.
-static std::optional<Core::GuestExecutionRange> QueryGuestExecutableMemory(void* context,
+static std::optional<GuestExecutionRange> QueryGuestExecutableMemory(void* context,
                                                                      std::uintptr_t address) {
     if (context == nullptr || address == 0) return std::nullopt;
     auto* query = static_cast<FexExecutableQueryContext*>(context);
@@ -134,10 +134,10 @@ static std::optional<Core::GuestExecutionRange> QueryGuestExecutableMemory(void*
     const auto end = reinterpret_cast<std::uintptr_t>(range_end);
     if (begin == 0 || end <= begin) return std::nullopt;
     if (!SealGuestExecutableMemory(*memory, begin, end - begin)) return std::nullopt;
-    return Core::GuestExecutionRange{begin, end - begin, true, false};
+    return GuestExecutionRange{begin, end - begin, true, false};
 }
 
-static void ReportGuestHleFailure(void*, const AetherPS4::GuestCpu::HleCallFailure& failure) {
+static void ReportGuestHleFailure(void*, const GuestCpu::HleCallFailure& failure) {
     LOG_ERROR(Core_Linker, "FEX HLE call {} failed: {}", failure.name, failure.error);
 }
 #endif
@@ -168,7 +168,7 @@ static PS4_SYSV_ABI void* RunMainEntry [[noreturn]] (EntryParams* params) {
     auto* linker = Common::Singleton<Linker>::Instance();
     g_program_exit_requested = false;
     const auto result = linker->RunGuestMain(params);
-    if (const auto* failure = std::get_if<Core::GuestExecutionFailure>(&result)) {
+    if (const auto* failure = std::get_if<GuestExecutionFailure>(&result)) {
         LOG_CRITICAL(Core_Linker, "FEX main entry failed at stage {}: {}",
                      static_cast<int>(failure->Stage), failure->Error);
         std::abort();
@@ -203,7 +203,7 @@ static PS4_SYSV_ABI void* RunMainEntry [[noreturn]] (EntryParams* params) {
 
 Linker::Linker() : memory{Memory::Instance()} {
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-    m_hle_veneers = std::make_unique<AetherPS4::GuestCpu::HleVeneerAllocator>();
+    m_hle_veneers = std::make_unique<GuestCpu::HleVeneerAllocator>();
 #endif
 }
 
@@ -260,7 +260,7 @@ private:
     int error{};
 };
 
-std::optional<Core::GuestExecutionRange> QueryGuestMemoryRange(MemoryManager& memory,
+std::optional<GuestExecutionRange> QueryGuestMemoryRange(MemoryManager& memory,
                                                          std::uintptr_t address,
                                                          bool executable, bool writable) {
     void* range_start{};
@@ -283,12 +283,12 @@ std::optional<Core::GuestExecutionRange> QueryGuestMemoryRange(MemoryManager& me
     if (executable && !SealGuestExecutableMemory(memory, begin, end - begin)) {
         return std::nullopt;
     }
-    return Core::GuestExecutionRange{begin, end - begin, executable, writable};
+    return GuestExecutionRange{begin, end - begin, executable, writable};
 }
 
-std::optional<Core::GuestExecutionFailure> NormalizeGuestRanges(
-    std::vector<Core::GuestExecutionRange>& ranges) {
-    std::ranges::sort(ranges, {}, &Core::GuestExecutionRange::Begin);
+std::optional<GuestExecutionFailure> NormalizeGuestRanges(
+    std::vector<GuestExecutionRange>& ranges) {
+    std::ranges::sort(ranges, {}, &GuestExecutionRange::Begin);
     for (std::size_t index = 0; index < ranges.size(); ++index) {
         const auto& range = ranges[index];
         if (range.Begin == 0 || range.Size == 0 || range.Begin + range.Size < range.Begin) {
@@ -296,7 +296,7 @@ std::optional<Core::GuestExecutionFailure> NormalizeGuestRanges(
                       "Invalid FEX guest range index={} begin={:#x} size={:#x} executable={} "
                       "writable={}",
                       index, range.Begin, range.Size, range.Executable, range.Writable);
-            return Core::GuestExecutionFailure{Core::GuestExecutionStage::Mapping, EINVAL};
+            return GuestExecutionFailure{GuestExecutionStage::Mapping, EINVAL};
         }
         if (index != 0) {
             const auto& previous = ranges[index - 1];
@@ -308,14 +308,14 @@ std::optional<Core::GuestExecutionFailure> NormalizeGuestRanges(
                           index - 1, previous.Begin, previous.Size, previous.Executable,
                           previous.Writable, index, range.Begin, range.Size, range.Executable,
                           range.Writable);
-                return Core::GuestExecutionFailure{Core::GuestExecutionStage::Mapping, EACCES};
+                return GuestExecutionFailure{GuestExecutionStage::Mapping, EACCES};
             }
         }
     }
     return std::nullopt;
 }
 
-void SetGuestIntegerArguments(Core::GuestExecutionRequest& request,
+void SetGuestIntegerArguments(GuestExecutionRequest& request,
                               std::span<const u64> arguments) {
     constexpr std::array<std::size_t, 6> registers{7, 6, 2, 1, 8, 9};
     const auto count = std::min(arguments.size(), registers.size());
@@ -326,35 +326,35 @@ void SetGuestIntegerArguments(Core::GuestExecutionRequest& request,
 
 } // namespace
 
-std::optional<Core::GuestExecutionFailure> Linker::InitializeFexRuntime() {
+std::optional<GuestExecutionFailure> Linker::InitializeFexRuntime() {
     std::scoped_lock lock{m_fex_runtime_mutex};
     if (m_fex_backend != nullptr) return std::nullopt;
 
     auto& registry = m_hle_symbols.GetHleCallRegistry();
     if (m_fex_exit_veneer == 0) {
-        const auto adapter = registry.Register(AetherPS4::GuestCpu::MakeHleCallAdapter(ProgramExitFunc),
+        const auto adapter = registry.Register(GuestCpu::MakeHleCallAdapter(ProgramExitFunc),
                                                "bachata.program_exit");
         if (adapter == nullptr) {
-            return Core::GuestExecutionFailure{Core::GuestExecutionStage::Execute, EIO};
+            return GuestExecutionFailure{GuestExecutionStage::Execute, EIO};
         }
         const auto veneer = m_hle_veneers->Allocate(*adapter);
-        if (const auto* failure = std::get_if<AetherPS4::GuestCpu::HleVeneerFailure>(&veneer)) {
-            return Core::GuestExecutionFailure{Core::GuestExecutionStage::Mapping, failure->error};
+        if (const auto* failure = std::get_if<GuestCpu::HleVeneerFailure>(&veneer)) {
+            return GuestExecutionFailure{GuestExecutionStage::Mapping, failure->error};
         }
         m_fex_exit_veneer = std::get<u64>(veneer);
     }
 
     m_fex_exec_query = {memory, m_hle_veneers.get()};
-    m_fex_bridge = std::make_unique<AetherPS4::GuestCpu::HleGuestBridge>(
+    m_fex_bridge = std::make_unique<GuestCpu::HleGuestBridge>(
         registry, ValidateGuestMemory, memory, ReportGuestHleFailure, nullptr,
         QueryGuestExecutableMemory, &m_fex_exec_query);
-    auto backend = Core::FexGuestCpuBackend::Create(*m_fex_bridge);
-    if (const auto* failure = std::get_if<Core::GuestExecutionFailure>(&backend)) {
+    auto backend = FexGuestCpuBackend::Create(*m_fex_bridge);
+    if (const auto* failure = std::get_if<GuestExecutionFailure>(&backend)) {
         m_fex_bridge.reset();
         return *failure;
     }
     m_fex_backend =
-        std::move(std::get<std::unique_ptr<Core::FexGuestCpuBackend>>(backend));
+        std::move(std::get<std::unique_ptr<FexGuestCpuBackend>>(backend));
     return std::nullopt;
 }
 
@@ -364,11 +364,11 @@ Linker::GuestFunctionResult Linker::RunGuestFunction(VAddr entry,
     if (const auto failure = InitializeFexRuntime()) return *failure;
 
     auto nested = m_fex_backend->CallGuest(entry, arguments);
-    if (const auto* state = std::get_if<Core::GuestExecutionState>(&nested)) {
+    if (const auto* state = std::get_if<GuestExecutionState>(&nested)) {
         return state->Gpr[0];
     }
-    const auto nestedFailure = std::get<Core::GuestExecutionFailure>(nested);
-    if (nestedFailure.Stage != Core::GuestExecutionStage::Thread || nestedFailure.Error != ENXIO) {
+    const auto nestedFailure = std::get<GuestExecutionFailure>(nested);
+    if (nestedFailure.Stage != GuestExecutionStage::Thread || nestedFailure.Error != ENXIO) {
         return nestedFailure;
     }
 
@@ -376,27 +376,27 @@ Linker::GuestFunctionResult Linker::RunGuestFunction(VAddr entry,
     if (stack_top == 0) {
         temporaryStack.emplace(*memory, FexTemporaryStackSize, "FEX guest call stack");
         if (!temporaryStack->IsValid()) {
-            return Core::GuestExecutionFailure{Core::GuestExecutionStage::Mapping,
+            return GuestExecutionFailure{GuestExecutionStage::Mapping,
                                          temporaryStack->Error() == 0 ? ENOMEM
                                                                       : temporaryStack->Error()};
         }
         stack_top = temporaryStack->Top();
     }
     if (arguments.size() > 32 || stack_top < 0x1000) {
-        return Core::GuestExecutionFailure{Core::GuestExecutionStage::Request, E2BIG};
+        return GuestExecutionFailure{GuestExecutionStage::Request, E2BIG};
     }
 
     const auto stackArgumentBytes =
         (arguments.size() > 6 ? arguments.size() - 6 : 0) * sizeof(u64);
     if (stack_top < stackArgumentBytes + sizeof(u64)) {
-        return Core::GuestExecutionFailure{Core::GuestExecutionStage::Request, EOVERFLOW};
+        return GuestExecutionFailure{GuestExecutionStage::Request, EOVERFLOW};
     }
     const auto argumentTop = Common::AlignDown(stack_top - stackArgumentBytes, 16ULL);
     const auto rsp = argumentTop - sizeof(u64);
     const auto returnAddress = m_fex_backend->ReturnAddress();
     if (!ValidateGuestMemory(memory, rsp, sizeof(u64) + stackArgumentBytes, true) ||
         returnAddress == 0) {
-        return Core::GuestExecutionFailure{Core::GuestExecutionStage::Mapping, EFAULT};
+        return GuestExecutionFailure{GuestExecutionStage::Mapping, EFAULT};
     }
     std::memcpy(reinterpret_cast<void*>(rsp), &returnAddress, sizeof(returnAddress));
     for (std::size_t index = 6; index < arguments.size(); ++index) {
@@ -407,10 +407,10 @@ Linker::GuestFunctionResult Linker::RunGuestFunction(VAddr entry,
     const auto codeRange = QueryGuestMemoryRange(*memory, entry, true, false);
     const auto stackRange = QueryGuestMemoryRange(*memory, rsp, false, true);
     if (!codeRange || !stackRange) {
-        return Core::GuestExecutionFailure{Core::GuestExecutionStage::Mapping, EFAULT};
+        return GuestExecutionFailure{GuestExecutionStage::Mapping, EFAULT};
     }
 
-    Core::GuestExecutionRequest request;
+    GuestExecutionRequest request;
     request.Rip = entry;
     request.Rsp = rsp;
     request.Rflags = 1U << 1;
@@ -424,23 +424,23 @@ Linker::GuestFunctionResult Linker::RunGuestFunction(VAddr entry,
     if (const auto failure = NormalizeGuestRanges(request.MappedRanges)) return *failure;
 
     const auto result = m_fex_backend->Run(request);
-    if (const auto* failure = std::get_if<Core::GuestExecutionFailure>(&result)) return *failure;
-    const auto& state = std::get<Core::GuestExecutionState>(result);
-    if (state.StopReason != Core::GuestStopReason::Halted ||
+    if (const auto* failure = std::get_if<GuestExecutionFailure>(&result)) return *failure;
+    const auto& state = std::get<GuestExecutionState>(result);
+    if (state.StopReason != GuestStopReason::Halted ||
         state.Rip < returnAddress || state.Rip >= returnAddress + 0x1000) {
         LOG_CRITICAL(Core_Linker,
                      "FEX guest function did not halt at return veneer entry={:#x} rip={:#x} "
                      "last_rip={:#x} rsp={:#x} stop={} return={:#x}",
                      entry, state.Rip, state.LastRip, state.Rsp,
                      static_cast<int>(state.StopReason), returnAddress);
-        return Core::GuestExecutionFailure{Core::GuestExecutionStage::Execute, EPROTO};
+        return GuestExecutionFailure{GuestExecutionStage::Execute, EPROTO};
     }
     return state.Gpr[0];
 }
 
 Linker::GuestFunctionResult Linker::RunGuestMain(EntryParams* params) {
     if (params == nullptr || params->entry_addr == 0 || params->argc < 0 || params->argc > 33) {
-        return Core::GuestExecutionFailure{Core::GuestExecutionStage::Request, EINVAL};
+        return GuestExecutionFailure{GuestExecutionStage::Request, EINVAL};
     }
     if (const auto failure = InitializeFexRuntime()) return *failure;
 
@@ -451,7 +451,7 @@ Linker::GuestFunctionResult Linker::RunGuestMain(EntryParams* params) {
     }
     GuestStackMapping stack{*memory, stackSize, "FEX main guest stack"};
     if (!stack.IsValid()) {
-        return Core::GuestExecutionFailure{Core::GuestExecutionStage::Mapping,
+        return GuestExecutionFailure{GuestExecutionStage::Mapping,
                                      stack.Error() == 0 ? ENOMEM : stack.Error()};
     }
 
@@ -464,7 +464,7 @@ Linker::GuestFunctionResult Linker::RunGuestMain(EntryParams* params) {
         }
         const auto length = std::strlen(params->argv[index]) + 1;
         if (cursor < length) {
-            return Core::GuestExecutionFailure{Core::GuestExecutionStage::Mapping, EOVERFLOW};
+            return GuestExecutionFailure{GuestExecutionStage::Mapping, EOVERFLOW};
         }
         cursor -= length;
         std::memcpy(reinterpret_cast<void*>(cursor), params->argv[index], length);
@@ -474,7 +474,7 @@ Linker::GuestFunctionResult Linker::RunGuestMain(EntryParams* params) {
     std::memcpy(reinterpret_cast<void*>(cursor), &guestParams, sizeof(guestParams));
     const auto guestParamsAddress = cursor;
     if (cursor < 24) {
-        return Core::GuestExecutionFailure{Core::GuestExecutionStage::Mapping, EOVERFLOW};
+        return GuestExecutionFailure{GuestExecutionStage::Mapping, EOVERFLOW};
     }
     const auto rsp = Common::AlignDown(cursor - 24, 16ULL) + 8;
     std::memcpy(reinterpret_cast<void*>(rsp), &guestParams, 16);
@@ -482,10 +482,10 @@ Linker::GuestFunctionResult Linker::RunGuestMain(EntryParams* params) {
     const auto codeRange = QueryGuestMemoryRange(*memory, params->entry_addr, true, false);
     const auto stackRange = QueryGuestMemoryRange(*memory, rsp, false, true);
     if (!codeRange || !stackRange) {
-        return Core::GuestExecutionFailure{Core::GuestExecutionStage::Mapping, EFAULT};
+        return GuestExecutionFailure{GuestExecutionStage::Mapping, EFAULT};
     }
 
-    Core::GuestExecutionRequest request;
+    GuestExecutionRequest request;
     request.Rip = params->entry_addr;
     request.Rsp = rsp;
     request.Rflags = 1U << 1;
@@ -500,8 +500,31 @@ Linker::GuestFunctionResult Linker::RunGuestMain(EntryParams* params) {
     if (const auto failure = NormalizeGuestRanges(request.MappedRanges)) return *failure;
 
     const auto result = m_fex_backend->Run(request);
-    if (const auto* failure = std::get_if<Core::GuestExecutionFailure>(&result)) return *failure;
-    return std::get<Core::GuestExecutionState>(result).Gpr[0];
+    if (const auto* failure = std::get_if<GuestExecutionFailure>(&result)) return *failure;
+    const auto& state = std::get<GuestExecutionState>(result);
+    // GuestEngine::Run only stops ExecuteThread by hitting a guest `hlt` (0xF4) byte --
+    // EnableExitOnHLT() is unconditionally active for this call (see its own comment). A real
+    // PS4 game never legitimately executes hlt (privileged, illegal in user mode), so reaching
+    // one here always means control flow went wild and happened to decode garbage as hlt
+    // somewhere -- RunMainEntry's caller only sees Gpr[0] (RAX), discarding exactly the two
+    // fields (Rip/LastRip: where execution actually was, and got to, when this happened) that
+    // would show WHERE the wild jump landed. Logging them here, before they're discarded, is
+    // the only way to see that for the "unexpectedly returned" case investigated for the Sonic
+    // Mania title-screen heap-corruption crash -- rip/last_rip landing inside a heap-allocated
+    // data range rather than any loaded module's code would directly confirm a corrupted
+    // return-address-or-function-pointer wild jump, not some FEX/host-side bug.
+    LOG_CRITICAL(Core_Linker,
+                 "RunGuestMain: FEX backend Run() returned via hlt -- rip={:#x} last_rip={:#x} "
+                 "rsp={:#x} rax={:#x}",
+                 state.Rip, state.LastRip, state.Rsp, state.Gpr[0]);
+    if (auto* module = FindByAddress(state.Rip)) {
+        LOG_CRITICAL(Core_Linker, "RunGuestMain: rip is inside module '{}' (base={:#x}, offset={:#x})",
+                     module->name, module->GetBaseAddress(), state.Rip - module->GetBaseAddress());
+    } else {
+        LOG_CRITICAL(Core_Linker, "RunGuestMain: rip is NOT inside any loaded module -- wild jump, "
+                                  "not a return into legitimate code");
+    }
+    return state.Gpr[0];
 }
 #endif
 
@@ -756,10 +779,10 @@ void Linker::Relocate(Module* module) {
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
             if (rel_sym_type == Loader::SymbolType::Function && symrec.hle_adapter != nullptr) {
                 if (m_hle_veneers == nullptr) {
-                    m_hle_veneers = std::make_unique<AetherPS4::GuestCpu::HleVeneerAllocator>();
+                    m_hle_veneers = std::make_unique<GuestCpu::HleVeneerAllocator>();
                 }
                 const auto veneer = m_hle_veneers->Allocate(*symrec.hle_adapter);
-                if (const auto* failure = std::get_if<AetherPS4::GuestCpu::HleVeneerFailure>(&veneer)) {
+                if (const auto* failure = std::get_if<GuestCpu::HleVeneerFailure>(&veneer)) {
                     LOG_ERROR(Core_Linker, "Unable to allocate FEX HLE veneer for {}: {}", symrec.name,
                               failure->error);
                 } else {
@@ -906,7 +929,7 @@ void* Linker::CallAppHeapMalloc(u64 size) {
     const std::array<u64, 1> arguments{size};
     const auto result =
         RunGuestFunction(reinterpret_cast<VAddr>(heap_api->heap_malloc), arguments);
-    if (const auto* failure = std::get_if<Core::GuestExecutionFailure>(&result)) {
+    if (const auto* failure = std::get_if<GuestExecutionFailure>(&result)) {
         LOG_CRITICAL(Core_Linker, "FEX guest heap malloc failed at stage {}: {}",
                      static_cast<int>(failure->Stage), failure->Error);
         std::abort();
@@ -923,7 +946,7 @@ void Linker::CallAppHeapFree(void* pointer) {
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
     const std::array<u64, 1> arguments{reinterpret_cast<u64>(pointer)};
     const auto result = RunGuestFunction(reinterpret_cast<VAddr>(heap_api->heap_free), arguments);
-    if (const auto* failure = std::get_if<Core::GuestExecutionFailure>(&result)) {
+    if (const auto* failure = std::get_if<GuestExecutionFailure>(&result)) {
         LOG_CRITICAL(Core_Linker, "FEX guest heap free failed at stage {}: {}",
                      static_cast<int>(failure->Stage), failure->Error);
         std::abort();
