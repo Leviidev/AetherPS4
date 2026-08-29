@@ -327,6 +327,13 @@ void WindowSDL::WaitEvent() {
         OnGamepadEvent(&event);
         break;
     case SDL_EVENT_QUIT:
+        // Loud on purpose while chasing the "hangs presenting blank frames instead of
+        // exiting" report: this line either appears in the log or it doesn't, which tells
+        // us immediately whether SDL_WaitEvent() on this (non-main, per RunLoop()'s own
+        // design) thread ever actually wakes up for a pushed SDL_EVENT_QUIT at all, versus
+        // the hang being somewhere after this point.
+        LOG_CRITICAL(Core, "BACHATA_QUIT_RECEIVED: WaitEvent() processing SDL_EVENT_QUIT, "
+                            "is_open -> false");
         is_open = false;
         break;
     case SDL_EVENT_QUIT_DIALOG:
