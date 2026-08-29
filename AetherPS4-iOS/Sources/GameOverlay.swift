@@ -2,22 +2,25 @@ import SwiftUI
 import UIKit
 
 // Replaces MobileOverlayLayer (src/platform/ios/mobile_overlay.cpp), which renders this same
-// toggle-button + console-panel overlay inside the Vulkan/ImGui frame loop instead. That ImGui
-// path exists specifically because a genuinely separate UIWindow hosting SwiftUI was already
-// confirmed on-device to not repaint reliably once shadps4_run() takes the main thread's SDL
-// run loop -- see shadps4_get_uikit_window()'s doc comment in shadps4_ios_api.h for that
-// history. This attaches to SDL's OWN UIWindow as a subview instead of a second window, on the
-// theory that content sharing the same window as SDL's actively-rendering view has a much
-// better chance of getting its Core Animation commits serviced by whatever run-loop tick SDL's
-// own window is already getting -- but this genuinely needs on-device confirmation; it hasn't
-// been proven to work yet the way the ImGui path has.
+// loading-screen + console-panel overlay inside the Vulkan/ImGui frame loop instead. That ImGui
+// path existed specifically because a genuinely separate UIWindow/subview hosting live SwiftUI
+// was confirmed on-device to not get new main-thread work serviced at all once shadps4_run()
+// took over the main thread for the whole game session -- see shadps4_get_uikit_window()'s doc
+// comment in shadps4_ios_api.h for that history. That restriction is gone now that Emulator::Run()
+// is split (see emulator.h): shadps4_prepare_window() (which creates this window) is synchronous
+// and runs on the main thread, and only shadps4_run_loop() -- everything after -- moves to a
+// background thread, so the main thread (and this subview's own Timer-driven refresh below) stay
+// live for the whole session. Attaches to SDL's OWN UIWindow as a subview (not a second window)
+// so it's genuinely composited on top of the game's own rendering, called right after
+// shadps4_prepare_window() returns (see EmulatorProcess.launch()), by which point the window
+// unconditionally exists -- no polling needed anymore either.
 @MainActor
 enum GameOverlayHost {
     private static var hostingController: UIHostingController<GameOverlayView>?
 
-    /// Call once SDL's window exists (from a shadps4_register_first_frame_callback()
-    /// callback, hopped to the main thread -- see EmulatorProcess.launch()).
-    static func attach() {
+    /// Call once shadps4_prepare_window() has returned successfully -- SDL's window
+    /// unconditionally exists by then (see EmulatorProcess.launch()).
+    static func attach(gameName: String) {
         guard hostingController == nil else { return }
         guard let raw = shadps4_get_uikit_window() else {
             // print(), not aelog()/NSLog -- confirmed via a real crash log that print()
@@ -31,7 +34,7 @@ enum GameOverlayHost {
         }
         let window = Unmanaged<UIWindow>.fromOpaque(raw).takeUnretainedValue()
 
-        let controller = UIHostingController(rootView: GameOverlayView())
+        let controller = UIHostingController(rootView: GameOverlayView(gameName: gameName))
         controller.view.backgroundColor = .clear
         controller.view.translatesAutoresizingMaskIntoConstraints = false
 
@@ -69,68 +72,9 @@ enum GameOverlayHost {
     }
 }
 
-extension GameOverlayHost {
-    // shadps4_register_first_frame_callback() looks like the natural fit here, but its
-    // underlying flag is scoped to the whole process's lifetime, not one shadps4_run() call
-    // -- "never resets to 0 again, even across game restarts within the same process" (its
-    // own doc comment). Confirmed on-device: it silently never fires for a second-or-later
-    // game launch in the same app session, which is exactly what a launch-time overlay
-    // needs. Polling shadps4_get_uikit_window() instead sidesteps that entirely -- it's a
-    // plain pointer read with no per-process state, safe to call as often as needed, and
-    // naturally becomes non-nil exactly once SDL's window exists for THIS run.
-    //
-    // Polls on a plain background thread (Thread.sleep, no RunLoop/@MainActor involvement
-    // at all) rather than a Timer on RunLoop.main: an earlier Timer-based version (added to
-    // RunLoop.main in .common mode specifically to survive shadps4_run() taking over the
-    // main run loop) was confirmed on-device as the actual cause of a real crash with no
-    // catchable signal -- disabling only that one call site was enough to make the exact
-    // same crash disappear, with Sonic Mania then booting successfully. Best explanation:
-    // repeatedly waking the main run loop for this, however cheap each individual tick is,
-    // was enough extra main-thread contention against whatever shadps4_run() needs to push
-    // it over some watchdog-style threshold. This version never touches the main thread (or
-    // any @MainActor-isolated state) at all until it has *found* the window, and then only
-    // once -- a single DispatchQueue.main.async to call attach(), which is already safely
-    // idempotent (guard hostingController == nil) if this somehow overlaps a fresh poll.
-    static func pollUntilAttached() {
-        guard hostingController == nil else { return }
-        print("[AetherPS4] GameOverlayHost: starting to poll for SDL's UIWindow (background thread)")
-        // .userInitiated, not .utility: boot is exactly when the CPU-heavy JIT/module-loading
-        // work this poll needs to survive is happening, and .utility threads are among the
-        // first the scheduler starves under that kind of load -- a low-priority poll could
-        // stretch its nominal 100ms interval out far longer right when it matters most.
-        DispatchQueue.global(qos: .userInitiated).async {
-            pollLoopNonisolated(attempt: 0)
-        }
-    }
-
-    // Deliberately nonisolated and free of any @MainActor-isolated state (including
-    // GameOverlayHost's own hostingController) -- see pollUntilAttached's doc comment for
-    // why. Bounded at 300 attempts (~30s) rather than running forever: a game that crashes
-    // or exits before SDL ever creates a window should let this loop give up instead of
-    // polling for the rest of the app's lifetime.
-    nonisolated private static func pollLoopNonisolated(attempt: Int) {
-        if shadps4_get_uikit_window() != nil {
-            DispatchQueue.main.async {
-                attach()
-            }
-            return
-        }
-        guard attempt < 300 else {
-            print("[AetherPS4] GameOverlayHost: giving up polling for SDL's UIWindow after \(attempt) attempts")
-            return
-        }
-        // Breadcrumb every ~2s (not every 100ms) so a run that never finds the window
-        // leaves clear evidence in the log without spamming it.
-        if attempt > 0 && attempt % 20 == 0 {
-            print("[AetherPS4] GameOverlayHost: still polling for SDL's UIWindow (attempt \(attempt))")
-        }
-        Thread.sleep(forTimeInterval: 0.1)
-        pollLoopNonisolated(attempt: attempt + 1)
-    }
-}
-
 private struct GameOverlayView: View {
-    @State private var showPanel = true
+    let gameName: String
+    @State private var showPanel = false
     @State private var consoleTail = ""
     @State private var isRunning = false
     private let refreshTimer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
@@ -138,6 +82,28 @@ private struct GameOverlayView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
+                // Full-screen loading state: visible the instant this attaches (SDL's window
+                // exists but hasn't presented a real frame yet), replacing GameLoadingCoverView
+                // for the whole loading window instead of just the split-second gap before SDL's
+                // window exists -- this one lives inside that window and stays live-updating for
+                // the whole session, so it doesn't need a separate static placeholder.
+                if !isRunning {
+                    Color.black
+                        .ignoresSafeArea()
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .tint(.white)
+                            .scaleEffect(1.5)
+                        Text("Loading \(gameName)…")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(.white)
+                        Text("Do not tap or leave the app")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.6))
+                    }
+                }
+
                 if showPanel {
                     panel
                         .frame(
@@ -147,17 +113,19 @@ private struct GameOverlayView: View {
                         .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
                 }
 
-                VStack {
-                    HStack {
-                        Spacer()
-                        Button(showPanel ? "Hide" : "Console") {
-                            showPanel.toggle()
+                if isRunning {
+                    VStack {
+                        HStack {
+                            Spacer()
+                            Button(showPanel ? "Hide" : "Console") {
+                                showPanel.toggle()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .padding(.top, 12)
+                            .padding(.trailing, 12)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .padding(.top, 12)
-                        .padding(.trailing, 12)
+                        Spacer()
                     }
-                    Spacer()
                 }
             }
         }
@@ -170,10 +138,6 @@ private struct GameOverlayView: View {
 
     private var panel: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(isRunning ? "Running" : "Loading game…")
-                .foregroundStyle(isRunning ? .green : .white)
-                .font(.headline)
-            Divider()
             Text("Console")
                 .font(.subheadline)
                 .foregroundStyle(.white)
