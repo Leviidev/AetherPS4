@@ -357,8 +357,69 @@ struct SrtCodeRange {
 // by the same physical pages instead, matching the pattern used everywhere else this port
 // needs to generate and run code at runtime (see core/ios/ios_jit_allocator.h). Its own
 // destructor already releases both mappings, so this struct needs nothing beyond the member.
+// Only used for the pool-exhausted fallback below -- the normal path shares one long-lived
+// pool region across every walker instead of giving each its own SrtCodeMapping.
 struct SrtCodeMapping {
     Core::DualMappedRegion region;
+};
+
+// Confirmed on-device: DualMappedRegion::Allocate() -- BreakGetJITMapping's underlying BRK
+// trap -- needs StikDebug actually responsive to service it, and StikDebug can be killed
+// mid-session by iOS's own background wake-rate limiter. RegisterWalkerCode used to call
+// Allocate() once per *distinct* shader needing an SRT walker, on demand throughout gameplay
+// -- one small (tens-of-bytes) request per shader, but each one is a fresh StikDebug
+// interaction, and interactions are exactly what iOS is rate-limiting. A single game reaching
+// enough distinct shaders exhausted that budget and crashed here (signals.cpp's SIGTRAP
+// recovery and this file's own retry-before-giving-up in ios_jit_allocator.cpp both help the
+// individual request fail safely, but neither stops StikDebug from being gone for the rest of
+// the session once it's actually killed).
+//
+// Pool one large region up front instead -- mirroring the ARCH_X86_64 host path just above
+// (a single static 32MB Xbyak::CodeGenerator, sub-allocated via getCurr()/db() per walker) --
+// so a whole session's worth of walkers costs exactly one StikDebug interaction, made as early
+// as the very first shader needs one, rather than one interaction per distinct shader spread
+// across the whole session. 1MB comfortably covers many thousands of these (each walker seen
+// on-device so far has been well under 200 bytes). Falls back to the old per-walker Allocate()
+// path if the pool is ever actually exhausted, or failed to initialize in the first place.
+class IosSrtCodePool final {
+public:
+    static IosSrtCodePool& Instance() {
+        static IosSrtCodePool pool;
+        return pool;
+    }
+
+    // Returns {rw, rx} inside the pool on success, or {nullptr, nullptr} if the pool never
+    // initialized or genuinely has no room left (caller falls back to a standalone
+    // DualMappedRegion::Allocate() in either case).
+    std::pair<u8*, u8*> TryAllocate(size_t size) {
+        if (!region.IsValid()) {
+            return {nullptr, nullptr};
+        }
+        const size_t offset = used.fetch_add(size, std::memory_order_relaxed);
+        if (offset + size > region.size) {
+            // Give back what this call claimed but can't use -- a later, smaller request
+            // might still fit behind it, though once the pool is this full that's unlikely
+            // to matter much either way.
+            used.fetch_sub(size, std::memory_order_relaxed);
+            return {nullptr, nullptr};
+        }
+        return {region.rw_addr + offset, region.rx_addr + offset};
+    }
+
+private:
+    static constexpr size_t kPoolSize = 1_MB;
+
+    IosSrtCodePool() : region(Core::DualMappedRegion::Allocate(kPoolSize)) {
+        if (!region.IsValid()) {
+            LOG_CRITICAL(Render_Recompiler,
+                        "IosSrtCodePool: initial {}-byte pool allocation failed; every SRT "
+                        "walker this session will fall back to a standalone JIT request",
+                        kPoolSize);
+        }
+    }
+
+    Core::DualMappedRegion region;
+    std::atomic_size_t used{0};
 };
 #else
 struct SrtCodeMapping {
@@ -542,28 +603,41 @@ PFN_SrtWalker RegisterWalkerCode(const u8* ptr, size_t size) {
         std::abort();
     }
 
-    auto mapping = std::make_unique<SrtCodeMapping>();
+    std::unique_ptr<SrtCodeMapping> mapping;
 #if defined(__APPLE__) && TARGET_OS_IPHONE
-    // Allocation, not "grant an address I already own" -- see ios_jit_allocator.h's top
-    // comment for why that second branch is a known-bad path this codebase avoids
-    // everywhere. rw_addr and rx_addr back the same physical pages, so writing through the
+    // Pool first (one StikDebug interaction for the whole session, made as early as the first
+    // shader needing a walker -- see IosSrtCodePool's own comment for why); only fall back to
+    // a standalone per-walker request if the pool never initialized or is actually exhausted.
+    // Either way, rw_addr and rx_addr back the same physical pages, so writing through the
     // former is immediately visible when later executed through the latter; both aliases
     // still need their own cache maintenance (icache is fetched from rx_addr, dcache was
     // dirtied at rw_addr -- one alias's invalidate does not cover the other's).
-    mapping->region = Core::DualMappedRegion::Allocate(size);
-    if (!mapping->region.IsValid()) {
-        LOG_CRITICAL(Render_Recompiler, "Unable to allocate ARM64 SRT walker (iOS dual-mapped JIT)");
-        std::abort();
+    auto [rw_addr, rx_addr] = IosSrtCodePool::Instance().TryAllocate(size);
+    if (rw_addr == nullptr) {
+        mapping = std::make_unique<SrtCodeMapping>();
+        // Allocation, not "grant an address I already own" -- see ios_jit_allocator.h's top
+        // comment for why that second branch is a known-bad path this codebase avoids
+        // everywhere.
+        mapping->region = Core::DualMappedRegion::Allocate(size);
+        if (!mapping->region.IsValid()) {
+            LOG_CRITICAL(Render_Recompiler,
+                        "Unable to allocate ARM64 SRT walker (iOS dual-mapped JIT, pool "
+                        "exhausted or never initialized)");
+            std::abort();
+        }
+        rw_addr = mapping->region.rw_addr;
+        rx_addr = mapping->region.rx_addr;
     }
-    std::memcpy(mapping->region.rw_addr, ptr, size);
-    __builtin___clear_cache(reinterpret_cast<char*>(mapping->region.rw_addr),
-                            reinterpret_cast<char*>(mapping->region.rw_addr + size));
-    __builtin___clear_cache(reinterpret_cast<char*>(mapping->region.rx_addr),
-                            reinterpret_cast<char*>(mapping->region.rx_addr + size));
+    std::memcpy(rw_addr, ptr, size);
+    __builtin___clear_cache(reinterpret_cast<char*>(rw_addr),
+                            reinterpret_cast<char*>(rw_addr + size));
+    __builtin___clear_cache(reinterpret_cast<char*>(rx_addr),
+                            reinterpret_cast<char*>(rx_addr + size));
 
-    const auto begin = reinterpret_cast<uintptr_t>(mapping->region.rx_addr);
-    auto* function = reinterpret_cast<PFN_SrtWalker>(mapping->region.rx_addr);
+    const auto begin = reinterpret_cast<uintptr_t>(rx_addr);
+    auto* function = reinterpret_cast<PFN_SrtWalker>(rx_addr);
 #else
+    mapping = std::make_unique<SrtCodeMapping>();
     const long page_size_result = sysconf(_SC_PAGESIZE);
     if (page_size_result <= 0) {
         LOG_CRITICAL(Render_Recompiler, "Unable to query host page size for ARM64 SRT walker");
@@ -596,7 +670,11 @@ PFN_SrtWalker RegisterWalkerCode(const u8* ptr, size_t size) {
         Core::Signals::Instance()->RegisterAccessViolationHandler(SrtWalkerSignalHandler, priority);
     });
 
-    g_srt_code_mappings.push_back(std::move(mapping));
+    // mapping is null when IosSrtCodePool served this request -- the pool itself is a
+    // process-lifetime static, so there's nothing per-walker left to own here.
+    if (mapping != nullptr) {
+        g_srt_code_mappings.push_back(std::move(mapping));
+    }
     g_srt_code_ranges[range_index] = {begin, begin + size};
     g_srt_code_range_count.store(range_index + 1, std::memory_order_release);
     return function;
