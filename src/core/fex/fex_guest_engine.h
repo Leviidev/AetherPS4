@@ -106,6 +106,16 @@ bool BachataDumpDispatcherState(char* out_buf, std::size_t out_buf_size) noexcep
 bool BachataDumpGuestRegisters(char* out_buf, std::size_t out_buf_size,
                                 uint64_t* out_rsp = nullptr) noexcept;
 
+// Crash-diagnostic only: dumps the raw ARM64 32-bit words surrounding fault_pc (8 before, the
+// faulting word itself bracketed in [], 8 after) as hex, reading through the same
+// writable-alias translation HandleGuestSignal's backpatch uses (fault_pc, the host PC where
+// the fatal signal landed, is the execute-only side of iOS's dual JIT mapping and not directly
+// readable). Unlike BachataQueryGuestRipSyscall's guest RIP -- which is only the last JIT/HLE
+// checkpoint, not necessarily the live fault site -- fault_pc from the signal context is exact.
+// Fixed-width ARM64 instructions make this safe to hand-decode without a disassembler, unlike
+// the variable-length x86 case. Returns false (out_buf untouched) outside iOS/FEX builds.
+bool BachataDumpHostCodeWords(void* fault_pc, char* out_buf, std::size_t out_buf_size) noexcept;
+
 // Deliver any Orbis guest signal queued by DeliverGuestOrbisSignal for the
 // current thread, running its handler via nested HandleCallback at this safe HLE
 // point. No-op when nothing is pending or no FEX guest thread is active. Blocking
