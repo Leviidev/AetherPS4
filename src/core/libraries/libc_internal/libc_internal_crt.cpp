@@ -2,13 +2,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <array>
+#include <chrono>
 #include <cstdlib>
 #include <ctime>
+#include <thread>
 #include <vector>
 
 #include "common/logging/log.h"
+#include "common/singleton.h"
 #include "core/libraries/libc_internal/libc_internal_crt.h"
 #include "core/libraries/libs.h"
+#include "emulator.h"
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
 #include "core/guest_cpu/guest_callback.h"
 #endif
@@ -22,7 +26,26 @@ namespace Libraries::LibcInternal {
 
 [[noreturn]] void PS4_SYSV_ABI internal_exit(s32 code) {
     LOG_INFO(Lib_LibcInternal, "exit({}) called by guest code", code);
-    std::exit(code);
+    // std::exit(code) here (the previous implementation) is a genuine, textbook footgun:
+    // it immediately runs every registered atexit handler and destroys every object with
+    // static storage duration on THIS thread, synchronously, while every other host thread
+    // (the Vulkan presenter's own background PresentThread, guest worker threads, etc.)
+    // keeps running and using those SAME objects concurrently. Confirmed on-device: a game
+    // calling exit() while still rendering crashed with "libc++abi: terminate_handler
+    // unexpectedly threw an exception" -- PresentThread's own Vulkan::Scheduler call threw
+    // when the resources it was using got torn down mid-frame from under it, and our own
+    // exception handler then threw a SECOND exception trying to report the first.
+    // Emulator::Stop() (safe from any thread) is the same clean, coordinated shutdown path
+    // the app's own "Stop" button and RunMainEntry's "guest main() returned" handling
+    // already use -- it lets every thread notice and wind down through its own normal exit
+    // path instead of having its objects yanked out from under it. This call must still
+    // never return ([[noreturn]]), so park this thread afterward the same way
+    // RunMainEntry's clean-exit branch does; there's nothing left for guest code on this
+    // thread to safely resume into anyway.
+    Common::Singleton<Core::Emulator>::Instance()->Stop();
+    for (;;) {
+        std::this_thread::sleep_for(std::chrono::hours(24));
+    }
 }
 
 s32 PS4_SYSV_ABI internal_atexit(void (*func)()) {
