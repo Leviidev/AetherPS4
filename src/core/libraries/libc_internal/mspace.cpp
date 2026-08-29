@@ -428,4 +428,60 @@ std::size_t MspaceMallocUsableSize(void* pointer) {
     return 0;
 }
 
+void* MspaceReallocAnyArena(void* pointer, std::size_t new_size) {
+    if (!pointer) {
+        return nullptr;
+    }
+
+    std::vector<std::shared_ptr<Arena>> arenas;
+    {
+        std::lock_guard lock(registry_mutex);
+        arenas.reserve(handles.size());
+        for (const auto& [handle, entry] : handles) {
+            if (entry->arena) {
+                arenas.push_back(entry->arena);
+            }
+        }
+    }
+
+    for (const auto& arena : arenas) {
+        // UsableSize (not Realloc's own return value) is what actually establishes ownership
+        // here: Arena::Realloc legitimately returns nullptr both for "not owned by this arena"
+        // and for "owned here, but this realloc failed/freed" (new_size == 0), so calling it
+        // speculatively on every arena can't distinguish those. Confirm ownership first, then
+        // commit to that one arena's Realloc either way.
+        if (arena->UsableSize(pointer) != 0) {
+            return arena->Realloc(pointer, new_size);
+        }
+    }
+    return nullptr;
+}
+
+bool MspaceFreeIfOwned(void* pointer) {
+    if (!pointer) {
+        return false;
+    }
+
+    std::vector<std::shared_ptr<Arena>> arenas;
+    {
+        std::lock_guard lock(registry_mutex);
+        arenas.reserve(handles.size());
+        for (const auto& [handle, entry] : handles) {
+            if (entry->arena) {
+                arenas.push_back(entry->arena);
+            }
+        }
+    }
+
+    for (const auto& arena : arenas) {
+        // Arena::Free returns 0 on success, 1 for "not a live allocation here" -- same
+        // ownership scan MspaceMallocUsableSize uses above, just calling Free instead of
+        // UsableSize once the owning arena is found.
+        if (arena->Free(pointer) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace Libraries::LibcInternal

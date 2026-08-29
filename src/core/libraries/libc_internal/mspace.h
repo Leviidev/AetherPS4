@@ -23,5 +23,22 @@ void* MspaceMemalign(void* handle, std::size_t alignment, std::size_t size);
 // after legitimate numeric-address reuse, the current live allocation wins.
 // The pointer is never dereferenced.
 std::size_t MspaceMallocUsableSize(void* pointer);
+// Reallocs `pointer` through whichever mspace arena currently owns it (found the same way
+// MspaceMallocUsableSize finds an owner), rather than requiring the caller to already know
+// the handle. Returns nullptr if no live arena owns it -- the caller (internal_realloc) falls
+// back to the host allocator in that case. See MspaceFreeIfOwned's comment for why a pointer's
+// owning allocator (host malloc() vs. an mspace arena) has to be established before touching
+// it at all.
+void* MspaceReallocAnyArena(void* pointer, std::size_t new_size);
+// Frees `pointer` if (and only if) it's a live allocation in some currently-open mspace
+// arena, trying every arena the same way MspaceMallocUsableSize does. Returns true if it was
+// found and freed, false if no live arena owns it -- the caller (internal_free) falls back to
+// the host allocator in that case. Exists because internal_malloc/internal_free forward
+// directly to the host's malloc/free, which is only correct for pointers that actually came
+// from that same host allocator; a pointer carved out of an mspace arena (the games's own
+// SceLibcHeap, sceKernelMapNamedFlexibleMemory-backed, not host-heap-backed) was never a valid
+// host malloc() block, and handing it to the host's free() corrupts/aborts the host allocator
+// (confirmed on-device: Journey's own libc calling plain free() on such a pointer).
+bool MspaceFreeIfOwned(void* pointer);
 
 } // namespace Libraries::LibcInternal
