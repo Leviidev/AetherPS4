@@ -137,7 +137,7 @@ final class EmulatorProcess {
             let result = shadps4_run_loop()
             DispatchQueue.main.async {
                 guard let self else { return }
-                LoadingOverlayWindow.hide()
+                LoadingOverlayWindow.teardown()
                 self.appendLine(.stdout, "[AetherPS4] shadPS4 exited with status \(result)")
                 self.state = .exited(status: result)
                 self.unlockOrientation()
