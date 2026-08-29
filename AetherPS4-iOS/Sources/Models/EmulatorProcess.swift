@@ -97,28 +97,40 @@ final class EmulatorProcess {
 
         appendLine(.stdout, "[AetherPS4] Launching \(gameName)...")
 
-        // The loading screen is now GameLoadingCoverView, shown by ContentView the instant
-        // state flipped to .running above -- not attached to SDL's window at all (see its own
-        // header comment for why GameOverlay.swift's GameOverlayHost approach, attaching a
-        // live-updating subview to SDL's window, never worked: confirmed on-device that no
-        // *new* work can be scheduled onto the main thread once shadps4_run() owns it, one way
-        // or another, across several different attempts at it).
+        // Split from the old single blocking shadps4_run() call: shadps4_prepare_window()
+        // does the same UIKit-touching setup (SDL creates its own real UIWindow) that used
+        // to block the WHOLE game session for, but returns as soon as that window exists --
+        // still has to run on the main thread for the same reason shadps4_run() did, but
+        // continueLaunch() is already on the main actor, so this can just call it directly.
+        // See shadps4_ios_api.h's own comment on both halves for the full reasoning.
+        let prepareStatus = pkgPath.withCString { shadps4_prepare_window($0) }
+        guard prepareStatus == 0 else {
+            appendLine(.stderr, "[AetherPS4] Failed to prepare game window")
+            state = .exited(status: prepareStatus)
+            unlockOrientation()
+            return
+        }
 
-        // shadps4_run() MUST run on the main thread: SDL's UIKit backend creates the
-        // window and drives its own event loop from whatever thread calls this, and
-        // that has to be the app's real main thread. Once it starts, SDL owns the
-        // screen/run loop for the whole game session -- SwiftUI won't be able to
-        // process taps (including a "Stop" button) again until shadps4_run() returns,
-        // the same way a native SDL app's own window is what's interactive during
-        // play, not surrounding host-app UI. .main.async (not .global()) defers this
-        // one turn so it doesn't re-enter SwiftUI's button-action call frame, while
-        // still landing on the main thread.
-        DispatchQueue.main.async { [weak self] in
-            let result = pkgPath.withCString { shadps4_run($0) }
-            guard let self else { return }
-            self.appendLine(.stdout, "[AetherPS4] shadPS4 exited with status \(result)")
-            self.state = .exited(status: result)
-            self.unlockOrientation()
+        // shadps4_run_loop() is everything shadps4_prepare_window() didn't already do:
+        // starting guest execution, then SDL's blocking event loop. Unlike the old
+        // shadps4_run(), this is safe on a background thread -- the window (and every
+        // other UIKit object involved) already exists, SDL's own event queue is
+        // thread-safe by design, and nothing left in this call touches UIKit directly.
+        // This is what actually frees the main thread for the rest of the game session:
+        // SwiftUI/UIKit keeps working normally the whole time instead of freezing the
+        // instant the game starts (see GameLoadingCoverView's own header comment for the
+        // years -- well, hours -- of workarounds that were needed before this existed).
+        // Thread.detachNewThread (not DispatchQueue.global()) for a plain dedicated OS
+        // thread that stays alive for exactly this one blocking call, same as the render
+        // thread pattern used elsewhere in this codebase.
+        Thread.detachNewThread { [weak self] in
+            let result = shadps4_run_loop()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.appendLine(.stdout, "[AetherPS4] shadPS4 exited with status \(result)")
+                self.state = .exited(status: result)
+                self.unlockOrientation()
+            }
         }
     }
 

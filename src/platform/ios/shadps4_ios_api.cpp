@@ -101,31 +101,49 @@ extern "C" int shadps4_init(const ShadPS4Options* options) {
     return g_init_ok ? 0 : -1;
 }
 
-extern "C" int shadps4_run(const char* eboot_path) {
+extern "C" int shadps4_prepare_window(const char* eboot_path) {
     if (!g_init_ok || !eboot_path) {
         return -1;
     }
 
     auto resolved = ResolveEbootPath(eboot_path);
     if (!resolved.has_value()) {
-        LOG_ERROR(Loader, "shadps4_run: game ID or file path not found: {}", eboot_path);
+        LOG_ERROR(Loader, "shadps4_prepare_window: game ID or file path not found: {}",
+                  eboot_path);
         return -1;
     }
 
     Core::Loader::Elf executable;
     executable.Open(*resolved);
     if (!executable.IsElfFile()) {
-        LOG_ERROR(Loader, "shadps4_run: invalid PS4 executable: {}", resolved->string());
+        LOG_ERROR(Loader, "shadps4_prepare_window: invalid PS4 executable: {}",
+                  resolved->string());
         return -1;
     }
 
     auto* emulator = Common::Singleton<Core::Emulator>::Instance();
     emulator->executableName = "AetherPS4";
-    // Run() blocks until the SDL window closes or shadps4_stop() pushes a quit event
+    emulator->PrepareWindow(*resolved);
+    return 0;
+}
+
+extern "C" int shadps4_run_loop(void) {
+    if (!g_init_ok) {
+        return -1;
+    }
+    auto* emulator = Common::Singleton<Core::Emulator>::Instance();
+    // RunLoop() blocks until the SDL window closes or shadps4_stop() pushes a quit event
     // (see emulator.cpp); SHADPS4_LIBRARY_BUILD makes it return here instead of
     // quick_exit()-ing the host process.
-    emulator->Run(*resolved);
+    emulator->RunLoop();
     return 0;
+}
+
+extern "C" int shadps4_run(const char* eboot_path) {
+    if (shadps4_prepare_window(eboot_path) != 0) {
+        return -1;
+    }
+    return shadps4_run_loop();
 }
 
 extern "C" void shadps4_stop() {

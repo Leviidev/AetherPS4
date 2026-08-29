@@ -42,7 +42,33 @@ int shadps4_init(const ShadPS4Options* options);
 // this call (matching the desktop build's Frontend::WindowSDL usage), and Apple's
 // windowing frameworks require that on the main thread -- calling this from a
 // background thread fails during SDL video subsystem init. Returns 0 on a normal exit.
+//
+// Implemented as shadps4_prepare_window() + shadps4_run_loop() back-to-back on the
+// calling thread -- kept as a single call for callers that don't need (or can't use) the
+// split below, e.g. anything not willing to hand the game session off to a second thread.
 int shadps4_run(const char* eboot_path);
+
+// The split version of shadps4_run(), for a host that wants its own main thread free for
+// normal UI work (SwiftUI, Timers, etc.) for the whole game session instead of just until
+// the window exists. shadps4_prepare_window() does the same UIKit-touching setup
+// shadps4_run() used to block the WHOLE session for, but returns as soon as the window is
+// created -- still MUST be called from the app's main thread, same reason as shadps4_run()
+// above. Returns 0 on success; on failure no window was created and shadps4_run_loop()
+// must not be called.
+int shadps4_prepare_window(const char* eboot_path);
+
+// Runs the actual game session (starts guest execution, then blocks in SDL's event loop
+// until the game exits or shadps4_stop() is called) -- everything shadps4_prepare_window()
+// didn't already do. Safe to call from a background thread: by this point the window and
+// every other UIKit object involved already exist, SDL's own event queue is thread-safe by
+// design (built to support exactly this -- input delivered on the main thread's run loop,
+// consumed from another), and nothing left in this call touches UIKit directly. This is
+// what actually frees the main thread: call this from a dedicated background thread (not
+// DispatchQueue.global(), which doesn't guarantee it stays on the same OS thread this
+// blocks for the whole session) right after shadps4_prepare_window() succeeds on the main
+// thread, and the app's own SwiftUI/UIKit content keeps working normally for the entire
+// game session. Returns 0 on a normal exit.
+int shadps4_run_loop(void);
 
 // Requests that a currently-running shadps4_run() call (on the main thread) return.
 // Safe to call from any other thread, e.g. from a UI "stop" button's handler while

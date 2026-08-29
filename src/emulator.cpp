@@ -201,6 +201,12 @@ std::map<s32, std::string> ExtractTrophies(const std::filesystem::path& npbind_p
 
 void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
                    std::optional<std::filesystem::path> p_game_folder) {
+    PrepareWindow(std::move(file), std::move(args), std::move(p_game_folder));
+    RunLoop();
+}
+
+void Emulator::PrepareWindow(std::filesystem::path file, std::vector<std::string> args,
+                              std::optional<std::filesystem::path> p_game_folder) {
     Common::SetCurrentThreadName("shadPS4:Main");
     if (waitForDebuggerBeforeRun) {
         Debugger::WaitForDebuggerAttach();
@@ -448,6 +454,22 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
 
     std::filesystem::path icon_path = mnt->GetHostPath("/app0/sce_sys/icon0.png");
     window->SetIcon(icon_path);
+
+    // Everything past this point (RunLoop()) doesn't touch UIKit -- carry over what it
+    // still needs, since PrepareWindow()'s locals don't survive past this function
+    // returning when called as its own separate step (see this method's own header comment).
+    pending_game_id = id;
+    pending_eboot_path = eboot_path;
+    pending_args = std::move(args);
+}
+
+void Emulator::RunLoop() {
+    const std::string& id = pending_game_id;
+    const auto& eboot_path = pending_eboot_path;
+    std::vector<std::string> args = std::move(pending_args);
+    auto* mnt = Common::Singleton<Core::FileSys::MntPoints>::Instance();
+    // Same singleton PrepareWindow() populated -- state set on it there is still live here.
+    auto& game_info = Common::ElfInfo::Instance();
 
 #ifdef ENABLE_BACHATA_RUNTIME
     memory = Core::Memory::Instance();
