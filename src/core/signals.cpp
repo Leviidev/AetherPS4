@@ -196,6 +196,44 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                 }
             }
         }
+        // rip/rax alone weren't enough to tell what a NULL-pointer guest write actually came
+        // from (which pointer was null, what called into the code that dereferenced it) --
+        // the rest of the GPRs are whatever arguments/locals were live at the fault, and RSP
+        // (returned separately below) lets the guest's own return-address chain be read out.
+        char guest_regs[384] = {};
+        uint64_t guest_rsp = 0;
+        if (::AetherPS4::Fex::BachataDumpGuestRegisters(guest_regs, sizeof(guest_regs), &guest_rsp)) {
+            LOG_CRITICAL(Debug, "FEX guest registers at fault: {}", guest_regs);
+        }
+        // Poor-man's guest backtrace: walk raw QWORDs upward from RSP and log whichever ones
+        // land inside a loaded module's code range, on the (unverified but common for x86-64
+        // -fno-omit-frame-pointer-less code) assumption that leftover return addresses are
+        // still findable a few words up the stack even without a true frame-pointer walk.
+        // Every word is validated against the VMM before being dereferenced, since RSP could
+        // itself be garbage if the corruption reached the stack pointer.
+        if (guest_rsp != 0) {
+            if (auto* memory = Core::Memory::Instance()) {
+                if (auto* linker = Common::Singleton<Core::Linker>::Instance()) {
+                    constexpr int kStackWordsToScan = 64;
+                    for (int i = 0; i < kStackWordsToScan; ++i) {
+                        const auto word_addr = guest_rsp + static_cast<uint64_t>(i) * sizeof(uint64_t);
+                        ::Libraries::Kernel::OrbisVirtualQueryInfo stack_vma{};
+                        if (memory->VirtualQuery(word_addr, 0, &stack_vma) != 0) {
+                            continue;
+                        }
+                        const auto word_value =
+                            *reinterpret_cast<volatile uint64_t*>(static_cast<uintptr_t>(word_addr));
+                        if (auto* module = linker->FindByAddress(word_value)) {
+                            LOG_CRITICAL(Debug,
+                                         "FEX guest stack[rsp+{:#x}]={:#x} -- inside module '{}' "
+                                         "(offset={:#x}), likely a return address",
+                                         i * sizeof(uint64_t), word_value, module->name,
+                                         word_value - module->GetBaseAddress());
+                        }
+                    }
+                }
+            }
+        }
         // Classifies the faulting address (info->si_addr) against shadPS4's own guest virtual
         // memory manager, not just FEXCore's JIT tables above -- distinguishes "the VMM never
         // mapped this address at all" (a wild guest pointer, or a missing HLE mmap call the

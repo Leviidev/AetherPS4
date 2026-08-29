@@ -95,6 +95,17 @@ bool BachataDescribeHostFaultAddress(void* fault_addr, char* out_buf, std::size_
 // Returns false (out_buf untouched) if no FEX thread is active on the current host thread.
 bool BachataDumpDispatcherState(char* out_buf, std::size_t out_buf_size) noexcept;
 
+// Crash-diagnostic only: dumps every x86-64 GPR (including RSP/RBP) from the currently-active
+// FEX thread's spilled CpuStateFrame::State, same data source as BachataQueryGuestRipSyscall
+// above. Added specifically because a bare rip/rax pair wasn't enough to tell what a
+// NULL-pointer guest write actually came from. out_rsp (optional) additionally receives RSP
+// as a raw value -- separate from the formatted text in out_buf -- so the caller can walk raw
+// guest stack words (return addresses into eboot.bin) for a poor-man's backtrace without
+// needing guest debug symbols. Returns false (out_buf/out_rsp untouched) if no FEX thread is
+// active on the current host thread.
+bool BachataDumpGuestRegisters(char* out_buf, std::size_t out_buf_size,
+                                uint64_t* out_rsp = nullptr) noexcept;
+
 // Deliver any Orbis guest signal queued by DeliverGuestOrbisSignal for the
 // current thread, running its handler via nested HandleCallback at this safe HLE
 // point. No-op when nothing is pending or no FEX guest thread is active. Blocking
