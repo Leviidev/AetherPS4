@@ -111,27 +111,15 @@ final class EmulatorProcess {
             return
         }
 
-        // GameOverlayHost attaches live SwiftUI content as a SUBVIEW of SDL's own UIWindow,
-        // so it's genuinely composited on top of the game's rendering -- not a separate
-        // window racing SDL's for which one is "key" (that approach, and its Timer-based
-        // live refresh, were both shelved earlier only because shadps4_run() blocking the
-        // main thread for the whole session made new main-thread work (including this
-        // attach call itself) undeliverable; see GameOverlayHost's own header comment for
-        // that history. Neither restriction applies anymore: shadps4_prepare_window() above
-        // is synchronous and already returned, so the window unconditionally exists right
-        // here, and the main thread stays free for the whole session now that only
-        // shadps4_run_loop() (below) moves to a background thread. No polling needed.
-        //
-        // .main.async (not a direct call): confirmed on-device that calling this
-        // synchronously, in the same run-loop turn shadps4_prepare_window() just created
-        // SDL's window in, crashes with an uncaught exception right after window setup --
-        // manipulating that window's view/controller hierarchy before SDL has finished
-        // settling it into the window scene on its own next run-loop tick. Deferring one
-        // turn (same reasoning as the old shadps4_run() dispatch below) lets that finish
-        // first.
-        DispatchQueue.main.async {
-            GameOverlayHost.attach(gameName: gameName)
-        }
+        // LoadingOverlayWindow puts a live SwiftUI loading screen on top of everything using
+        // a second UIWindow at a higher windowLevel -- no shared view hierarchy with SDL's
+        // window, no child-view-controller containment, no constraints anchored to a window
+        // this app doesn't own. (GameOverlayHost's subview-of-SDL's-window approach crashed
+        // with an uncaught exception on its first real run; see LoadingOverlayWindow's own
+        // header comment for why this is the simpler, safer replacement.) Only viable now
+        // that shadps4_prepare_window() above is synchronous and already returned and the
+        // main thread stays free for the whole session -- its own internal Timer needs that.
+        LoadingOverlayWindow.show(gameName: gameName)
 
         // shadps4_run_loop() is everything shadps4_prepare_window() didn't already do:
         // starting guest execution, then SDL's blocking event loop. Unlike the old
@@ -149,7 +137,7 @@ final class EmulatorProcess {
             let result = shadps4_run_loop()
             DispatchQueue.main.async {
                 guard let self else { return }
-                GameOverlayHost.detach()
+                LoadingOverlayWindow.hide()
                 self.appendLine(.stdout, "[AetherPS4] shadPS4 exited with status \(result)")
                 self.state = .exited(status: result)
                 self.unlockOrientation()
