@@ -955,7 +955,7 @@ public:
       return static_cast<uint64_t>(-EFAULT);
     }
 
-    AetherPS4::GuestCpu::HleCallFrame hleFrame{};
+    Core::GuestCpu::HleCallFrame hleFrame{};
     hleFrame.operation = frame->State.gregs[FEXCore::X86State::REG_RAX];
     std::copy(std::begin(frame->State.gregs), std::end(frame->State.gregs), hleFrame.gpr.begin());
     hleFrame.gpr[FEXCore::X86State::REG_RCX] = frame->State.gregs[FEXCore::X86State::REG_R10];
@@ -2092,19 +2092,33 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
       // blocking host syscall may not run the signal handler until that syscall returns on
       // its own, which could be arbitrarily long -- but such a thread isn't executing guest
       // code during that time either, so there's nothing at risk from proceeding without it.
-      // Timing out is strictly no worse than this whole mechanism not existing.
-      const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
+      // Timing out is strictly no worse than this whole mechanism not existing. 2s (up from
+      // 1s): unlike the HLE-syscall wait below, this one is NOT known to be futile -- a
+      // signaled thread that hasn't paused yet is (by definition) still executing guest
+      // code and WILL hit the signal handler on its own; the only question is how much host
+      // scheduling delay it's under, which can genuinely be worse than 1s on a loaded
+      // device. Every extra ms spent here is a real chance to catch a thread that the old
+      // deadline was cutting off just before it would have paused.
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2000);
       while (g_safepoint_paused_count.load(std::memory_order_acquire) < signaled &&
              std::chrono::steady_clock::now() < deadline) {
         sched_yield();
       }
       int final_paused = g_safepoint_paused_count.load(std::memory_order_acquire);
       LogMan::Msg::IFmt("BACHATA_SAFEPOINT: paused wait done, final_paused={} expected={}", final_paused, signaled);
-      // Additionally wait for any threads currently in HLE syscalls to complete. These threads
-      // are executing host code (not guest JIT) and will return to guest code after the syscall.
-      // If we reuse the JIT buffer while they're in the syscall, they'll return to stale code.
-      // We track this with g_threads_in_hle_syscall and wait for it to drain.
-      const auto hle_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(30000);
+      // Additionally give any threads currently in HLE syscalls a brief window to complete.
+      // These threads are executing host code (not guest JIT) and will return to guest code
+      // after the syscall, so if we reuse the JIT buffer mid-syscall they could return to stale
+      // code. However, g_threads_in_hle_syscall stays incremented for the ENTIRE duration of
+      // Bridge.Invoke(), including HLE calls that block indefinitely (semaphore/condvar waits,
+      // thread-pool idle loops - common in Unreal Engine worker threads). Those threads are not
+      // about to return to guest code at all, so waiting for the counter to hit 0 can never
+      // succeed for them; on-device logs confirmed a stuck count (e.g. 12) held constant for the
+      // full duration of a 30s wait, meaning that wait was pure added latency with zero effect on
+      // the race it targeted (the crash still happened right after). Keep only a short, best-
+      // effort window to let genuinely fast/short syscalls drain without stalling gameplay for
+      // threads that were never going to finish in time anyway.
+      const auto hle_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(5);
       while (g_threads_in_hle_syscall.load(std::memory_order_acquire) > 0 &&
              std::chrono::steady_clock::now() < hle_deadline) {
         sched_yield();
@@ -2112,7 +2126,17 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
       int final_hle = g_threads_in_hle_syscall.load(std::memory_order_acquire);
       LogMan::Msg::IFmt("BACHATA_SAFEPOINT: hle wait done, final_hle_count={}", final_hle);
       if (final_paused < signaled || final_hle > 0) {
-        LogMan::Msg::IFmt("BACHATA_SAFEPOINT: WARNING - incomplete pause! paused={}/{} hle={}",
+        // Deliberately impossible to miss or mistake for routine logging: the buffer reuse
+        // this safepoint exists to guard is about to happen anyway (see this call's own
+        // caller, Core.cpp's ClearCodeCache -- reclaiming the buffer isn't optional once
+        // growth is exhausted, so there's no safe way to abort it from here), with one or
+        // more threads NOT confirmed quiesced. If a crash follows shortly after this exact
+        // line in a crash log, that is not a coincidence -- it is this race. See this
+        // function's own header comment for the full history of why this can't simply be
+        // waited out.
+        LogMan::Msg::EFmt("BACHATA_SAFEPOINT_UNSAFE_PROCEED: reusing JIT buffer WITHOUT full "
+                          "quiescence -- paused={}/{} hle_still_active={} -- a crash "
+                          "shortly after this line is this exact race, not a new bug",
                           final_paused, signaled, final_hle);
       }
     };
