@@ -11,8 +11,34 @@
 #include "core/libraries/ngs2/ngs2_impl.h"
 #include "core/libraries/ngs2/ngs2_pan.h"
 #include "core/libraries/ngs2/ngs2_report.h"
+#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
+#include "core/guest_cpu/guest_callback.h"
+#endif
 
 namespace Libraries::Ngs2 {
+
+namespace {
+// allocHandler/freeHandler in a game-supplied OrbisNgs2BufferAllocator are guest (x86)
+// function pointers -- the game populates this struct and hands it to
+// sceNgs2SystemCreateWithAllocator, exactly the same shape as a qsort comparator or a pthread
+// entry point. Calling one directly, as this code used to, executes raw x86 bytes as ARM64
+// instructions on the FEX/iOS build (confirmed on-device: a guest instruction-fetch fault
+// landing exactly at this call site, "VMM says MAPPED... host/guest memory desync" -- the
+// guest VMM correctly reports the address as valid x86 code, the host ARM64 CPU just can't
+// execute it). Same guest-call routing already used for internal_qsort's comparator
+// (libc_internal_crt.cpp) and pthread entry points; on a native x86-64 host, guest code is
+// already host-executable, so this is a no-op passthrough there.
+s32 CallGuestBufferHandler(void* handler, OrbisNgs2ContextBufferInfo* buffer_info,
+                           std::string_view label) {
+#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
+    return static_cast<s32>(Core::GuestCpu::RunGuestFunctionOrAbort(
+        reinterpret_cast<const void*>(handler), label, buffer_info));
+#else
+    return reinterpret_cast<s32 PS4_SYSV_ABI (*)(OrbisNgs2ContextBufferInfo*)>(handler)(
+        buffer_info);
+#endif
+}
+} // namespace
 
 // Ngs2
 
@@ -160,13 +186,15 @@ s32 PS4_SYSV_ABI sceNgs2SystemCreateWithAllocator(const OrbisNgs2SystemOption* o
             result = SystemSetup(option, &bufferInfo, 0, 0);
             if (result >= 0) {
                 uintptr_t sysUserData = allocator->userData;
-                result = hostAlloc(&bufferInfo);
+                result = CallGuestBufferHandler(reinterpret_cast<void*>(hostAlloc), &bufferInfo,
+                                                "sceNgs2 buffer alloc handler");
                 if (result >= 0) {
                     OrbisNgs2Handle* handleCopy = outHandle;
                     result = SystemSetup(option, &bufferInfo, hostFree, handleCopy);
                     if (result < 0) {
                         if (hostFree) {
-                            hostFree(&bufferInfo);
+                            CallGuestBufferHandler(reinterpret_cast<void*>(hostFree), &bufferInfo,
+                                                   "sceNgs2 buffer free handler");
                         }
                     }
                 }
