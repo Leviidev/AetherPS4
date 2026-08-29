@@ -177,6 +177,25 @@ struct CallCursor final {
         return NextStackSlot();
     }
 
+    // Full 128 bits of the next XMM slot, both halves -- NextVector() above only ever returns
+    // the low 64 (all float/double, its only callers until Xmm128 below, ever needed). Needed
+    // for VA_ARGS's __m128 parameters (common/va_ctx.h): on this build __m128 is a 16-byte
+    // Xmm128 struct, not the real SSE intrinsic type, since this whole VA_ARGS/VA_CTX trick
+    // only works as "raw ABI register capture" on a native x86-64 host calling the function
+    // directly -- on the FEX/ARM64 path these parameters are decoded through this cursor like
+    // any other argument instead, and losing the upper half would silently corrupt every
+    // fp_offset >= 64 read out of the reconstructed va_list.
+    std::optional<std::array<u64, 2>> NextVectorWide() {
+        if (vector_index < 8) {
+            return frame.xmm[vector_index++];
+        }
+        const auto low = NextStackSlot();
+        if (!low) return std::nullopt;
+        const auto high = NextStackSlot();
+        if (!high) return std::nullopt;
+        return std::array<u64, 2>{*low, *high};
+    }
+
 private:
     std::optional<u64> NextStackSlot() {
         if (frame.rsp == 0 || frame.rsp > std::numeric_limits<std::uintptr_t>::max() - stack_offset ||
@@ -206,6 +225,21 @@ inline constexpr bool IsIntegerArgument = std::is_integral_v<T> || std::is_enum_
 template <typename T>
 inline constexpr bool IsVectorArgument = std::is_same_v<T, float> || std::is_same_v<T, double>;
 
+// A 16-byte-wide, trivially-copyable, non-pointer argument occupies one whole XMM slot rather
+// than a GPR one -- the same ABI classification float/double get above, just for the wider
+// case. This exists for VA_ARGS's __m128 parameters (common/va_ctx.h): on a native x86-64 host
+// that macro's whole point is to receive the real SysV ABI's raw xmm0..xmm7 registers by
+// calling the function directly, but on the FEX/ARM64 path these are decoded through
+// CallCursor like any other argument -- __m128 there is a 16-byte Xmm128 struct, not the real
+// SSE intrinsic type, specifically so it can be recognized and decoded here (see
+// NextVectorWide's own comment) instead of silently rejecting every function that uses
+// VA_ARGS as unsupported (confirmed on-device: internal_printf/snprintf/sprintf calling
+// printf_ctx uniformly failed ENOTSUP before this, since sizeof(__m128) == 16 exceeds a GPR
+// slot and wasn't recognized as a vector argument either).
+template <typename T>
+inline constexpr bool IsWideVectorArgument =
+    sizeof(T) == 16 && std::is_trivially_copyable_v<T> && !std::is_pointer_v<T>;
+
 template <typename T>
 inline constexpr bool FitsIntegerRegister = [] {
     if constexpr (IsIntegerArgument<T>) {
@@ -215,7 +249,8 @@ inline constexpr bool FitsIntegerRegister = [] {
 }();
 
 template <typename T>
-inline constexpr bool IsSupportedArgument = FitsIntegerRegister<T> || IsVectorArgument<T>;
+inline constexpr bool IsSupportedArgument =
+    FitsIntegerRegister<T> || IsVectorArgument<T> || IsWideVectorArgument<T>;
 
 template <typename T>
 inline constexpr bool IsSupportedReturn = std::is_void_v<T> ||
@@ -224,7 +259,13 @@ inline constexpr bool IsSupportedReturn = std::is_void_v<T> ||
 
 template <typename T>
 std::optional<T> DecodeArgument(CallCursor& cursor) {
-    if constexpr (IsVectorArgument<T>) {
+    if constexpr (IsWideVectorArgument<T>) {
+        const auto value = cursor.NextVectorWide();
+        if (!value) return std::nullopt;
+        T result{};
+        std::memcpy(&result, value->data(), sizeof(result));
+        return result;
+    } else if constexpr (IsVectorArgument<T>) {
         const auto value = cursor.NextVector();
         if (!value) return std::nullopt;
         T result{};

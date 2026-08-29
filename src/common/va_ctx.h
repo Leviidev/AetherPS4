@@ -8,8 +8,23 @@
 #ifdef ARCH_X86_64
 #include <xmmintrin.h>
 #else
-// FIXME
-typedef __int128 __m128;
+// VA_ARGS below (used by internal_printf/snprintf/sprintf and anything else that needs the
+// guest's raw SysV varargs registers) only works as "receive the ABI's raw xmm0..xmm7 by
+// calling the function directly" on a native x86-64 host. On the FEX/ARM64 path these
+// parameters are instead decoded one at a time through Core::GuestCpu's CallCursor
+// (hle_call_adapter.h), which requires each argument type to be one it explicitly recognizes.
+// __int128 (the previous typedef here) isn't: it doesn't fit a single 8-byte GPR slot and
+// isn't float/double either, so the adapter's compile-time type check rejected the entire
+// function as unsupported -- confirmed on-device, every call to printf/snprintf/sprintf
+// through this path failed with ENOTSUP regardless of what the guest actually passed. A plain
+// two-u64 struct is recognized by CallCursor's wide-vector path (IsWideVectorArgument) instead,
+// and is layout-identical to __int128/the real __m128 for the purposes this file actually uses
+// it for -- opaque 16-byte storage, read back via reinterpret_cast in vaArgRegSaveAreaFp, never
+// arithmetic.
+struct __m128 {
+    u64 lo;
+    u64 hi;
+};
 #endif
 
 #define VA_ARGS                                                                                    \
