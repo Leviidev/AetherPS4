@@ -121,7 +121,17 @@ final class EmulatorProcess {
         // is synchronous and already returned, so the window unconditionally exists right
         // here, and the main thread stays free for the whole session now that only
         // shadps4_run_loop() (below) moves to a background thread. No polling needed.
-        GameOverlayHost.attach(gameName: gameName)
+        //
+        // .main.async (not a direct call): confirmed on-device that calling this
+        // synchronously, in the same run-loop turn shadps4_prepare_window() just created
+        // SDL's window in, crashes with an uncaught exception right after window setup --
+        // manipulating that window's view/controller hierarchy before SDL has finished
+        // settling it into the window scene on its own next run-loop tick. Deferring one
+        // turn (same reasoning as the old shadps4_run() dispatch below) lets that finish
+        // first.
+        DispatchQueue.main.async {
+            GameOverlayHost.attach(gameName: gameName)
+        }
 
         // shadps4_run_loop() is everything shadps4_prepare_window() didn't already do:
         // starting guest execution, then SDL's blocking event loop. Unlike the old
