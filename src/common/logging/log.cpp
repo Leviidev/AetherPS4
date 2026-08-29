@@ -13,6 +13,9 @@
 #ifdef _WIN32
 #include <Windows.h>
 #endif
+#ifdef __APPLE__
+#include "common/logging/objc_exception_describe.h"
+#endif
 
 #include "common/assert.h"
 #include "common/logging/log.h"
@@ -284,6 +287,26 @@ void Terminate() {
 
         std::quick_exit(std::to_underlying(ShadPs4ReturnCode::TERMINATE_WITH_EXCEPTION));
     } catch (...) {
+#ifdef __APPLE__
+        // NSExceptions (thrown by UIKit/AppKit APIs, e.g. Auto Layout constraint errors or
+        // view-controller containment misuse) don't derive from std::exception, so the
+        // `catch (const std::exception&)` above never sees them -- confirmed on-device as
+        // the actual shape of a real boot-time crash this exists to debug, where nothing
+        // about it was recoverable beyond "Unknown exception caught". Can't `catch
+        // (NSException*)` directly in this function: it would need this whole file
+        // compiled as Objective-C++, and `Class` -- an ordinary namespace name throughout
+        // this logging system (Common::Log::Class, see classes.h) -- becomes a reserved
+        // builtin type the instant a translation unit is Objective-C++, breaking every
+        // LOG_* macro in the file. Delegating to a helper in a small separate .mm file
+        // (which never references Common::Log::Class) sidesteps that entirely: it
+        // rethrows the exception that's still active right here and only needs to
+        // determine whether IT can catch it as NSException.
+        std::string objc_description;
+        if (DescribeCurrentObjCException(objc_description)) {
+            LOG_CRITICAL(Debug, "NSException: {}", objc_description);
+            std::quick_exit(std::to_underlying(ShadPs4ReturnCode::TERMINATE_WITH_EXCEPTION));
+        }
+#endif
         LOG_CRITICAL(Debug, "Unknown exception caught");
 
         std::quick_exit(std::to_underlying(ShadPs4ReturnCode::TERMINATE_WITH_UNKNOWN_EXCEPTION));
