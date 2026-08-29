@@ -881,6 +881,14 @@ if (ENABLE_DISCORD_RPC)
     list(APPEND COMMON src/common/discord_rpc_handler.cpp src/common/discord_rpc_handler.h)
 endif()
 
+if (APPLE)
+    # Isolated Objective-C++ helper so log.cpp's Terminate() can actually identify and log an
+    # uncaught NSException instead of losing it to a plain `catch (...)` -- see log.cpp's own
+    # comment (in Terminate()) for why this can't just live in log.cpp itself.
+    list(APPEND COMMON src/common/logging/objc_exception_describe.h
+                        src/common/logging/objc_exception_describe.mm)
+endif()
+
 set(CORE src/core/aerolib/stubs.cpp
          src/core/aerolib/stubs.h
          src/core/aerolib/aerolib.cpp
