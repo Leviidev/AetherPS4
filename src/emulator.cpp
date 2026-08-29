@@ -574,9 +574,11 @@ void Emulator::RunLoop() {
     }
 
     window->InitTimers();
+    LOG_CRITICAL(Core, "BACHATA_RUNLOOP: entering window event loop");
     while (window->IsOpen()) {
         window->WaitEvent();
     }
+    LOG_CRITICAL(Core, "BACHATA_RUNLOOP: window event loop exited, shutting down guest");
 
     UpdatePlayTime(id);
     Storage::DataBase::Instance().Close();
@@ -584,6 +586,7 @@ void Emulator::RunLoop() {
     if (onRuntimeStopped) {
         onRuntimeStopped(0);
     }
+    LOG_CRITICAL(Core, "BACHATA_RUNLOOP: returning from RunLoop()");
     SHADPS4_TERMINATE_RUN(0);
 }
 
@@ -591,9 +594,11 @@ void Emulator::Stop() {
     // WindowSDL::WaitEvent()'s loop only exits on SDL_EVENT_QUIT (see sdl_window.cpp);
     // pushing one is the same mechanism the window's own close button uses, so it works
     // uniformly whether or not a window is currently open yet.
+    LOG_CRITICAL(Core, "BACHATA_STOP: Emulator::Stop() pushing SDL_EVENT_QUIT");
     SDL_Event event{};
     event.type = SDL_EVENT_QUIT;
-    SDL_PushEvent(&event);
+    const bool pushed = SDL_PushEvent(&event);
+    LOG_CRITICAL(Core, "BACHATA_STOP: SDL_PushEvent returned {}", pushed ? "ok" : "FAILED");
 }
 
 void Emulator::TogglePause() {

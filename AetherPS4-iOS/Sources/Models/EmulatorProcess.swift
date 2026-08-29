@@ -133,8 +133,10 @@ final class EmulatorProcess {
         // thread-safe by design, and nothing left in this call touches UIKit directly.
         // This is what actually frees the main thread for the rest of the game session:
         // SwiftUI/UIKit keeps working normally the whole time instead of freezing the
-        // instant the game starts (see GameLoadingCoverView's own header comment for the
-        // years -- well, hours -- of workarounds that were needed before this existed).
+        // instant the game starts. (Diagnostic test: temporarily ran this on the main
+        // thread instead to check whether off-main-thread scheduling was causing Sonic
+        // Mania's Title-Screen heap-corruption crash -- confirmed innocent, exact same
+        // crash happened either way, so back to the background thread.)
         // Thread.detachNewThread (not DispatchQueue.global()) for a plain dedicated OS
         // thread that stays alive for exactly this one blocking call, same as the render
         // thread pattern used elsewhere in this codebase.
