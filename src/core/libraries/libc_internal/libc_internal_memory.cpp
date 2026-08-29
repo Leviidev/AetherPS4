@@ -7,9 +7,12 @@
 
 #include "common/assert.h"
 #include "common/logging/log.h"
+#include "common/singleton.h"
 #include "core/libraries/error_codes.h"
+#include "core/libraries/kernel/memory.h"
 #include "core/libraries/kernel/posix_error.h"
 #include "core/libraries/libs.h"
+#include "core/memory.h"
 #include "libc_internal_memory.h"
 #include "mspace.h"
 
@@ -112,46 +115,54 @@ void* PS4_SYSV_ABI internal_malloc(size_t size) {
     return std::malloc(size);
 }
 
+namespace {
+// The two previous fix attempts here both only checked mspace.cpp's own arena tracking
+// (MspaceFreeIfOwned's live-allocation lookup, then MspaceOwnsAddressRange's address-range
+// membership) and both left the crash completely unchanged. Confirmed why on-device: the
+// actual pointer (0x7002230020, logged directly rather than inferred from log adjacency this
+// time) sits 0x20 bytes into a region mapped via sceKernelMapNamedFlexibleMemory("SceLibcHeap")
+// that was NEVER wrapped in an MspaceCreate() arena at all -- the game's own CRT bootstrap
+// evidently manages that region's contents itself, without ever routing through any
+// sceLibcMspace* call this codebase intercepts. mspace.cpp's tracking is a strict subset of
+// "memory the guest owns"; it was never going to catch this. Check the actual authority instead
+// -- the guest VMM itself (the same Core::Memory::VirtualQuery signals.cpp already uses to
+// classify fault addresses) -- since ANY address the VMM reports as mapped guest memory is, by
+// construction, never a valid host malloc()/free()/realloc() target regardless of which
+// in-guest mechanism (mspace arena, raw sceKernelMapNamedFlexibleMemory region, or anything
+// else) actually owns it.
+bool IsGuestMappedAddress(void* pointer) {
+    if (pointer == nullptr) {
+        return false;
+    }
+    auto* memory = Core::Memory::Instance();
+    if (memory == nullptr) {
+        return false;
+    }
+    ::Libraries::Kernel::OrbisVirtualQueryInfo info{};
+    return memory->VirtualQuery(reinterpret_cast<VAddr>(pointer), 0, &info) == 0;
+}
+} // namespace
+
 void PS4_SYSV_ABI internal_free(void* pointer) {
-    // Unconditional, every call: two successive fix attempts (route live mspace allocations to
-    // MspaceFree; then also catch double-frees/stale pointers via address-range membership)
-    // were both built on an assumption -- that the pointer crashing here was the one the
-    // preceding memcpy call returned -- inferred purely from adjacency in the trace log, never
-    // actually confirmed. Both attempts failed to change the crash at all, which only makes
-    // sense if that assumption was wrong from the start. Log the real pointer plus both
-    // ownership checks' actual verdicts here, unconditionally, so the next crash shows the
-    // truth directly instead of requiring another guess.
-    LOG_CRITICAL(Lib_LibcInternal,
-                 "internal_free: pointer={} mspace_live={} mspace_range_owns={}",
-                 fmt::ptr(pointer), MspaceMallocUsableSize(pointer) != 0,
-                 MspaceOwnsAddressRange(pointer));
     // A pointer reaching plain free() can legitimately have come from either allocator PS4
     // games use through this same libc surface: the host's own malloc() (internal_malloc,
-    // above) or one of the game's mspace arenas (SceLibcHeap, sceKernelMapNamedFlexibleMemory
-    // -backed -- see internal_sceLibcMspace* above and mspace.cpp). Those aren't the same
-    // heap: a pointer carved out of an mspace arena was never a valid host malloc() block, and
-    // std::free() unconditionally forwarding it to the host allocator corrupts/aborts that
-    // allocator (confirmed on-device: this exact crash, from Journey's own libc freeing a
-    // pointer straight out of a freshly-mapped SceLibcHeap arena). Try the mspace arenas
-    // first -- MspaceFreeIfOwned is a no-op false for anything not currently live in any of
-    // them, so a genuine host-malloc() pointer falls through to std::free() exactly as before.
+    // above) or guest-owned memory (an mspace arena, or a raw sceKernelMapNamedFlexibleMemory
+    // region the game manages itself -- see IsGuestMappedAddress's own comment for how that was
+    // found). Those aren't the same heap: guest-owned memory was never a valid host malloc()
+    // block, and std::free() unconditionally forwarding it to the host allocator corrupts/
+    // aborts that allocator (confirmed on-device, repeatedly, chasing this exact crash). Try
+    // the mspace arenas first so a live mspace allocation is actually freed correctly (not just
+    // safely ignored), then fall back to the general guest-VMM check for everything mspace.cpp
+    // doesn't track -- only once neither claims this address is it safe to assume a genuine
+    // host malloc() pointer and fall through to std::free() exactly as before.
     if (MspaceFreeIfOwned(pointer)) {
         return;
     }
-    // MspaceFreeIfOwned only recognizes a currently-*live* mspace allocation -- "not found"
-    // there is also what a double-free or a stale pointer into an already-shrunk/destroyed
-    // arena looks like, not just "never came from an mspace arena at all". Those first two
-    // cases are still never valid host free() targets (this address was carved out of guest
-    // memory, never handed to the host allocator), so check the arena address *ranges*
-    // (independent of live/freed state) before concluding this is a genuine host pointer.
-    // Confirmed on-device: without this check, exactly this scenario (Journey re-freeing a
-    // pointer whose live mspace allocation had already been freed) still reached std::free()
-    // and corrupted the host allocator identically to the original bug.
-    if (MspaceOwnsAddressRange(pointer)) {
+    if (MspaceOwnsAddressRange(pointer) || IsGuestMappedAddress(pointer)) {
         LOG_WARNING(Lib_LibcInternal,
-                    "internal_free: {} falls inside an mspace arena's address range but isn't "
-                    "a live allocation there (double-free or stale pointer) -- ignoring rather "
-                    "than risking the host allocator",
+                    "internal_free: {} is guest-owned memory (mspace arena or a raw guest "
+                    "mapping) but not a live mspace allocation -- ignoring rather than risking "
+                    "the host allocator",
                     fmt::ptr(pointer));
         return;
     }
@@ -168,14 +179,14 @@ void* PS4_SYSV_ABI internal_realloc(void* pointer, size_t size) {
     if (MspaceMallocUsableSize(pointer) != 0) {
         return MspaceReallocAnyArena(pointer, size);
     }
-    // Same double-free/stale-pointer gap as internal_free above: a pointer inside an mspace
-    // arena's address range that isn't currently a live allocation there is still never a
-    // valid host realloc() target.
-    if (MspaceOwnsAddressRange(pointer)) {
+    // Same gap internal_free closes above: mspace.cpp's own tracking (both checks) is a strict
+    // subset of "memory the guest actually owns" -- fall back to the general guest-VMM check
+    // before ever concluding this is a genuine host pointer.
+    if (MspaceOwnsAddressRange(pointer) || IsGuestMappedAddress(pointer)) {
         LOG_WARNING(Lib_LibcInternal,
-                    "internal_realloc: {} falls inside an mspace arena's address range but "
-                    "isn't a live allocation there (double-free or stale pointer) -- refusing "
-                    "rather than risking the host allocator",
+                    "internal_realloc: {} is guest-owned memory (mspace arena or a raw guest "
+                    "mapping) but not a live mspace allocation -- refusing rather than risking "
+                    "the host allocator",
                     fmt::ptr(pointer));
         return nullptr;
     }
