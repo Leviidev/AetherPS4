@@ -48,6 +48,17 @@ public:
     // Realloc: null-pointer, zero-size, shrink, grow, and move semantics.
     void* Realloc(void* pointer, std::size_t new_size);
     std::size_t UsableSize(void* pointer) const;
+    // Pure address-range membership -- true whenever `pointer` falls inside [base, base +
+    // capacity), independent of whether it names a currently-live allocation. Doesn't touch
+    // `allocations`/`mutex` at all, so it's safe (and meaningful) to call even for an address
+    // that's already been freed here.
+    bool ContainsAddress(void* pointer) const {
+        if (capacity == 0) {
+            return false;
+        }
+        const auto addr = reinterpret_cast<std::uintptr_t>(pointer);
+        return addr >= base && addr < base + capacity;
+    }
 
 private:
     void InsertFreeBlock(std::size_t offset, std::size_t size);
@@ -426,6 +437,27 @@ std::size_t MspaceMallocUsableSize(void* pointer) {
         }
     }
     return 0;
+}
+
+bool MspaceOwnsAddressRange(void* pointer) {
+    if (!pointer) {
+        return false;
+    }
+    const auto addr = reinterpret_cast<std::uintptr_t>(pointer);
+    std::lock_guard lock(registry_mutex);
+    // Checked against HandleEntry's own base/capacity (recorded at MspaceCreate, kept even
+    // after MspaceDestroy retires the arena -- see MspaceDestroy's own comment), not the live
+    // Arena's ContainsAddress: a destroyed arena's shared_ptr can already be gone by the time
+    // this runs, but the address range it carved out of guest memory was never handed back to
+    // the host allocator either way, so a pointer into it is never a valid host free() target
+    // regardless of whether the specific allocation inside it is still considered live.
+    for (const auto& [handle, entry] : handles) {
+        const auto end = entry->base + entry->capacity;
+        if (entry->capacity != 0 && addr >= entry->base && addr < end) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void* MspaceReallocAnyArena(void* pointer, std::size_t new_size) {

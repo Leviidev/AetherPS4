@@ -30,6 +30,14 @@ std::size_t MspaceMallocUsableSize(void* pointer);
 // owning allocator (host malloc() vs. an mspace arena) has to be established before touching
 // it at all.
 void* MspaceReallocAnyArena(void* pointer, std::size_t new_size);
+// True whenever `pointer` falls inside the address range of any arena this process has ever
+// created via MspaceCreate -- including one already destroyed, and independent of whether
+// `pointer` currently names a *live* allocation there. MspaceFreeIfOwned/MspaceMallocUsableSize
+// only recognize currently-live allocations, so on their own they can't distinguish "never came
+// from any mspace arena" from "came from one, but this is a double-free or a stale pointer into
+// one" -- both look like "not found" to them, but only the first is actually safe to hand to
+// the host allocator. This is the range check that tells them apart.
+bool MspaceOwnsAddressRange(void* pointer);
 // Frees `pointer` if (and only if) it's a live allocation in some currently-open mspace
 // arena, trying every arena the same way MspaceMallocUsableSize does. Returns true if it was
 // found and freed, false if no live arena owns it -- the caller (internal_free) falls back to
