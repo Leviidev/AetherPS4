@@ -195,6 +195,26 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                     LOG_CRITICAL(Debug, "FEX guest rip is not inside any loaded module");
                 }
             }
+            // Raw x86-64 opcode bytes at the faulting instruction itself: the register dump
+            // below says which GPRs are live, but not which of them the actual faulting
+            // instruction used as its base/index for the write -- these bytes are enough to
+            // hand-decode the ModRM/SIB encoding and settle that without a disassembler.
+            // guest_rip is directly host-readable, same as any other guest VAddr (FEX
+            // identity-maps guest memory into this process); validated against the VMM first
+            // since a wild/corrupted rip could point anywhere.
+            if (auto* memory = Core::Memory::Instance()) {
+                ::Libraries::Kernel::OrbisVirtualQueryInfo rip_vma{};
+                if (memory->VirtualQuery(guest_rip, 0, &rip_vma) == 0) {
+                    const auto* bytes =
+                        reinterpret_cast<const volatile uint8_t*>(static_cast<uintptr_t>(guest_rip));
+                    char hex[64] = {};
+                    char* w = hex;
+                    for (int i = 0; i < 16; ++i) {
+                        w += std::snprintf(w, hex + sizeof(hex) - w, "%02x ", bytes[i]);
+                    }
+                    LOG_CRITICAL(Debug, "FEX guest instruction bytes at rip: {}", hex);
+                }
+            }
         }
         // rip/rax alone weren't enough to tell what a NULL-pointer guest write actually came
         // from (which pointer was null, what called into the code that dereferenced it) --
