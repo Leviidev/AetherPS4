@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include "common/assert.h"
+#include "common/logging/log.h"
 #include "core/libraries/error_codes.h"
 #include "core/libraries/kernel/posix_error.h"
 #include "core/libraries/libs.h"
@@ -125,6 +126,23 @@ void PS4_SYSV_ABI internal_free(void* pointer) {
     if (MspaceFreeIfOwned(pointer)) {
         return;
     }
+    // MspaceFreeIfOwned only recognizes a currently-*live* mspace allocation -- "not found"
+    // there is also what a double-free or a stale pointer into an already-shrunk/destroyed
+    // arena looks like, not just "never came from an mspace arena at all". Those first two
+    // cases are still never valid host free() targets (this address was carved out of guest
+    // memory, never handed to the host allocator), so check the arena address *ranges*
+    // (independent of live/freed state) before concluding this is a genuine host pointer.
+    // Confirmed on-device: without this check, exactly this scenario (Journey re-freeing a
+    // pointer whose live mspace allocation had already been freed) still reached std::free()
+    // and corrupted the host allocator identically to the original bug.
+    if (MspaceOwnsAddressRange(pointer)) {
+        LOG_WARNING(Lib_LibcInternal,
+                    "internal_free: {} falls inside an mspace arena's address range but isn't "
+                    "a live allocation there (double-free or stale pointer) -- ignoring rather "
+                    "than risking the host allocator",
+                    fmt::ptr(pointer));
+        return;
+    }
     std::free(pointer);
 }
 
@@ -137,6 +155,17 @@ void* PS4_SYSV_ABI internal_realloc(void* pointer, size_t size) {
     // heap memory that happens to sit at that address.
     if (MspaceMallocUsableSize(pointer) != 0) {
         return MspaceReallocAnyArena(pointer, size);
+    }
+    // Same double-free/stale-pointer gap as internal_free above: a pointer inside an mspace
+    // arena's address range that isn't currently a live allocation there is still never a
+    // valid host realloc() target.
+    if (MspaceOwnsAddressRange(pointer)) {
+        LOG_WARNING(Lib_LibcInternal,
+                    "internal_realloc: {} falls inside an mspace arena's address range but "
+                    "isn't a live allocation there (double-free or stale pointer) -- refusing "
+                    "rather than risking the host allocator",
+                    fmt::ptr(pointer));
+        return nullptr;
     }
     return std::realloc(pointer, size);
 }
