@@ -113,6 +113,18 @@ void* PS4_SYSV_ABI internal_malloc(size_t size) {
 }
 
 void PS4_SYSV_ABI internal_free(void* pointer) {
+    // Unconditional, every call: two successive fix attempts (route live mspace allocations to
+    // MspaceFree; then also catch double-frees/stale pointers via address-range membership)
+    // were both built on an assumption -- that the pointer crashing here was the one the
+    // preceding memcpy call returned -- inferred purely from adjacency in the trace log, never
+    // actually confirmed. Both attempts failed to change the crash at all, which only makes
+    // sense if that assumption was wrong from the start. Log the real pointer plus both
+    // ownership checks' actual verdicts here, unconditionally, so the next crash shows the
+    // truth directly instead of requiring another guess.
+    LOG_CRITICAL(Lib_LibcInternal,
+                 "internal_free: pointer={} mspace_live={} mspace_range_owns={}",
+                 fmt::ptr(pointer), MspaceMallocUsableSize(pointer) != 0,
+                 MspaceOwnsAddressRange(pointer));
     // A pointer reaching plain free() can legitimately have come from either allocator PS4
     // games use through this same libc surface: the host's own malloc() (internal_malloc,
     // above) or one of the game's mspace arenas (SceLibcHeap, sceKernelMapNamedFlexibleMemory
