@@ -1194,6 +1194,34 @@ bool BachataQueryGuestRipSyscall(uint64_t* out_rip, uint64_t* out_syscall) noexc
   return true;
 }
 
+bool BachataDumpGuestRegisters(char* out_buf, std::size_t out_buf_size, uint64_t* out_rsp) noexcept {
+  if (out_buf == nullptr || out_buf_size == 0) {
+    return false;
+  }
+  const auto& exec = ActiveFexExecution;
+  if (exec.Context == nullptr || exec.Thread == nullptr || exec.Thread->CurrentFrame == nullptr) {
+    return false;
+  }
+  const auto& gregs = exec.Thread->CurrentFrame->State.gregs;
+  using namespace FEXCore::X86State;
+  if (out_rsp != nullptr) {
+    *out_rsp = gregs[REG_RSP];
+  }
+  std::snprintf(
+      out_buf, out_buf_size,
+      "rax=%#llx rcx=%#llx rdx=%#llx rbx=%#llx rsp=%#llx rbp=%#llx rsi=%#llx rdi=%#llx "
+      "r8=%#llx r9=%#llx r10=%#llx r11=%#llx r12=%#llx r13=%#llx r14=%#llx r15=%#llx",
+      static_cast<unsigned long long>(gregs[REG_RAX]), static_cast<unsigned long long>(gregs[REG_RCX]),
+      static_cast<unsigned long long>(gregs[REG_RDX]), static_cast<unsigned long long>(gregs[REG_RBX]),
+      static_cast<unsigned long long>(gregs[REG_RSP]), static_cast<unsigned long long>(gregs[REG_RBP]),
+      static_cast<unsigned long long>(gregs[REG_RSI]), static_cast<unsigned long long>(gregs[REG_RDI]),
+      static_cast<unsigned long long>(gregs[REG_R8]), static_cast<unsigned long long>(gregs[REG_R9]),
+      static_cast<unsigned long long>(gregs[REG_R10]), static_cast<unsigned long long>(gregs[REG_R11]),
+      static_cast<unsigned long long>(gregs[REG_R12]), static_cast<unsigned long long>(gregs[REG_R13]),
+      static_cast<unsigned long long>(gregs[REG_R14]), static_cast<unsigned long long>(gregs[REG_R15]));
+  return true;
+}
+
 bool BachataDescribeHostFaultAddress(void* fault_addr, char* out_buf, std::size_t out_buf_size) noexcept {
 #if defined(__APPLE__) && TARGET_OS_IPHONE
   if (out_buf == nullptr || out_buf_size == 0) {
