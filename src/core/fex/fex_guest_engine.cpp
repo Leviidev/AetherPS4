@@ -2092,8 +2092,14 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
       // blocking host syscall may not run the signal handler until that syscall returns on
       // its own, which could be arbitrarily long -- but such a thread isn't executing guest
       // code during that time either, so there's nothing at risk from proceeding without it.
-      // Timing out is strictly no worse than this whole mechanism not existing.
-      const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
+      // Timing out is strictly no worse than this whole mechanism not existing. 2s (up from
+      // 1s): unlike the HLE-syscall wait below, this one is NOT known to be futile -- a
+      // signaled thread that hasn't paused yet is (by definition) still executing guest
+      // code and WILL hit the signal handler on its own; the only question is how much host
+      // scheduling delay it's under, which can genuinely be worse than 1s on a loaded
+      // device. Every extra ms spent here is a real chance to catch a thread that the old
+      // deadline was cutting off just before it would have paused.
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2000);
       while (g_safepoint_paused_count.load(std::memory_order_acquire) < signaled &&
              std::chrono::steady_clock::now() < deadline) {
         sched_yield();
@@ -2120,7 +2126,17 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
       int final_hle = g_threads_in_hle_syscall.load(std::memory_order_acquire);
       LogMan::Msg::IFmt("BACHATA_SAFEPOINT: hle wait done, final_hle_count={}", final_hle);
       if (final_paused < signaled || final_hle > 0) {
-        LogMan::Msg::IFmt("BACHATA_SAFEPOINT: WARNING - incomplete pause! paused={}/{} hle={}",
+        // Deliberately impossible to miss or mistake for routine logging: the buffer reuse
+        // this safepoint exists to guard is about to happen anyway (see this call's own
+        // caller, Core.cpp's ClearCodeCache -- reclaiming the buffer isn't optional once
+        // growth is exhausted, so there's no safe way to abort it from here), with one or
+        // more threads NOT confirmed quiesced. If a crash follows shortly after this exact
+        // line in a crash log, that is not a coincidence -- it is this race. See this
+        // function's own header comment for the full history of why this can't simply be
+        // waited out.
+        LogMan::Msg::EFmt("BACHATA_SAFEPOINT_UNSAFE_PROCEED: reusing JIT buffer WITHOUT full "
+                          "quiescence -- paused={}/{} hle_still_active={} -- a crash "
+                          "shortly after this line is this exact race, not a new bug",
                           final_paused, signaled, final_hle);
       }
     };
