@@ -532,7 +532,13 @@ Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_
     // path ever needs to be reverted. Define BACHATA_USE_IMGUI_MOBILE_OVERLAY to bring it back.
     ImGui::Layer::AddLayer(Common::Singleton<Platform::iOS::MobileOverlayLayer>::Instance());
 #endif
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(__APPLE__) && TARGET_OS_IPHONE && defined(BACHATA_USE_IMGUI_TOUCH_CONTROLS)
+    // Disabled per explicit request: it kept fighting the Swift loading overlay for
+    // visibility (both are ImGui/render-thread-driven, drawn into the same SDL window),
+    // and the user asked for it gone rather than continuing to tune its timing against
+    // whatever the loading UI ends up doing. Left compiled but inactive, not deleted --
+    // same pattern as MobileOverlayLayer above. Define BACHATA_USE_IMGUI_TOUCH_CONTROLS
+    // to bring it back.
     ImGui::Layer::AddLayer(Common::Singleton<Platform::iOS::TouchControlsLayer>::Instance());
 #endif
 }
@@ -542,7 +548,7 @@ Presenter::~Presenter() {
 #if defined(__APPLE__) && TARGET_OS_IPHONE && defined(BACHATA_USE_IMGUI_MOBILE_OVERLAY)
     ImGui::Layer::RemoveLayer(Common::Singleton<Platform::iOS::MobileOverlayLayer>::Instance());
 #endif
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(__APPLE__) && TARGET_OS_IPHONE && defined(BACHATA_USE_IMGUI_TOUCH_CONTROLS)
     ImGui::Layer::RemoveLayer(Common::Singleton<Platform::iOS::TouchControlsLayer>::Instance());
 #endif
 
