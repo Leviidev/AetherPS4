@@ -87,6 +87,28 @@ const BreakpointJITSymbols& GetBreakpointJITSymbols() noexcept {
 
 namespace Core {
 
+// Set (via IosJitTrapGuard below) for exactly the duration of the BreakGetJITMapping call --
+// the one place in this file that issues the BRK #0xf00d instruction documented at the top of
+// ios_jit_allocator.h. If StikDebug isn't there to service it (killed by iOS's own background
+// wake-rate limiter, confirmed on-device via a Console.app capture showing it hit a
+// "cpulimit violation" mid-session -- a different cause than the app itself ever calling
+// Detach() early, which fex_guest_engine.cpp's own comment already covers), the BRK delivers a
+// real, unhandled SIGTRAP that kills the whole process outright -- there is no return from
+// get_jit_mapping() to recover from, ios_jit_allocator.h's own doc comment already established
+// that. signals.cpp checks this flag to distinguish "this SIGTRAP is the JIT-mapping BRK
+// StikDebug failed to intercept" (recoverable: simulate get_jit_mapping() returning nullptr,
+// the same failure DualMappedRegion::Allocate() already handles below) from any other SIGTRAP
+// (a real debugger breakpoint, which must not be silently swallowed).
+thread_local bool g_expecting_jit_mapping_trap = false;
+
+class IosJitTrapGuard final {
+public:
+  IosJitTrapGuard() { g_expecting_jit_mapping_trap = true; }
+  ~IosJitTrapGuard() { g_expecting_jit_mapping_trap = false; }
+  IosJitTrapGuard(const IosJitTrapGuard&) = delete;
+  IosJitTrapGuard& operator=(const IosJitTrapGuard&) = delete;
+};
+
 // ─── DualMappedRegion ────────────────────────────────────────────────────────
 
 // Own counter, separate from FEXCore's (Utils/Allocator.cpp's AllocationCounter) since the two
@@ -119,7 +141,11 @@ DualMappedRegion DualMappedRegion::Allocate(size_t bytes) noexcept {
 
     LOG_INFO(Core, "ios_jit_allocator #{}: requesting fresh execute-capable region (size={})",
              request_number, bytes);
-    void* rx = symbols.get_jit_mapping(nullptr, bytes);
+    void* rx;
+    {
+        IosJitTrapGuard trap_guard;
+        rx = symbols.get_jit_mapping(nullptr, bytes);
+    }
     LOG_INFO(Core, "ios_jit_allocator #{}: BreakGetJITMapping returned {} (execute-side)",
              request_number, rx);
     if (rx == nullptr) {
@@ -216,6 +242,10 @@ void Detach() noexcept {
     LOG_INFO(Core, "ios_jit_allocator: calling BreakJITDetach() — debugger will detach");
     symbols.jit_detach();
     LOG_INFO(Core, "ios_jit_allocator: debugger detached; RX mappings persist");
+}
+
+bool IsExpectingJitMappingTrap() noexcept {
+    return g_expecting_jit_mapping_trap;
 }
 
 } // namespace IosJitAllocator

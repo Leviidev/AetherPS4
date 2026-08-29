@@ -137,6 +137,12 @@ namespace IosJitAllocator {
 // and may interfere with other debugging tools.
 void Detach() noexcept;
 
+// True for exactly the duration of DualMappedRegion::Allocate()'s BreakGetJITMapping call on
+// this thread -- see ios_jit_allocator.cpp's g_expecting_jit_mapping_trap for why this exists.
+// Called from signals.cpp's SIGTRAP handler to distinguish a StikDebug-unserviced JIT-mapping
+// BRK trap (recoverable) from any other SIGTRAP (not).
+[[nodiscard]] bool IsExpectingJitMappingTrap() noexcept;
+
 } // namespace IosJitAllocator
 
 } // namespace Core
