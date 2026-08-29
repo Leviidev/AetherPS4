@@ -112,10 +112,32 @@ void* PS4_SYSV_ABI internal_malloc(size_t size) {
 }
 
 void PS4_SYSV_ABI internal_free(void* pointer) {
+    // A pointer reaching plain free() can legitimately have come from either allocator PS4
+    // games use through this same libc surface: the host's own malloc() (internal_malloc,
+    // above) or one of the game's mspace arenas (SceLibcHeap, sceKernelMapNamedFlexibleMemory
+    // -backed -- see internal_sceLibcMspace* above and mspace.cpp). Those aren't the same
+    // heap: a pointer carved out of an mspace arena was never a valid host malloc() block, and
+    // std::free() unconditionally forwarding it to the host allocator corrupts/aborts that
+    // allocator (confirmed on-device: this exact crash, from Journey's own libc freeing a
+    // pointer straight out of a freshly-mapped SceLibcHeap arena). Try the mspace arenas
+    // first -- MspaceFreeIfOwned is a no-op false for anything not currently live in any of
+    // them, so a genuine host-malloc() pointer falls through to std::free() exactly as before.
+    if (MspaceFreeIfOwned(pointer)) {
+        return;
+    }
     std::free(pointer);
 }
 
 void* PS4_SYSV_ABI internal_realloc(void* pointer, size_t size) {
+    // Same cross-allocator hazard as internal_free above, but realloc has no "just don't call
+    // it" fallback: a pointer already live in an mspace arena must be resized through that
+    // arena (MspaceRealloc, via ResolveArena's registry-wide pointer scan already exposed as
+    // MspaceMallocUsableSize) rather than handed to std::realloc(), which would either corrupt
+    // the host allocator the same way free() does, or silently succeed against unrelated host
+    // heap memory that happens to sit at that address.
+    if (MspaceMallocUsableSize(pointer) != 0) {
+        return MspaceReallocAnyArena(pointer, size);
+    }
     return std::realloc(pointer, size);
 }
 
