@@ -3,12 +3,18 @@ import SwiftUI
 struct SettingsView: View {
     @AppStorage("showFpsCounter") private var showFpsCounter: Bool = true
     @AppStorage("networkEnabled") private var networkEnabled: Bool = true
+    @AppStorage("consoleLoggingEnabled") private var consoleLoggingEnabled: Bool = false
 
     var body: some View {
         Form {
             Section("Display & Performance") {
                 Toggle("Show In-Game FPS Counter", isOn: $showFpsCounter)
                 Text("Displays the real-time frame rate, frame time, and resolution overlay inside the emulator window.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Console Logging", isOn: $consoleLoggingEnabled)
+                Text("Shows a live, scrolling console in the loading card. Off by default -- tailing the log file and re-rendering it several times a second noticeably lags the app, so it's only worth turning on when you actually need to see what's happening during boot.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

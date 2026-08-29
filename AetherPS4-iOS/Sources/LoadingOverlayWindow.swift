@@ -71,21 +71,50 @@ enum LoadingOverlayWindow {
 private final class LoadingOverlayUIState: ObservableObject {
     @Published var isCardVisible = true
     @Published var liveText: String = ""
+    // Only meaningful when consoleLoggingEnabled is false -- see syntheticTick() below.
+    @Published var syntheticProgress: Double = 0
+
+    // Read once at launch, not observed live: changing this setting mid-boot would need to
+    // start/stop the tailing timer out from under whatever's currently running, and the
+    // setting only exists to control *this* loading session's behavior anyway.
+    let consoleLoggingEnabled = UserDefaults.standard.bool(forKey: "consoleLoggingEnabled")
 
     private var pollTimer: Timer?
 
     init() {
+        // Tailing the log file and re-rendering ~32KB of monospaced text several times a
+        // second was confirmed to noticeably lag the app -- reported directly, and no
+        // surprise given SwiftUI's diffing cost on a large Text view redrawing every
+        // 0.5s. Off by default (see SettingsView's own toggle): when disabled, this skips
+        // touching the filesystem or liveText entirely and just drives a synthetic
+        // progress estimate instead, so there's no lag source to begin with rather than
+        // just hiding the console UI while still paying its cost underneath.
         let timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            self?.refreshLog()
+            guard let self else { return }
+            if self.consoleLoggingEnabled {
+                self.refreshLog()
+            } else {
+                self.syntheticTick()
+            }
         }
         RunLoop.main.add(timer, forMode: .common)
         pollTimer = timer
-        refreshLog()
+        if consoleLoggingEnabled {
+            refreshLog()
+        }
     }
 
     func stopTailing() {
         pollTimer?.invalidate()
         pollTimer = nil
+    }
+
+    // A "hopeful" loading bar for when there's no console text to derive real milestone
+    // progress from: creeps toward 90% and never claims to finish, same reasoning as the
+    // real milestone-based progress below (there's no reliable "now it's actually running"
+    // signal either way) -- just without anything to key off of.
+    private func syntheticTick() {
+        syntheticProgress += (0.9 - syntheticProgress) * 0.03
     }
 
     // Last 32KB of the crash log, tailed live -- same window/cadence GameOverlay.swift's
@@ -173,6 +202,7 @@ private struct LoadingCard: View {
     ]
 
     private var progress: Double {
+        guard state.consoleLoggingEnabled else { return state.syntheticProgress }
         var best = 0.0
         for (marker, value) in Self.milestones where state.liveText.contains(marker) {
             best = max(best, value)
@@ -204,38 +234,45 @@ private struct LoadingCard: View {
             ProgressView(value: progress)
                 .tint(.white)
 
-            Divider().background(Color.white.opacity(0.2))
+            // Console logging is off by default (see SettingsView) -- tailing the log file
+            // and re-rendering it several times a second was confirmed to noticeably lag
+            // the app. When it's off, LoadingOverlayUIState never touches the filesystem or
+            // populates liveText at all, so this just doesn't render the section rather
+            // than showing an empty one.
+            if state.consoleLoggingEnabled {
+                Divider().background(Color.white.opacity(0.2))
 
-            HStack {
-                Text("Console")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.5))
-                Spacer()
-                Button(action: copyLog) {
-                    HStack(spacing: 4) {
-                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                        Text(copied ? "Copied" : "Copy")
+                HStack {
+                    Text("Console")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.5))
+                    Spacer()
+                    Button(action: copyLog) {
+                        HStack(spacing: 4) {
+                            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                            Text(copied ? "Copied" : "Copy")
+                        }
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.white.opacity(0.8))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
                     }
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.white.opacity(0.8))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
                 }
-            }
 
-            ScrollViewReader { proxy in
-                ScrollView {
-                    Text(state.liveText.isEmpty ? "Waiting for output..." : state.liveText)
-                        .font(.system(size: 10, weight: .regular, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.85))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                        .id("logEnd")
-                }
-                .frame(height: 220)
-                .onChange(of: state.liveText) { _ in
-                    proxy.scrollTo("logEnd", anchor: .bottom)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        Text(state.liveText.isEmpty ? "Waiting for output..." : state.liveText)
+                            .font(.system(size: 10, weight: .regular, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.85))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                            .id("logEnd")
+                    }
+                    .frame(height: 220)
+                    .onChange(of: state.liveText) { _ in
+                        proxy.scrollTo("logEnd", anchor: .bottom)
+                    }
                 }
             }
         }
