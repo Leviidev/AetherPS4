@@ -501,7 +501,30 @@ Linker::GuestFunctionResult Linker::RunGuestMain(EntryParams* params) {
 
     const auto result = m_fex_backend->Run(request);
     if (const auto* failure = std::get_if<GuestExecutionFailure>(&result)) return *failure;
-    return std::get<GuestExecutionState>(result).Gpr[0];
+    const auto& state = std::get<GuestExecutionState>(result);
+    // GuestEngine::Run only stops ExecuteThread by hitting a guest `hlt` (0xF4) byte --
+    // EnableExitOnHLT() is unconditionally active for this call (see its own comment). A real
+    // PS4 game never legitimately executes hlt (privileged, illegal in user mode), so reaching
+    // one here always means control flow went wild and happened to decode garbage as hlt
+    // somewhere -- RunMainEntry's caller only sees Gpr[0] (RAX), discarding exactly the two
+    // fields (Rip/LastRip: where execution actually was, and got to, when this happened) that
+    // would show WHERE the wild jump landed. Logging them here, before they're discarded, is
+    // the only way to see that for the "unexpectedly returned" case investigated for the Sonic
+    // Mania title-screen heap-corruption crash -- rip/last_rip landing inside a heap-allocated
+    // data range rather than any loaded module's code would directly confirm a corrupted
+    // return-address-or-function-pointer wild jump, not some FEX/host-side bug.
+    LOG_CRITICAL(Core_Linker,
+                 "RunGuestMain: FEX backend Run() returned via hlt -- rip={:#x} last_rip={:#x} "
+                 "rsp={:#x} rax={:#x}",
+                 state.Rip, state.LastRip, state.Rsp, state.Gpr[0]);
+    if (auto* module = FindByAddress(state.Rip)) {
+        LOG_CRITICAL(Core_Linker, "RunGuestMain: rip is inside module '{}' (base={:#x}, offset={:#x})",
+                     module->name, module->GetBaseAddress(), state.Rip - module->GetBaseAddress());
+    } else {
+        LOG_CRITICAL(Core_Linker, "RunGuestMain: rip is NOT inside any loaded module -- wild jump, "
+                                  "not a return into legitimate code");
+    }
+    return state.Gpr[0];
 }
 #endif
 
