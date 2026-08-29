@@ -132,6 +132,38 @@ int shadps4_probe_jit(void);
 // every other UIKit-touching call in this API.
 void* shadps4_get_uikit_window(void);
 
+// Button bit values match Libraries::Pad::OrbisPadButtonDataOffset exactly (kept in sync by
+// hand: a C header can't reference that C++ enum class directly). OR these together and
+// pass as `buttons` to shadps4_apply_touch_input below.
+#define SHADPS4_PAD_L3       0x2
+#define SHADPS4_PAD_R3       0x4
+#define SHADPS4_PAD_OPTIONS  0x8
+#define SHADPS4_PAD_UP       0x10
+#define SHADPS4_PAD_RIGHT    0x20
+#define SHADPS4_PAD_DOWN     0x40
+#define SHADPS4_PAD_LEFT     0x80
+#define SHADPS4_PAD_L2       0x100
+#define SHADPS4_PAD_R2       0x200
+#define SHADPS4_PAD_L1       0x400
+#define SHADPS4_PAD_R1       0x800
+#define SHADPS4_PAD_TRIANGLE 0x1000
+#define SHADPS4_PAD_CIRCLE   0x2000
+#define SHADPS4_PAD_CROSS    0x4000
+#define SHADPS4_PAD_SQUARE   0x8000
+#define SHADPS4_PAD_TOUCHPAD 0x100000
+
+// Applies a full touch-controller state snapshot, replacing whatever the touch overlay
+// last reported -- not incremental, so the caller must pass the complete current state
+// every call (all currently-held buttons OR'd together, not just what changed). Axis
+// values are 0-255; 128 is center for left_x/left_y/right_x/right_y, 0 is released for
+// l2/r2. Routes through the same Input::GameControllers::ApplyRemoteState() path a network
+// remote-play controller uses, on the primary controller's own slot (the same one a real
+// physical controller occupies). Safe to call from any thread, including SwiftUI's normal
+// main-thread gesture callbacks, as often as needed (e.g. every touch-move event) -- a
+// no-op before shadps4_prepare_window() has succeeded.
+void shadps4_apply_touch_input(uint32_t buttons, int left_x, int left_y, int right_x,
+                                int right_y, int l2, int r2);
+
 #ifdef __cplusplus
 }
 #endif

@@ -22,9 +22,11 @@
 #include "core/file_sys/fs.h"
 #include "core/ios/ios_jit_allocator.h"
 #include "core/ipc/ipc.h"
+#include "core/libraries/pad/pad.h"
 #include "core/loader/elf.h"
 #include "core/user_settings.h"
 #include "emulator.h"
+#include "input/controller.h"
 
 namespace {
 
@@ -199,4 +201,21 @@ extern "C" void* shadps4_get_uikit_window() {
     }
     return SDL_GetPointerProperty(SDL_GetWindowProperties(sdl_window),
                                   SDL_PROP_WINDOW_UIKIT_WINDOW_POINTER, nullptr);
+}
+
+extern "C" void shadps4_apply_touch_input(uint32_t buttons, int left_x, int left_y, int right_x,
+                                          int right_y, int l2, int r2) {
+    if (!g_init_ok) {
+        return;
+    }
+    // Same primary-controller slot a real physical controller occupies (player_index - 1
+    // for the default/only user), not a separate "extra" one -- see
+    // touch_controls_layer.cpp's own kTouchControllerSlot comment for why: slot 4 is
+    // reserved for ORBIS_PAD_PORT_TYPE_REMOTE_CONTROL-type pads specifically, and using it
+    // meant every touch was updating a GameController the game was never looking at.
+    constexpr size_t kTouchControllerSlot = 0;
+    auto* controllers = Common::Singleton<Input::GameControllers>::Instance();
+    const std::array<int, 6> axes = {left_x, left_y, right_x, right_y, l2, r2};
+    (*controllers)[kTouchControllerSlot]->ApplyRemoteState(
+        static_cast<Libraries::Pad::OrbisPadButtonDataOffset>(buttons), axes, false, 0.0f, 0.0f);
 }

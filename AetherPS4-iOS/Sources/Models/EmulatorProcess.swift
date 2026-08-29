@@ -121,6 +121,11 @@ final class EmulatorProcess {
         // main thread stays free for the whole session -- its own internal Timer needs that.
         LoadingOverlayWindow.show(gameName: gameName)
 
+        // TouchControlsOverlayWindow: same second-window pattern, at a lower windowLevel so
+        // the loading card stays on top of it while open. Shown for the whole session so
+        // controls are already there once the loading card is closed/minimized.
+        TouchControlsOverlayWindow.show()
+
         // shadps4_run_loop() is everything shadps4_prepare_window() didn't already do:
         // starting guest execution, then SDL's blocking event loop. Unlike the old
         // shadps4_run(), this is safe on a background thread -- the window (and every
@@ -138,6 +143,7 @@ final class EmulatorProcess {
             DispatchQueue.main.async {
                 guard let self else { return }
                 LoadingOverlayWindow.teardown()
+                TouchControlsOverlayWindow.teardown()
                 self.appendLine(.stdout, "[AetherPS4] shadPS4 exited with status \(result)")
                 self.state = .exited(status: result)
                 self.unlockOrientation()
