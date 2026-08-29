@@ -95,16 +95,13 @@ void InitHLELibs(Core::Loader::SymbolsResolver* sym) {
     LOG_INFO(Lib_Kernel, "Initializing HLE libraries");
     Libraries::Kernel::RegisterLib(sym);
     Libraries::LibcInternal::ForceRegisterLib(sym);
-    // The same gap as libSceRtc/libSceNgs2 below, but far higher impact: RegisterLib (as
-    // opposed to ForceRegisterLib just above, which only covers the FEX-interception "libc"
-    // tag and one forced Io override) registers every math/string/memory/threads/CRT
-    // function under the actual "libSceLibcInternal" tag PS4 games import against -- and
-    // was ONLY ever reachable via the sysmodule-load-gated table in
-    // sysmodule_internal.cpp. Since libSceLibcInternal is a core system library nearly
-    // every commercial title links against, any game that doesn't happen to call
-    // sceSysmoduleLoadModule("libSceLibcInternal.sprx") explicitly got ENOSYS for all of
-    // it -- every function implemented under this tag this session was silently
-    // unreachable until now.
+    // Re-enabled: was temporarily disabled to test whether it caused Sonic Mania's
+    // Title-Screen "[SceLibc] A heap error is detected" crash (suspected sceLibcMspace*
+    // incompatibility, see mspace.cpp). Confirmed innocent -- the exact same crash, at the
+    // exact same point, still happens on-device with this disabled, so the real cause is
+    // elsewhere. No reason to leave real functionality (every math/string/memory/threads/
+    // CRT function under the actual "libSceLibcInternal" tag PS4 games import against, same
+    // gap this filled for libSceRtc/libSceNgs2 above) off for nothing.
     Libraries::LibcInternal::RegisterLib(sym);
     Libraries::GnmDriver::RegisterLib(sym);
     Libraries::VideoOut::RegisterLib(sym);
