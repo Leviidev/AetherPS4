@@ -10,9 +10,12 @@
 #include <fmt/xchar.h>
 #include <hwinfo/hwinfo.h>
 
+#include <SDL3/SDL_events.h>
+
 #include "common/debug.h"
 #include "common/logging/log.h"
 #include "common/thread.h"
+#include "core/debug_state.h"
 #include "core/emulator_settings.h"
 #include "core/ipc/ipc.h"
 #ifdef ENABLE_DISCORD_RPC
@@ -54,6 +57,16 @@
 #include <core/file_format/npbind.h>
 
 Frontend::WindowSDL* g_window = nullptr;
+
+// The CLI executable terminates the whole process at the end of a run (or on a fatal
+// load error); the embeddable library API (src/platform/ios/shadps4_ios_api.cpp) instead
+// needs Run() to return so the host app process stays alive. SHADPS4_LIBRARY_BUILD is
+// defined only when compiling the shadps4_ios CMake target.
+#ifdef SHADPS4_LIBRARY_BUILD
+#define SHADPS4_TERMINATE_RUN(code) return
+#else
+#define SHADPS4_TERMINATE_RUN(code) std::quick_exit(code)
+#endif
 
 namespace Core {
 
@@ -188,6 +201,12 @@ std::map<s32, std::string> ExtractTrophies(const std::filesystem::path& npbind_p
 
 void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
                    std::optional<std::filesystem::path> p_game_folder) {
+    PrepareWindow(std::move(file), std::move(args), std::move(p_game_folder));
+    RunLoop();
+}
+
+void Emulator::PrepareWindow(std::filesystem::path file, std::vector<std::string> args,
+                              std::optional<std::filesystem::path> p_game_folder) {
     Common::SetCurrentThreadName("shadPS4:Main");
     if (waitForDebuggerBeforeRun) {
         Debugger::WaitForDebuggerAttach();
@@ -302,7 +321,7 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     if (!std::filesystem::exists(file)) {
         LOG_CRITICAL(Loader, "eboot.bin does not exist: {}",
                      std::filesystem::absolute(file).string());
-        std::quick_exit(0);
+        SHADPS4_TERMINATE_RUN(0);
     }
 
     LOG_INFO(Loader, "Starting shadps4 emulator v{} ", Common::g_version);
@@ -436,6 +455,22 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     std::filesystem::path icon_path = mnt->GetHostPath("/app0/sce_sys/icon0.png");
     window->SetIcon(icon_path);
 
+    // Everything past this point (RunLoop()) doesn't touch UIKit -- carry over what it
+    // still needs, since PrepareWindow()'s locals don't survive past this function
+    // returning when called as its own separate step (see this method's own header comment).
+    pending_game_id = id;
+    pending_eboot_path = eboot_path;
+    pending_args = std::move(args);
+}
+
+void Emulator::RunLoop() {
+    const std::string& id = pending_game_id;
+    const auto& eboot_path = pending_eboot_path;
+    std::vector<std::string> args = std::move(pending_args);
+    auto* mnt = Common::Singleton<Core::FileSys::MntPoints>::Instance();
+    // Same singleton PrepareWindow() populated -- state set on it there is still live here.
+    auto& game_info = Common::ElfInfo::Instance();
+
 #ifdef ENABLE_BACHATA_RUNTIME
     memory = Core::Memory::Instance();
     linker = Common::Singleton<Core::Linker>::Instance();
@@ -508,7 +543,7 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
         if (onRuntimeStopped) {
             onRuntimeStopped(1);
         }
-        std::quick_exit(0);
+        SHADPS4_TERMINATE_RUN(0);
     }
 
 #ifdef ENABLE_DISCORD_RPC
@@ -549,7 +584,28 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     if (onRuntimeStopped) {
         onRuntimeStopped(0);
     }
-    std::quick_exit(0);
+    SHADPS4_TERMINATE_RUN(0);
+}
+
+void Emulator::Stop() {
+    // WindowSDL::WaitEvent()'s loop only exits on SDL_EVENT_QUIT (see sdl_window.cpp);
+    // pushing one is the same mechanism the window's own close button uses, so it works
+    // uniformly whether or not a window is currently open yet.
+    SDL_Event event{};
+    event.type = SDL_EVENT_QUIT;
+    SDL_PushEvent(&event);
+}
+
+void Emulator::TogglePause() {
+    if (DebugState.IsGuestThreadsPaused()) {
+        DebugState.ResumeGuestThreads();
+    } else {
+        DebugState.PauseGuestThreads();
+    }
+}
+
+bool Emulator::IsPaused() const {
+    return DebugState.IsGuestThreadsPaused();
 }
 
 void Emulator::Restart(std::filesystem::path eboot_path,

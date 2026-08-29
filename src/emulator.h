@@ -30,6 +30,23 @@ public:
 
     void Run(std::filesystem::path file, std::vector<std::string> args = {},
              std::optional<std::filesystem::path> game_folder = {});
+
+    /**
+     * Split out of Run() for iOS: SDL's UIKit backend creates a real UIWindow when
+     * Frontend::WindowSDL is constructed below, and UIKit objects can only be created on the
+     * app's main thread. PrepareWindow() does everything Run() used to do up through that
+     * window construction (loading param.sfo, mounting the game filesystem, extracting
+     * trophies -- none of which touch UIKit) and must be called from the main thread;
+     * RunLoop() does everything after (starting guest execution, then the blocking
+     * WaitEvent loop) and is safe to call from a dedicated background thread instead,
+     * freeing the app's real main thread for normal SwiftUI/UIKit work for the whole game
+     * session instead of just until the window is created. Run() itself still calls both
+     * back-to-back on the same thread, unchanged, for platforms that don't need the split.
+     */
+    void PrepareWindow(std::filesystem::path file, std::vector<std::string> args = {},
+                        std::optional<std::filesystem::path> game_folder = {});
+    void RunLoop();
+
     void UpdatePlayTime(const std::string& serial);
     void Shutdown();
 
@@ -73,6 +90,13 @@ private:
     std::unique_ptr<Frontend::WindowSDL> window;
     std::chrono::steady_clock::time_point start_time;
     std::jthread play_time_thread;
+
+    // Carries state from PrepareWindow() to RunLoop() when they're called separately (see
+    // their own comments above) -- Run() itself doesn't need these since both halves run
+    // back-to-back within the same call.
+    std::string pending_game_id;
+    std::filesystem::path pending_eboot_path;
+    std::vector<std::string> pending_args;
 };
 
 } // namespace Core
