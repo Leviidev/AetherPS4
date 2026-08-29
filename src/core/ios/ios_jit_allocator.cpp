@@ -19,11 +19,13 @@
 #include "common/logging/log.h"
 
 #include <atomic>
+#include <chrono>
 #include <dlfcn.h>              // dlopen, dlsym
 #include <libkern/OSCacheControl.h> // sys_icache_invalidate
 #include <mach/mach.h>          // mach_task_self
 #include <mach/vm_map.h>        // vm_remap, vm_protect, vm_deallocate (mach_vm.h is unavailable on iOS)
 #include <sys/mman.h>           // mmap, munmap, PROT_*, MAP_*
+#include <thread>               // std::this_thread::sleep_for
 #include <utility>              // std::exchange
 
 // __builtin___clear_cache lowers to a call to this exact symbol on this toolchain rather than
@@ -139,22 +141,47 @@ DualMappedRegion DualMappedRegion::Allocate(size_t bytes) noexcept {
         return region; // invalid
     }
 
-    LOG_INFO(Core, "ios_jit_allocator #{}: requesting fresh execute-capable region (size={})",
-             request_number, bytes);
-    void* rx;
-    {
-        IosJitTrapGuard trap_guard;
-        rx = symbols.get_jit_mapping(nullptr, bytes);
+    // A failed request here (nullptr, whether a genuine one from BreakGetJITMapping itself or
+    // one simulated by signals.cpp's SIGTRAP handler after an unserviced BRK -- see
+    // g_expecting_jit_mapping_trap's comment) doesn't distinguish "StikDebug is permanently
+    // gone" from "StikDebug is just momentarily unresponsive" (busy servicing another request,
+    // or briefly suspended by iOS before resuming) -- both look identical from here. A few
+    // retries with a short backoff costs little (this is already the slow, on-demand path --
+    // see flatten_extended_userdata_pass.cpp's own comment on why these calls happen mid-
+    // gameplay rather than being front-loaded) and covers the transient case; it does nothing
+    // for a StikDebug that's truly dead for the rest of the session, but there's no way to
+    // tell those apart in advance, so retrying is strictly no worse than failing immediately.
+    constexpr int kMaxAttempts = 3;
+    constexpr auto kRetryDelay = std::chrono::milliseconds(50);
+    void* rx = nullptr;
+    for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
+        LOG_INFO(Core,
+                 "ios_jit_allocator #{}: requesting fresh execute-capable region (size={}) "
+                 "attempt={}/{}",
+                 request_number, bytes, attempt, kMaxAttempts);
+        {
+            IosJitTrapGuard trap_guard;
+            rx = symbols.get_jit_mapping(nullptr, bytes);
+        }
+        LOG_INFO(Core, "ios_jit_allocator #{}: BreakGetJITMapping returned {} (execute-side)",
+                 request_number, rx);
+        if (rx != nullptr) {
+            break;
+        }
+        if (attempt < kMaxAttempts) {
+            LOG_WARNING(Core,
+                       "ios_jit_allocator #{}: attempt {}/{} failed, retrying after {}ms",
+                       request_number, attempt, kMaxAttempts, kRetryDelay.count());
+            std::this_thread::sleep_for(kRetryDelay);
+        }
     }
-    LOG_INFO(Core, "ios_jit_allocator #{}: BreakGetJITMapping returned {} (execute-side)",
-             request_number, rx);
     if (rx == nullptr) {
         LOG_CRITICAL(Core,
-            "ios_jit_allocator: BreakGetJITMapping(nullptr, {}) returned nullptr. "
-            "StikDebug with the Universal JIT Script must be attached before "
+            "ios_jit_allocator: BreakGetJITMapping(nullptr, {}) returned nullptr after {} "
+            "attempts. StikDebug with the Universal JIT Script must be attached before "
             "shadps4_init() is called. See the StikDebug URL-scheme handoff "
             "sequence in JITSupport.swift.",
-            bytes);
+            bytes, kMaxAttempts);
         return region; // invalid
     }
 
