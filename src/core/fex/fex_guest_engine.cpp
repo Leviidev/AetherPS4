@@ -1222,6 +1222,53 @@ bool BachataDumpGuestRegisters(char* out_buf, std::size_t out_buf_size, uint64_t
   return true;
 }
 
+bool BachataDumpHostCodeWords(void* fault_pc, char* out_buf, std::size_t out_buf_size) noexcept {
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+  if (fault_pc == nullptr || out_buf == nullptr || out_buf_size == 0) {
+    return false;
+  }
+  // The guest_rip-based instruction dump (BachataQueryGuestRipSyscall) turned out to be a
+  // stale JIT/HLE checkpoint, not the live fault site -- this dumps the ARM64 words actually
+  // executing at the host fault PC instead, which is exact. Same writable-alias translation
+  // HandleGuestSignal uses for its backpatch (fault_pc is the execute-only side of iOS's
+  // dual JIT mapping, not directly readable); no ScopedJITWriteProtect needed since this
+  // only reads, and elsewhere in FEXCore (JIT.cpp) GetWritableAddress is called bare for
+  // reads too.
+  const auto writable_pc = reinterpret_cast<uintptr_t>(FEXCore::Allocator::GetWritableAddress(fault_pc));
+  if (writable_pc == 0) {
+    return false;
+  }
+  // 8 words (4 bytes each) before fault_pc through 8 after: ARM64 instructions are fixed
+  // 4-byte width, so this is exact context, not a guess at instruction boundaries the way
+  // the earlier variable-length x86 byte dump was.
+  constexpr int kWordsBefore = 8;
+  constexpr int kWordsAfter = 8;
+  char* w = out_buf;
+  char* const end = out_buf + out_buf_size;
+  for (int i = -kWordsBefore; i <= kWordsAfter && w < end; ++i) {
+    const auto* word_ptr =
+        reinterpret_cast<const volatile uint32_t*>(writable_pc + static_cast<ptrdiff_t>(i) * 4);
+    const uint32_t word = *word_ptr;
+    const int written = std::snprintf(w, static_cast<std::size_t>(end - w), "%s%08x", i == 0 ? "[" : "", word);
+    if (written <= 0) break;
+    w += written;
+    if (i == 0 && w < end) {
+      w += std::snprintf(w, static_cast<std::size_t>(end - w), "]");
+    }
+    if (w < end) {
+      w += std::snprintf(w, static_cast<std::size_t>(end - w), " ");
+    }
+  }
+  return true;
+#else
+  static_cast<void>(fault_pc);
+  if (out_buf != nullptr && out_buf_size > 0) {
+    out_buf[0] = '\0';
+  }
+  return false;
+#endif
+}
+
 bool BachataDescribeHostFaultAddress(void* fault_addr, char* out_buf, std::size_t out_buf_size) noexcept {
 #if defined(__APPLE__) && TARGET_OS_IPHONE
   if (out_buf == nullptr || out_buf_size == 0) {

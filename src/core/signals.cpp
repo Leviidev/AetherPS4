@@ -295,6 +295,15 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                                                                 sizeof(fault_desc))) {
             LOG_CRITICAL(Debug, "FEX host fault address classification: {}", fault_desc);
         }
+        // The earlier guest-instruction-bytes dump (at guest_rip) turned out to be a stale
+        // JIT/HLE checkpoint, not the live fault site -- this dumps the actual ARM64 words at
+        // code_address (the real host PC the signal landed on) instead. Fixed 4-byte-wide
+        // instructions, unlike x86's variable length, so this is exact and hand-decodable.
+        char host_code[256] = {};
+        if (::AetherPS4::Fex::BachataDumpHostCodeWords(code_address, host_code, sizeof(host_code))) {
+            LOG_CRITICAL(Debug, "FEX host ARM64 words around fault pc={:#x}: {}",
+                         reinterpret_cast<uintptr_t>(code_address), host_code);
+        }
         // Field-by-field comparison of the dispatcher's own known-good addresses against
         // what this thread's live per-thread pointer table actually holds for the same
         // fields -- a mismatch pinpoints a stale/corrupted/never-updated copy; matching
