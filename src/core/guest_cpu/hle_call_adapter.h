@@ -5,6 +5,7 @@
 #include "guest_cpu.h"
 
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -66,6 +67,12 @@ public:
     [[nodiscard]] u64 Operation() const noexcept { return operation; }
     [[nodiscard]] std::string_view Name() const noexcept { return name; }
     virtual HleCallResult Invoke(HleCallFrame& frame) const = 0;
+
+    // Set (via exchange, so exactly one caller sees false) by HleGuestBridge::Invoke the first
+    // time this specific function is ever called in the process, regardless of how many total
+    // HLE calls have happened -- see its own comment for why a global call-count trace budget
+    // (the previous scheme) misses this.
+    mutable std::atomic<bool> traced_once{false};
 
 private:
     friend class HleCallRegistry;
