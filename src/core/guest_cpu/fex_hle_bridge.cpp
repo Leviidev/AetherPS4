@@ -9,15 +9,6 @@
 #include <mutex>
 
 namespace {
-// Was temporarily widened to 4096 while chasing a deterministic Rocket League crash; reverted
-// back to 256 since that investigation is on hold and every extra traced call is an
-// unbuffered, synchronous write(2) at boot (see CrashLogger.swift's setvbuf(..., _IONBF, ...))
-// -- real, avoidable per-boot cost for every game, not just the one under investigation. Avoid
-// a contended read-modify-write on every HLE call after the trace window has filled; hot
-// polling APIs can cross this bridge millions of times.
-constexpr uint32_t HleTraceLimit = 256;
-std::atomic_uint32_t HleTraceCount{};
-
 thread_local Core::GuestCpu::HleCallFrame* ActiveHleCallFrame{};
 
 class ActiveHleCallScope final {
@@ -72,17 +63,21 @@ AetherPS4::Fex::EngineResult<bool> HleGuestBridge::Invoke(HleCallFrame& frame) {
         Report(failure);
         return AetherPS4::Fex::EngineFailure{AetherPS4::Fex::EngineStage::Bridge, failure.error};
     }
-    // Tracing is intentionally bounded. Avoid a contended read-modify-write on every HLE call
-    // after the trace window has filled; hot polling APIs can cross this bridge millions of times.
-    auto trace_index = HleTraceCount.load(std::memory_order_relaxed);
-    if (trace_index < HleTraceLimit) {
-        trace_index = HleTraceCount.fetch_add(1, std::memory_order_relaxed);
-    }
-    const bool trace = trace_index < HleTraceLimit;
+    // Was a global first-256-calls-total budget. Confirmed on-device (three separate crash
+    // investigations -- Sonic Mania, Rocket League, Journey) that this always exhausts during
+    // boot alone: every one of those logs shows tracing stopping around index 250-255 within
+    // the first couple thousand log lines, meaning nothing from actual gameplay -- where the
+    // crashes this trace exists to help diagnose all actually happened -- was ever traced.
+    // Trace the first call of each *distinct* function instead: an atomic exchange per
+    // HleCallAdapter (traced_once), so a hot-polling API that crosses this bridge millions of
+    // times still only logs once (on its first call), while a function that's never called
+    // during the first 256 total calls -- like whatever void(void*) HLE function corrupted the
+    // host allocator during Journey's actual gameplay -- still gets its one, only log line
+    // whenever it first runs, no matter how deep into the session that is.
+    const bool trace = !adapter->traced_once.exchange(true, std::memory_order_relaxed);
     if (trace) {
-        std::fprintf(stderr,
-                     "BACHATA_FEX_HLE_BEGIN index=%u operation=%llu name=%.*s rsp=%#llx\n",
-                     trace_index, static_cast<unsigned long long>(frame.operation),
+        std::fprintf(stderr, "BACHATA_FEX_HLE_BEGIN operation=%llu name=%.*s rsp=%#llx\n",
+                     static_cast<unsigned long long>(frame.operation),
                      static_cast<int>(adapter->Name().size()), adapter->Name().data(),
                      static_cast<unsigned long long>(frame.rsp));
     }
@@ -95,9 +90,8 @@ AetherPS4::Fex::EngineResult<bool> HleGuestBridge::Invoke(HleCallFrame& frame) {
     const auto result = adapter->Invoke(frame);
     if (const auto* failure = std::get_if<HleCallFailure>(&result)) {
         if (trace) {
-            std::fprintf(stderr,
-                         "BACHATA_FEX_HLE_END index=%u operation=%llu name=%.*s error=%d\n",
-                         trace_index, static_cast<unsigned long long>(frame.operation),
+            std::fprintf(stderr, "BACHATA_FEX_HLE_END operation=%llu name=%.*s error=%d\n",
+                         static_cast<unsigned long long>(frame.operation),
                          static_cast<int>(adapter->Name().size()), adapter->Name().data(),
                          failure->error);
         }
@@ -105,9 +99,8 @@ AetherPS4::Fex::EngineResult<bool> HleGuestBridge::Invoke(HleCallFrame& frame) {
         return AetherPS4::Fex::EngineFailure{AetherPS4::Fex::EngineStage::Bridge, failure->error};
     }
     if (trace) {
-        std::fprintf(stderr,
-                     "BACHATA_FEX_HLE_END index=%u operation=%llu name=%.*s rax=%#llx\n",
-                     trace_index, static_cast<unsigned long long>(frame.operation),
+        std::fprintf(stderr, "BACHATA_FEX_HLE_END operation=%llu name=%.*s rax=%#llx\n",
+                     static_cast<unsigned long long>(frame.operation),
                      static_cast<int>(adapter->Name().size()), adapter->Name().data(),
                      static_cast<unsigned long long>(frame.gpr[0]));
     }

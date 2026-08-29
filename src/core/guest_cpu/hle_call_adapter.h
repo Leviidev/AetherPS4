@@ -5,6 +5,7 @@
 #include "guest_cpu.h"
 
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -30,7 +31,7 @@
 #include "core/ios/ios_jit_allocator.h"
 #endif
 
-namespace AetherPS4::GuestCpu {
+namespace Core::GuestCpu {
 
 // This is the x86-64 SysV state at the FEX syscall boundary. Guest pointers
 // remain guest virtual addresses; their range is checked before native HLE sees
@@ -66,6 +67,12 @@ public:
     [[nodiscard]] u64 Operation() const noexcept { return operation; }
     [[nodiscard]] std::string_view Name() const noexcept { return name; }
     virtual HleCallResult Invoke(HleCallFrame& frame) const = 0;
+
+    // Set (via exchange, so exactly one caller sees false) by HleGuestBridge::Invoke the first
+    // time this specific function is ever called in the process, regardless of how many total
+    // HLE calls have happened -- see its own comment for why a global call-count trace budget
+    // (the previous scheme) misses this.
+    mutable std::atomic<bool> traced_once{false};
 
 private:
     friend class HleCallRegistry;
@@ -106,11 +113,11 @@ public:
 
     HleVeneerResult Allocate(const HleCallAdapter& adapter);
 
-    [[nodiscard]] std::vector<Core::GuestExecutionRange> GetExecutableRanges() const;
+    [[nodiscard]] std::vector<GuestExecutionRange> GetExecutableRanges() const;
     // Dynamic modules allocate veneers after FEX thread start. FEX JIT must
     // discover those pages through QueryGuestExecutableRange, not only the
     // MappedRanges snapshot taken at Run().
-    [[nodiscard]] std::optional<Core::GuestExecutionRange> QueryExecutableRange(
+    [[nodiscard]] std::optional<GuestExecutionRange> QueryExecutableRange(
         std::uintptr_t address) const;
 
 private:
@@ -142,7 +149,7 @@ private:
 
     mutable std::mutex allocator_mutex;
     std::vector<Allocation> allocations;
-    std::vector<Core::GuestExecutionRange> executable_ranges;
+    std::vector<GuestExecutionRange> executable_ranges;
     std::unordered_map<u64, u64> veneers;
 };
 
@@ -342,4 +349,4 @@ inline std::shared_ptr<HleCallAdapter> MakeUnsupportedHleCallAdapter() {
     return std::make_shared<detail::UnsupportedHleCallAdapter>();
 }
 
-} // namespace AetherPS4::GuestCpu
+} // namespace Core::GuestCpu
