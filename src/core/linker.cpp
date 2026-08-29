@@ -51,6 +51,23 @@ namespace {
 // thread (see Libraries::Kernel::RunThread), so there's no cross-thread synchronization to
 // get right here.
 thread_local bool g_program_exit_requested = false;
+
+// Set by RunGuestMain right before it returns, when GuestEngine::Run stopped via a guest hlt
+// whose RIP lands inside a loaded module (libc.prx, the game's own eboot.bin, etc) rather than
+// nowhere. EnableExitOnHLT() means ExecuteThread only ever returns this way on a literal 0xF4
+// byte, and a real PS4 game never legitimately executes hlt (privileged, illegal in user mode)
+// -- but a real PS4 game's OWN libc absolutely can, as its own fatal-error trap instruction
+// (confirmed on-device: Sonic Mania's title-screen heap-corruption crash lands exactly at
+// libc.prx+0x5d7d4, a real, loaded module offset, not scattered/unmapped memory the way a wild
+// jump into garbage would). Checked by the same "unexpectedly returned" branch
+// g_program_exit_requested is, and treated identically -- a deliberate guest halt inside its
+// own code is not meaningfully different from the guest's own exit() veneer for host purposes:
+// either way the guest has decided execution cannot continue, and crashing the entire host app
+// with std::abort() over it (previously the only other branch) takes an unrelated, uninvolved
+// app process down with it for no reason. Same thread_local reasoning as
+// g_program_exit_requested: RunGuestMain and RunMainEntry's read of this always run on the same
+// "Game:Main" thread.
+thread_local bool g_deliberate_guest_halt = false;
 } // namespace
 #endif
 
@@ -167,12 +184,13 @@ static PS4_SYSV_ABI void* RunMainEntry [[noreturn]] (EntryParams* params) {
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
     auto* linker = Common::Singleton<Linker>::Instance();
     g_program_exit_requested = false;
+    g_deliberate_guest_halt = false;
     const auto result = linker->RunGuestMain(params);
     if (const auto* failure = std::get_if<GuestExecutionFailure>(&result)) {
         LOG_CRITICAL(Core_Linker, "FEX main entry failed at stage {}: {}",
                      static_cast<int>(failure->Stage), failure->Error);
         std::abort();
-    } else if (g_program_exit_requested) {
+    } else if (g_program_exit_requested || g_deliberate_guest_halt) {
         // Confirmed on-device: a game's main() returning normally (through the guest CRT's
         // atexit/rtld_fini handling, which is exactly what m_fex_exit_veneer -> here goes
         // through -- see RunGuestMain's own Gpr[6] setup) surfaces here as this same
@@ -183,8 +201,16 @@ static PS4_SYSV_ABI void* RunMainEntry [[noreturn]] (EntryParams* params) {
         // for good instead -- it has nothing left to safely resume into (whatever guest
         // code runs after an atexit handler that was never supposed to return is
         // meaningless), and RunMainEntry is declared [[noreturn]].
-        LOG_INFO(Core_Linker, "FEX main entry returned via a clean guest exit ({:#x}); "
-                              "stopping the emulator session",
+        //
+        // g_deliberate_guest_halt (set by RunGuestMain when the guest hlt's RIP lands inside a
+        // loaded module, e.g. libc.prx) gets the exact same treatment: confirmed on-device via
+        // Sonic Mania's title-screen heap-corruption crash that this is the game's own libc
+        // deliberately trapping on a fatal condition it detected, landing at a real module
+        // offset -- not a wild jump into garbage. The underlying condition the guest detected
+        // is still unresolved (this doesn't make that game playable), but crashing this whole
+        // host app over the guest's own deliberate, in-code halt was never correct either way.
+        LOG_INFO(Core_Linker, "FEX main entry returned via a clean/deliberate guest halt "
+                              "({:#x}); stopping the emulator session",
                  std::get<u64>(result));
         Common::Singleton<Core::Emulator>::Instance()->Stop();
         for (;;) {
@@ -518,8 +544,10 @@ Linker::GuestFunctionResult Linker::RunGuestMain(EntryParams* params) {
                  "rsp={:#x} rax={:#x}",
                  state.Rip, state.LastRip, state.Rsp, state.Gpr[0]);
     if (auto* module = FindByAddress(state.Rip)) {
-        LOG_CRITICAL(Core_Linker, "RunGuestMain: rip is inside module '{}' (base={:#x}, offset={:#x})",
+        LOG_CRITICAL(Core_Linker, "RunGuestMain: rip is inside module '{}' (base={:#x}, offset={:#x}) "
+                                  "-- treating as a deliberate guest halt, not a wild jump",
                      module->name, module->GetBaseAddress(), state.Rip - module->GetBaseAddress());
+        g_deliberate_guest_halt = true;
     } else {
         LOG_CRITICAL(Core_Linker, "RunGuestMain: rip is NOT inside any loaded module -- wild jump, "
                                   "not a return into legitimate code");
