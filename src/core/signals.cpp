@@ -11,6 +11,7 @@
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
 #include "common/singleton.h"
 #include "core/fex/fex_guest_engine.h"
+#include "core/ios/ios_jit_allocator.h"
 #include "core/libraries/kernel/memory.h"
 #include "core/linker.h"
 #include "core/memory.h"
@@ -345,6 +346,42 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                             fmt::ptr(code_address), DisassembleInstruction(code_address));
         }
         break;
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    case SIGTRAP: {
+        // BreakGetJITMapping (ios_jit_allocator.cpp) issues a BRK #0xf00d instruction that
+        // StikDebug's attached "Universal JIT Script" is supposed to intercept and service
+        // before this handler ever sees it -- if it's working, this case never fires for that
+        // call at all. It fires when StikDebug isn't there to catch the trap (confirmed
+        // on-device: killed by iOS's own background wake-rate limiter mid-session -- see
+        // ios_jit_allocator.cpp's g_expecting_jit_mapping_trap comment), which otherwise kills
+        // the whole process outright with no return from get_jit_mapping() to recover through.
+        // IsExpectingJitMappingTrap() is only true for the exact duration of that one call, so
+        // this only ever recovers a BRK actually issued by it -- any other SIGTRAP (a real
+        // debugger breakpoint) falls through to the same fatal path SIGILL uses above.
+        if (Core::IosJitAllocator::IsExpectingJitMappingTrap()) {
+            LOG_CRITICAL(Debug,
+                        "BACHATA_JIT_TRAP_UNSERVICED: StikDebug did not service the "
+                        "BreakGetJITMapping BRK (likely killed by iOS's background wake-rate "
+                        "limiter) -- simulating a nullptr return instead of crashing");
+            auto* apple_context = reinterpret_cast<ucontext_t*>(raw_context);
+            auto& ts = apple_context->uc_mcontext->__ss;
+            // x0 is the ARM64 return-value register; simulating get_jit_mapping() == nullptr
+            // here is exactly the failure path DualMappedRegion::Allocate() already handles
+            // (logs, returns an invalid region -- the same as "BreakpointJIT unavailable").
+            ts.__x[0] = 0;
+            // BRK does not auto-advance PC the way e.g. x86's INT3 does -- PC still points at
+            // the trapping instruction itself. Every ARM64 instruction is fixed 4 bytes wide,
+            // so skipping exactly this one is unambiguous regardless of which library's code
+            // (BreakpointJIT.framework's, not ours) the BRK actually lives in.
+            const auto pc = static_cast<uintptr_t>(arm_thread_state64_get_pc(ts));
+            arm_thread_state64_set_pc_fptr(ts, reinterpret_cast<void*>(pc + 4));
+            return;
+        }
+        Common::ReportCrash(raw_context, sig, info);
+        UNREACHABLE_MSG("Unhandled SIGTRAP at code address {} (not a JIT-mapping request)",
+                        fmt::ptr(code_address));
+    }
+#endif
     default:
         if (sig == SIGSLEEP) {
             // Sleep thread until signal is received again
@@ -377,6 +414,10 @@ SignalDispatch::SignalDispatch() {
                "Failed to register illegal instruction signal handler.");
     ASSERT_MSG(sigaction(SIGSLEEP, &action, nullptr) == 0,
                "Failed to register sleep signal handler.");
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    ASSERT_MSG(sigaction(SIGTRAP, &action, nullptr) == 0,
+               "Failed to register JIT-mapping trap signal handler.");
+#endif
 #endif
 }
 
