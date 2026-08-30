@@ -15,7 +15,7 @@ ongoing and most titles are untested.
 
 | Game | Status |
 | --- | --- |
-| Sonic Mania | Boots and runs |
+| Sonic Mania | Playable |
 | Journey | Loads, but can't progress past its first chapter transition yet |
 | Minecraft: PlayStation®4 Edition | Currently being tested |
 
