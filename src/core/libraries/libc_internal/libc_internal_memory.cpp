@@ -193,6 +193,23 @@ void* PS4_SYSV_ABI internal_realloc(void* pointer, size_t size) {
     return std::realloc(pointer, size);
 }
 
+// The global (non-mspace-handle) memalign -- plain aligned host allocation, same as
+// internal_malloc's plain std::malloc. Confirmed on-device via ReportGuestHleFailure
+// (Ujf3KzMvRmI#libc#1#libc#Function failed: 78, i.e. ENOSYS) as one of two allocator calls
+// Journey actually makes and needs: unresolved, it fell back to a stub returning -ENOSYS in
+// RAX, and guest code used that raw -78 bit pattern as if it were the returned pointer,
+// crashing when it wrote through it ("Write to address 0xffffffffffffffb2" -- exactly -78).
+// internal_free's existing cross-allocator checks already handle freeing whatever this
+// returns correctly: posix_memalign-allocated blocks are still plain host malloc-family
+// memory, released the same way as internal_malloc's own std::malloc blocks.
+void* PS4_SYSV_ABI internal_memalign(size_t alignment, size_t size) {
+    void* ptr = nullptr;
+    if (posix_memalign(&ptr, std::max(alignment, sizeof(void*)), size) != 0) {
+        return nullptr;
+    }
+    return ptr;
+}
+
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
 void RegisterFexLibcMemoryAliases(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("Q3VBxCXhUHs", "libc", 1, "libc", internal_memcpy);
@@ -201,6 +218,29 @@ void RegisterFexLibcMemoryAliases(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("gQX+4GDQjpM", "libc", 1, "libc", internal_malloc);
     LIB_FUNCTION("tIhsqj0qsFE", "libc", 1, "libc", internal_free);
     LIB_FUNCTION("Y7aJ1uydPMo", "libc", 1, "libc", internal_realloc);
+    LIB_FUNCTION("Ujf3KzMvRmI", "libc", 1, "libc", internal_memalign);
+    // The sceLibcMspace* family below already has real implementations registered under
+    // "libSceLibcInternal" (see RegisterlibSceLibcInternalMemory) -- these are the same
+    // functions under the "libc" name/library/module a game can *also* import them as
+    // (same alias pattern as memcpy/malloc/free/realloc above), reusing the identical NIDs
+    // since a symbol's hash doesn't depend on which library tag it's imported under.
+    // sceLibcMspaceCreate specifically confirmed via ReportGuestHleFailure
+    // (-hn1tcVHq5Q#libc#1#libc#Function failed: 78) as one of the two allocator calls
+    // Journey actually makes -- if a game creates its heap arena through "libc"'s name for
+    // this call, it's reasonable to expect it might reach the rest of the family the same
+    // way, so all of them are aliased here rather than only the one confirmed so far.
+    LIB_FUNCTION("-hn1tcVHq5Q", "libc", 1, "libc", internal_sceLibcMspaceCreate);
+    LIB_FUNCTION("W6SiVSiCDtI", "libc", 1, "libc", internal_sceLibcMspaceDestroy);
+    LIB_FUNCTION("OJjm-QOIHlI", "libc", 1, "libc", internal_sceLibcMspaceMalloc);
+    LIB_FUNCTION("Vla-Z+eXlxo", "libc", 1, "libc", internal_sceLibcMspaceFree);
+    LIB_FUNCTION("LYo3GhIlB38", "libc", 1, "libc", internal_sceLibcMspaceCalloc);
+    LIB_FUNCTION("gigoVHZvVPE", "libc", 1, "libc", internal_sceLibcMspaceRealloc);
+    LIB_FUNCTION("iF1iQHzxBJU", "libc", 1, "libc", internal_sceLibcMspaceMemalign);
+    LIB_FUNCTION("fEoW6BJsPt4", "libc", 1, "libc", internal_sceLibcMspaceMallocUsableSize);
+    LIB_FUNCTION("qWESlyXMI3E", "libc", 1, "libc", internal_sceLibcMspacePosixMemalign);
+    LIB_FUNCTION("p6lrRW8-MLY", "libc", 1, "libc", internal_sceLibcMspaceReallocalign);
+    LIB_FUNCTION("mfHdJTIvhuo", "libc", 1, "libc", internal_sceLibcMspaceMallocStats);
+    LIB_FUNCTION("k04jLXu3+Ic", "libc", 1, "libc", internal_sceLibcMspaceMallocStatsFast);
 }
 #endif
 
