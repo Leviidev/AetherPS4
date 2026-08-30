@@ -153,6 +153,16 @@ private struct LoadingOverlayRootView: View {
             // placement AetherX uses. X is always available, even mid-load, so a stuck-
             // looking boot isn't a dead end. The reopen button only shows once there's
             // actually a hidden card to reopen.
+            //
+            // allowsHitTesting(false) here, re-enabled just on the HStack of actual buttons,
+            // is load-bearing, not cosmetic: this VStack's trailing Spacer() makes it (and so
+            // this whole ZStack, and so this whole window's rootViewController) expand to
+            // cover the entire screen at all times, even once the card is collapsed and
+            // nothing is visually here. This window sits at .alert + 1, above
+            // TouchControlsOverlayWindow's .normal + 1 -- without this, that full-screen
+            // (functionally invisible) region silently intercepts every touch meant for the
+            // controls window underneath it. Confirmed on-device: on-screen controls were
+            // fully visible and completely unresponsive until this was added.
             VStack {
                 HStack(spacing: 20) {
                     Button {
@@ -173,8 +183,10 @@ private struct LoadingOverlayRootView: View {
                     }
                 }
                 .padding(.top, 8)
+                .allowsHitTesting(true)
                 Spacer()
             }
+            .allowsHitTesting(false)
         }
     }
 }
