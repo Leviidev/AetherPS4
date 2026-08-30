@@ -20,6 +20,26 @@ import UIKit
 // real game -- there's no reliable "loading is actually done" signal to time an automatic
 // dismiss against, so like AetherX's own card, this one just stays open until the user
 // closes it.
+// SwiftUI's .allowsHitTesting(false) only stops SwiftUI's *own* gesture recognizers from
+// firing inside this window's view tree -- it does not make the underlying UIWindow
+// transparent to UIKit's own hit-testing. UIKit routes each touch to exactly one window (the
+// topmost one whose hitTest(_:with:) returns non-nil at that point) and never falls through to
+// a lower window on its own; a plain UIWindow's default hitTest returns *some* view (its own
+// root) for any point inside its bounds, even where nothing SwiftUI-interactive is rendered,
+// which is enough for UIKit to award it the touch and never offer it to
+// TouchControlsOverlayWindow underneath. Confirmed on-device: disabling hit-testing at the
+// SwiftUI level alone did not fix on-screen controls being completely unresponsive.
+// This override makes that empty case explicit at the UIKit layer: if the default hit-test
+// result is nothing more specific than this window's own root view (no real SwiftUI content at
+// that exact point -- a button, the card, etc. would hit-test to something nested underneath
+// the root instead), return nil so UIKit moves on to the next window down in level order.
+private final class PassthroughWindow: UIWindow {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard let hitView = super.hitTest(point, with: event) else { return nil }
+        return hitView == rootViewController?.view ? nil : hitView
+    }
+}
+
 @MainActor
 enum LoadingOverlayWindow {
     private static var window: UIWindow?
@@ -41,7 +61,7 @@ enum LoadingOverlayWindow {
         let state = LoadingOverlayUIState()
         uiState = state
 
-        let overlayWindow = UIWindow(windowScene: scene)
+        let overlayWindow = PassthroughWindow(windowScene: scene)
         // .alert + 1: above everything UIKit itself puts up (alerts, action sheets), and
         // above SDL's own window regardless of which one is "key" -- windowLevel ordering
         // is independent of key-window status, unlike relying on presentation z-order.
