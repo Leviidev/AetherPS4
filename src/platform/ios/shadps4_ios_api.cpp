@@ -106,7 +106,9 @@ extern "C" int shadps4_init(const ShadPS4Options* options) {
     return g_init_ok ? 0 : -1;
 }
 
-extern "C" int shadps4_prepare_window(const char* eboot_path) {
+namespace {
+
+int PrepareWindowImpl(const char* eboot_path, std::vector<std::string> args) {
     if (!g_init_ok || !eboot_path) {
         return -1;
     }
@@ -128,13 +130,36 @@ extern "C" int shadps4_prepare_window(const char* eboot_path) {
 
     auto* emulator = Common::Singleton<Core::Emulator>::Instance();
     emulator->executableName = "AetherPS4";
-    emulator->PrepareWindow(*resolved);
+    emulator->PrepareWindow(*resolved, std::move(args));
     // As early as possible, before any guest code runs at all -- see WarmUpIosSrtCodePool's
     // own comment (srt.h) for why lazy, on-first-shader-use initialization was too late: by
     // then StikDebug had already stopped responding to JIT-mapping requests on-device, every
     // time this was actually tested.
     Shader::WarmUpIosSrtCodePool();
     return 0;
+}
+
+} // namespace
+
+extern "C" int shadps4_prepare_window(const char* eboot_path) {
+    return PrepareWindowImpl(eboot_path, {});
+}
+
+extern "C" int shadps4_prepare_window_with_args(const char* eboot_path,
+                                                const char* args_joined_by_newline) {
+    std::vector<std::string> args;
+    if (args_joined_by_newline && args_joined_by_newline[0] != '\0') {
+        std::string_view remaining(args_joined_by_newline);
+        while (!remaining.empty()) {
+            const auto pos = remaining.find('\n');
+            args.emplace_back(remaining.substr(0, pos));
+            if (pos == std::string_view::npos) {
+                break;
+            }
+            remaining.remove_prefix(pos + 1);
+        }
+    }
+    return PrepareWindowImpl(eboot_path, std::move(args));
 }
 
 extern "C" int shadps4_run_loop(void) {
@@ -149,13 +174,14 @@ extern "C" int shadps4_run_loop(void) {
     return 0;
 }
 
-extern "C" int shadps4_take_pending_restart(char* path_buf, int path_buf_size) {
+extern "C" int shadps4_take_pending_restart(char* path_buf, int path_buf_size, char* args_buf,
+                                            int args_buf_size) {
     if (!g_init_ok || path_buf == nullptr || path_buf_size <= 0) {
         return 0;
     }
     auto* emulator = Common::Singleton<Core::Emulator>::Instance();
-    std::vector<std::string> discarded_args;
-    auto path = emulator->TakePendingRestart(discarded_args);
+    std::vector<std::string> args;
+    auto path = emulator->TakePendingRestart(args);
     if (!path.has_value()) {
         return 0;
     }
@@ -163,6 +189,23 @@ extern "C" int shadps4_take_pending_restart(char* path_buf, int path_buf_size) {
     const auto copy_length = std::min(utf8.size(), static_cast<std::size_t>(path_buf_size) - 1);
     std::memcpy(path_buf, utf8.data(), copy_length);
     path_buf[copy_length] = '\0';
+
+    if (args_buf != nullptr && args_buf_size > 0) {
+        // Same newline-joined encoding shadps4_prepare_window_with_args splits on. Guest args
+        // aren't expected to contain literal newlines; if one somehow did, it'd just be
+        // misparsed as an extra arg boundary, not a crash.
+        std::string joined;
+        for (const auto& arg : args) {
+            if (!joined.empty()) {
+                joined += '\n';
+            }
+            joined += arg;
+        }
+        const auto args_copy_length =
+            std::min(joined.size(), static_cast<std::size_t>(args_buf_size) - 1);
+        std::memcpy(args_buf, joined.data(), args_copy_length);
+        args_buf[args_copy_length] = '\0';
+    }
     return 1;
 }
 

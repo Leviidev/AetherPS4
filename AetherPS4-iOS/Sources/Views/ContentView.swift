@@ -6,6 +6,8 @@ struct ContentView: View {
     // means every cold launch re-verifies rather than trusting a stale prior result.
     @State private var setupVerified = false
 
+    @Environment(EmulatorProcess.self) private var emulator
+
     var body: some View {
         TabView {
             NavigationStack {
@@ -32,7 +34,14 @@ struct ContentView: View {
         // fullScreenCover (not .sheet): no swipe-to-dismiss, so the only way past this
         // is actually passing both checks -- matches "only let them proceed if" working.
         .fullScreenCover(isPresented: Binding(get: { !setupVerified }, set: { _ in })) {
-            SetupCheckView(onPassed: { setupVerified = true })
+            SetupCheckView(onPassed: {
+                setupVerified = true
+                // Only meaningful right after a restart prompt's exit(0) brought the app
+                // back up fresh -- see EmulatorProcess.resumeIfRestartPending()'s own
+                // comment. Gated on setup passing first since a normal launch() needs JIT
+                // attached too, same requirement this resume goes through.
+                emulator.resumeIfRestartPending()
+            })
         }
     }
 }

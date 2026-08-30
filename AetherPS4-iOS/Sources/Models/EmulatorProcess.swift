@@ -43,7 +43,11 @@ final class EmulatorProcess {
         }
     }
 
-    func launch(pkgPath: String, gameName: String) {
+    // args: guest argv entries to pass to the eboot's entry point, in order. Only ever
+    // non-empty when resuming after a restart request (see resumeIfRestartPending()) -- a
+    // normal library launch has nothing to pass and lets shadps4_prepare_window_with_args's
+    // empty-string case fall back to its own default argv[0].
+    func launch(pkgPath: String, gameName: String, args: [String] = []) {
         guard !isBusy else { return }
 
         // Setup JIT if needed
@@ -66,11 +70,11 @@ final class EmulatorProcess {
         // delay comfortably longer than iOS's own interface rotation animation (~0.3s).
         lockToLandscape()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            self?.continueLaunch(pkgPath: pkgPath, gameName: gameName)
+            self?.continueLaunch(pkgPath: pkgPath, gameName: gameName, args: args)
         }
     }
 
-    private func continueLaunch(pkgPath: String, gameName: String) {
+    private func continueLaunch(pkgPath: String, gameName: String, args: [String] = []) {
         isPreparingToLaunch = false
         self.runningGameName = gameName
         self.state = .running
@@ -103,7 +107,14 @@ final class EmulatorProcess {
         // still has to run on the main thread for the same reason shadps4_run() did, but
         // continueLaunch() is already on the main actor, so this can just call it directly.
         // See shadps4_ios_api.h's own comment on both halves for the full reasoning.
-        let prepareStatus = pkgPath.withCString { shadps4_prepare_window($0) }
+        // Always the _with_args variant (an empty joined string is equivalent to the plain
+        // call) so there's only one code path to keep correct rather than two.
+        let joinedArgs = args.joined(separator: "\n")
+        let prepareStatus = pkgPath.withCString { pathPtr in
+            joinedArgs.withCString { argsPtr in
+                shadps4_prepare_window_with_args(pathPtr, argsPtr)
+            }
+        }
         guard prepareStatus == 0 else {
             appendLine(.stderr, "[AetherPS4] Failed to prepare game window")
             state = .exited(status: prepareStatus)
@@ -162,19 +173,37 @@ final class EmulatorProcess {
             // player has to be the one to close and reopen the app -- RestartRequiredOverlayWindow
             // makes that unmissable and gives them a one-tap way to do it, instead of quietly
             // reusing state that was never proven safe to reuse.
+            //
+            // The path and guest args both have to survive that process restart, since
+            // there's nothing left in memory once exit(0) actually runs -- persisted to
+            // UserDefaults here and picked back up by resumeIfRestartPending() on the next
+            // cold launch. Confirmed on-device that dropping the args (an earlier version of
+            // this fix did) lands the player back at the game's own main menu instead of
+            // continuing: sceSystemServiceLoadExec's argv is how the game tells its
+            // newly-loaded self where to resume, the same way it would on real hardware.
             var pathBuffer = [Int8](repeating: 0, count: 4096)
-            var restartRequested = false
-            pathBuffer.withUnsafeMutableBufferPointer { buffer in
-                guard let base = buffer.baseAddress,
-                      shadps4_take_pending_restart(base, Int32(buffer.count)) != 0
-                else { return }
-                restartRequested = true
+            var argsBuffer = [Int8](repeating: 0, count: 4096)
+            var restartPath: String?
+            var restartArgs: [String] = []
+            pathBuffer.withUnsafeMutableBufferPointer { pathBuf in
+                argsBuffer.withUnsafeMutableBufferPointer { argsBuf in
+                    guard let pathBase = pathBuf.baseAddress, let argsBase = argsBuf.baseAddress,
+                          shadps4_take_pending_restart(pathBase, Int32(pathBuf.count), argsBase,
+                                                       Int32(argsBuf.count)) != 0
+                    else { return }
+                    restartPath = String(cString: pathBase)
+                    let joined = String(cString: argsBase)
+                    restartArgs = joined.isEmpty ? [] : joined.components(separatedBy: "\n")
+                }
             }
-            if restartRequested {
+            if let restartPath {
                 DispatchQueue.main.async {
                     guard let self else { return }
                     let name = self.runningGameName ?? "The game"
                     self.appendLine(.stdout, "[AetherPS4] \(name) requested a restart -- prompting to restart the app")
+                    UserDefaults.standard.set(restartPath, forKey: "pendingRestartEbootPath")
+                    UserDefaults.standard.set(restartArgs, forKey: "pendingRestartArgs")
+                    UserDefaults.standard.set(name, forKey: "pendingRestartGameName")
                     LoadingOverlayWindow.teardown()
                     TouchControlsOverlayWindow.teardown()
                     self.state = .exited(status: 0)
@@ -231,6 +260,22 @@ final class EmulatorProcess {
             .first(where: { $0.activationState == .foregroundActive })
         else { return }
         scene.windows.first?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+    }
+
+    // Call once on cold launch, after JIT/setup verification passes (see ContentView), to
+    // pick back up a game that requested a restart last session (see the restart-detection
+    // block in continueLaunch() above for why this can't just happen automatically without
+    // the player closing and reopening the app). No-op if nothing's pending.
+    func resumeIfRestartPending() {
+        let defaults = UserDefaults.standard
+        guard let path = defaults.string(forKey: "pendingRestartEbootPath") else { return }
+        let args = defaults.stringArray(forKey: "pendingRestartArgs") ?? []
+        let name = defaults.string(forKey: "pendingRestartGameName") ?? "the game"
+        defaults.removeObject(forKey: "pendingRestartEbootPath")
+        defaults.removeObject(forKey: "pendingRestartArgs")
+        defaults.removeObject(forKey: "pendingRestartGameName")
+        appendLine(.stdout, "[AetherPS4] Resuming \(name) after restart...")
+        launch(pkgPath: path, gameName: name, args: args)
     }
 
     func stop() {
