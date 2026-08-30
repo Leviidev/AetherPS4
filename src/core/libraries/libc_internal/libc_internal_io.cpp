@@ -240,6 +240,30 @@ OrbisFILE* PS4_SYSV_ABI internal_fopen(const char* path, const char* mode) {
     return ret_file;
 }
 
+// freopen was previously unresolved on the FEX/ARM64 build -- Linker::Resolve falls back to
+// a stub that returns -ENOSYS (78 on the BSD-style numbering PS4/this codebase uses) in RAX
+// for any unresolved libc/libSceFios2 symbol (see linker.cpp's "unresolved HLE ... uses
+// temporary ENOSYS fallback"), which for a pointer-returning function like this one means the
+// caller gets back the raw bit pattern of -78 as if it were a real FILE*. Confirmed on-device
+// with Journey: guest code doesn't check for that and writes through it, crashing with
+// "Write to address 0xffffffffffffffb2" (0xffffffffffffffb2 == -78). _Foprep already handles
+// reinitializing an existing OrbisFILE* in place (that's exactly what fopen's own
+// file=_Fofind()-then-_Foprep() split enables), so freopen is just that same call reusing the
+// caller's existing stream instead of a freshly-allocated one.
+OrbisFILE* PS4_SYSV_ABI internal_freopen(const char* path, const char* mode, OrbisFILE* file) {
+    std::scoped_lock lk{g_file_mtx};
+    LOG_INFO(Lib_LibcInternal, "called, path {}, mode {}", path, mode);
+    if (file == nullptr) {
+        // No existing stream to reuse -- same fallback glibc's own freopen(NULL) documents.
+        return internal_fopen(path, mode);
+    }
+    OrbisFILE* ret_file = internal__Foprep(path, mode, file, -1, 0, 0);
+    if (ret_file == nullptr) {
+        LOG_ERROR(Lib_LibcInternal, "failed to reopen file {}", path);
+    }
+    return ret_file;
+}
+
 s32 PS4_SYSV_ABI internal_fflush(OrbisFILE* file) {
     if (file == nullptr) {
         std::scoped_lock lk{g_file_mtx};
@@ -611,6 +635,10 @@ void RegisterFexLibcIoAliases(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("jbz9I9vkqkk", "libc", 1, "libc", internal_vsprintf);
     LIB_FUNCTION("Q2V+iqvjgC0", "libc", 1, "libc", internal_vsnprintf);
     LIB_FUNCTION("xeYO4u7uyJ0", "libc", 1, "libc", internal_fopen);
+    // Hash confirmed from an on-device "unresolved HLE freopen" log line for Journey
+    // (RIa6GnWp+iU#libc#1#libc#Function) -- see internal_freopen's own comment for why this
+    // one specifically needed a real implementation instead of the generic ENOSYS fallback.
+    LIB_FUNCTION("RIa6GnWp+iU", "libc", 1, "libc", internal_freopen);
     LIB_FUNCTION("rQFVBXp-Cxg", "libc", 1, "libc", internal_fseek);
     LIB_FUNCTION("lbB+UlZqVG0", "libc", 1, "libc", internal_fread);
     LIB_FUNCTION("uodLYyUip20", "libc", 1, "libc", internal_fclose);
