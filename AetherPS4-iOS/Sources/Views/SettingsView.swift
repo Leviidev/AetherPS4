@@ -4,6 +4,8 @@ struct SettingsView: View {
     @AppStorage("showFpsCounter") private var showFpsCounter: Bool = true
     @AppStorage("networkEnabled") private var networkEnabled: Bool = true
     @AppStorage("consoleLoggingEnabled") private var consoleLoggingEnabled: Bool = false
+    @AppStorage("touchControlsDisabled") private var touchControlsDisabled: Bool = false
+    @AppStorage("performanceOverlayEnabled") private var performanceOverlayEnabled: Bool = false
 
     private let store = ConfigStore.shared
 
@@ -59,6 +61,11 @@ struct SettingsView: View {
 
                 Toggle("Console Logging", isOn: $consoleLoggingEnabled)
                 Text("Shows a live, scrolling console in the loading card. Off by default -- tailing the log file and re-rendering it several times a second noticeably lags the app, so it's only worth turning on when you actually need to see what's happening during boot.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Performance Overlay", isOn: $performanceOverlayEnabled)
+                Text("A small on-screen badge showing live FPS and CPU usage while a game is running. Takes effect the next time you start a game.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -166,6 +173,20 @@ struct SettingsView: View {
                 Text("Input")
             } footer: {
                 Text("\"Treat Mice as Mice\" reports a connected trackpad/mouse as a real mouse to the game instead of emulating a second gamepad with it.")
+            }
+
+            Section {
+                Toggle("Show Touch Controls", isOn: Binding(
+                    get: { !touchControlsDisabled },
+                    set: { touchControlsDisabled = !$0 }
+                ))
+                Button("Reset Touch Control Layout", role: .destructive) {
+                    TouchLayoutStore.shared.resetAll()
+                }
+            } header: {
+                Text("Touch Controls")
+            } footer: {
+                Text("Turning this off removes the on-screen stick/button overlay entirely -- only useful with an actual controller connected. To move a button, tap \"Edit Layout\" at the bottom of the screen while a game is running, drag the dashed placeholders where you want them, then tap \"Done\". Both take effect the next time you start a game.")
             }
 
             Section {

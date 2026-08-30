@@ -14,8 +14,11 @@ project = Xcodeproj::Project.new(project_path)
 # Must match CMAKE_OSX_DEPLOYMENT_TARGET used to build libshadps4_ios.a (see
 # runtime/build/shadps4-ios's configure invocation) -- a lower value here links
 # fine but is inconsistent metadata, and some of libshadps4_ios.a's object code
-# was compiled assuming this floor.
-app_target = project.new_target(:application, project_name, :ios, '26.0')
+# was compiled assuming this floor. iOS specifically builds at 18.0 (see the
+# CMAKE_SYSTEM_NAME STREQUAL "iOS" branch in CMakeLists.txt) -- the 26.0 floor
+# elsewhere in that file is a macOS-only requirement (KosmicKrisp), which iOS never
+# bundles (it renders through MoltenVK instead, with no comparable floor).
+app_target = project.new_target(:application, project_name, :ios, '18.0')
 
 # Source directory
 sources_dir = project.main_group.new_group('Sources', 'Sources')

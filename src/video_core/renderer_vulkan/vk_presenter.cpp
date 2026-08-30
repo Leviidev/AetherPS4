@@ -1195,6 +1195,7 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame) {
                      presented);
         }
         if (presented) {
+            Common::PresentedFrameCount().fetch_add(1, std::memory_order_relaxed);
             // exchange (not store) so the callback below only ever fires on the genuine
             // first transition false -> true, even though every present thereafter also
             // takes this branch.

@@ -114,6 +114,13 @@ int shadps4_is_paused(void);
 // Safe to call from any thread.
 int shadps4_has_presented_frame(void);
 
+// Total number of successful swapchain presents so far in this process, monotonically
+// increasing (never resets, even across game restarts within the same process -- same
+// lifetime as shadps4_has_presented_frame's flag). A host UI can sample this on a timer and
+// divide the delta by elapsed wall time to compute a live FPS reading. Safe to call from
+// any thread.
+uint64_t shadps4_get_presented_frame_count(void);
+
 // Registers a callback invoked exactly once, synchronously, the instant the Vulkan
 // presenter completes its first real swapchain present -- on the presenter's own render
 // thread, NOT necessarily the thread that registered it and NOT necessarily the main

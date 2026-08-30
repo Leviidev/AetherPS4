@@ -17,6 +17,16 @@ inline std::atomic<bool>& FramePresentedFlag() {
     return flag;
 }
 
+// Total count of successful presents so far, incremented alongside FramePresentedFlag --
+// unlike that flag (which only ever tells you "at least one"), this lets a poller compute a
+// live FPS by sampling the counter twice and dividing the delta by the elapsed wall time
+// (see PerformanceOverlayWindow.swift). Relaxed ordering is fine: this is a monotonically
+// increasing counter read for a rough per-second rate, not synchronized with anything else.
+inline std::atomic<uint64_t>& PresentedFrameCount() {
+    static std::atomic<uint64_t> count{0};
+    return count;
+}
+
 // Fired exactly once, synchronously, from whichever thread first flips FramePresentedFlag
 // to true (the Vulkan presenter's own render thread -- see vk_presenter.cpp) -- pushed
 // rather than polled, so the host app finds out the instant it happens instead of up to

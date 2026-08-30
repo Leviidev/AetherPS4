@@ -1,3 +1,4 @@
+import Darwin
 import SwiftUI
 import UIKit
 
@@ -34,14 +35,23 @@ enum TouchControlsOverlayWindow {
             return
         }
 
+        // Checked once per game session (this is only ever called at the start of one), so a
+        // Settings change takes effect on the next game launch, not the next full app launch --
+        // consistent with how the C++-side engine settings in ConfigStore behave. Only the
+        // control widgets themselves are conditional on this -- the window itself always gets
+        // created, since the boot-progress badge and performance overlay live in it too and
+        // have nothing to do with whether the touch controls are wanted.
+        let controlsEnabled = !UserDefaults.standard.bool(forKey: "touchControlsDisabled")
+
         let overlayWindow = UIWindow(windowScene: scene)
         overlayWindow.windowLevel = .normal + 1
         overlayWindow.backgroundColor = .clear
-        overlayWindow.rootViewController = UIHostingController(rootView: TouchControlsView())
+        overlayWindow.rootViewController = UIHostingController(
+            rootView: TouchControlsView(controlsEnabled: controlsEnabled))
         overlayWindow.rootViewController?.view.backgroundColor = .clear
         overlayWindow.isHidden = false
         window = overlayWindow
-        print("[AetherPS4] TouchControlsOverlayWindow: shown")
+        print("[AetherPS4] TouchControlsOverlayWindow: shown (controlsEnabled=\(controlsEnabled))")
     }
 
     static func teardown() {
@@ -245,9 +255,112 @@ private final class BootProgressState: ObservableObject {
     }
 }
 
+// Small always-on-top HUD showing live FPS and this process's CPU usage, toggled by the
+// "Performance Overlay" setting. GPU usage isn't included -- there's no timestamp-query
+// instrumentation in the Vulkan renderer to source a real number from yet, and a fake one
+// would be actively misleading. FPS comes from shadps4_get_presented_frame_count() (a
+// monotonic counter incremented once per successful swapchain present, sampled here once a
+// second); CPU comes from summing per-thread cpu_usage via the Mach task_threads/thread_info
+// APIs, the standard way to read a process's own CPU load on Darwin -- this is the app's own
+// process total (engine + UI threads combined), reported like `top` does, so 150% means 1.5
+// CPU cores busy, not a 0-100 clamped percentage.
+@MainActor
+private final class PerformanceOverlayState: ObservableObject {
+    @Published var isEnabled = false
+    @Published var fps: Double = 0
+    @Published var cpuPercent: Double = 0
+
+    private var timer: Timer?
+    private var lastFrameCount: UInt64 = 0
+    private var lastSampleTime = Date()
+
+    init() {
+        isEnabled = UserDefaults.standard.bool(forKey: "performanceOverlayEnabled")
+        guard isEnabled else { return }
+        lastFrameCount = shadps4_get_presented_frame_count()
+        lastSampleTime = Date()
+        let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.sample()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    deinit {
+        timer?.invalidate()
+    }
+
+    private func sample() {
+        let now = Date()
+        let elapsed = now.timeIntervalSince(lastSampleTime)
+        guard elapsed > 0 else { return }
+        let currentCount = shadps4_get_presented_frame_count()
+        fps = Double(currentCount &- lastFrameCount) / elapsed
+        lastFrameCount = currentCount
+        lastSampleTime = now
+        cpuPercent = Self.processCPUUsage()
+    }
+
+    private static func processCPUUsage() -> Double {
+        var threadList: thread_act_array_t?
+        var threadCount: mach_msg_type_number_t = 0
+        let result = task_threads(mach_task_self_, &threadList, &threadCount)
+        guard result == KERN_SUCCESS, let threadList else { return 0 }
+        defer {
+            vm_deallocate(mach_task_self_, vm_address_t(bitPattern: threadList),
+                         vm_size_t(Int(threadCount) * MemoryLayout<thread_t>.stride))
+        }
+
+        var totalUsage: Double = 0
+        for i in 0..<Int(threadCount) {
+            var threadInfo = thread_basic_info()
+            var threadInfoCount = mach_msg_type_number_t(THREAD_INFO_MAX)
+            let infoResult = withUnsafeMutablePointer(to: &threadInfo) {
+                $0.withMemoryRebound(to: integer_t.self, capacity: Int(threadInfoCount)) {
+                    thread_info(threadList[i], thread_flavor_t(THREAD_BASIC_INFO), $0, &threadInfoCount)
+                }
+            }
+            guard infoResult == KERN_SUCCESS else { continue }
+            if threadInfo.flags & TH_FLAGS_IDLE == 0 {
+                totalUsage += Double(threadInfo.cpu_usage) / Double(TH_USAGE_SCALE) * 100.0
+            }
+        }
+        return totalUsage
+    }
+}
+
+private struct PerformanceOverlayBadge: View {
+    @ObservedObject var perf: PerformanceOverlayState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("\(Int(perf.fps.rounded())) FPS")
+            Text("CPU \(Int(perf.cpuPercent.rounded()))%")
+        }
+        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+        .foregroundStyle(.white)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+    }
+}
+
 private struct TouchControlsView: View {
+    let controlsEnabled: Bool
+
     @StateObject private var state = TouchPadState()
     @StateObject private var bootProgress = BootProgressState()
+    @StateObject private var perf = PerformanceOverlayState()
+    @StateObject private var layout = TouchLayoutStore.shared
+    @State private var editMode = false
+
+    /// Base position for a named control, offset by whatever the player has dragged it to in
+    /// layout-edit mode (see LayoutHandle below). Keys are stable identifiers persisted in
+    /// TouchLayoutStore, unrelated to any PS4 button name.
+    private func pos(_ key: String, _ x: CGFloat, _ y: CGFloat) -> CGPoint {
+        let o = layout.offset(for: key)
+        return CGPoint(x: x + o.width, y: y + o.height)
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -260,55 +373,122 @@ private struct TouchControlsView: View {
             let h = geo.size.height
 
             ZStack {
-                StickView(state: state, axisX: \.leftX, axisY: \.leftY)
-                    .frame(width: u * 34, height: u * 34)
-                    .position(x: u * 20, y: h - u * 22)
-
-                DPadView(state: state, radius: u * 13)
-                    .frame(width: u * 26, height: u * 26)
-                    .position(x: u * 22, y: u * 38)
-
-                StickView(state: state, axisX: \.rightX, axisY: \.rightY)
-                    .frame(width: u * 34, height: u * 34)
-                    .position(x: w - u * 36, y: h - u * 22)
-
-                // radius/spread were u*8.5/u*12: diagonal neighbors (Triangle-Square,
-                // Triangle-Circle, Cross-Square, Cross-Circle) are spread*sqrt(2) apart
-                // center-to-center, so their hit circles' actual gap was
-                // 12*1.41 - 2*8.5 = 0 -- exactly touching, not just visually close. Reported
-                // on-device as bad, too-close hitboxes. u*10/u*17 gives each button a bigger
-                // hit target and a real ~4u gap between diagonal neighbors
-                // (17*1.41 - 2*10 ≈ 4). Cluster center moved further left (w - u*34, from
-                // w - u*30) and the frame widened to match, since the bigger spread pushes
-                // the rightmost button (Circle) further right again -- its edge now lands at
-                // w - u*34 + u*17 + u*10 = w - u*7, still safely on-screen.
-                FaceButtonsView(state: state, radius: u * 10, spread: u * 17)
-                    .frame(width: u * 54, height: u * 54)
-                    .position(x: w - u * 34, y: u * 47)
-
-                ShoulderButton(state: state, bit: UInt32(SHADPS4_PAD_L1), label: "L1",
-                              width: u * 16, height: u * 8)
-                    .position(x: u * 10, y: u * 12)
-                ShoulderButton(state: state, bit: UInt32(SHADPS4_PAD_L2), label: "L2",
-                              width: u * 16, height: u * 8, isTrigger: true, triggerAxis: \.l2)
-                    .position(x: u * 10, y: u * 2)
-                ShoulderButton(state: state, bit: UInt32(SHADPS4_PAD_R1), label: "R1",
-                              width: u * 16, height: u * 8)
-                    .position(x: w - u * 40, y: u * 12)
-                ShoulderButton(state: state, bit: UInt32(SHADPS4_PAD_R2), label: "R2",
-                              width: u * 16, height: u * 8, isTrigger: true, triggerAxis: \.r2)
-                    .position(x: w - u * 40, y: u * 2)
-
+                if controlsEnabled {
                 Group {
-                    SmallButton(state: state, bit: UInt32(SHADPS4_PAD_SHARE), label: "SH",
-                               radius: u * 4.5)
-                        .position(x: w * 0.40, y: u * 6)
-                    SmallButton(state: state, bit: UInt32(SHADPS4_PAD_TOUCHPAD), label: "TP",
-                               radius: u * 4.5)
-                        .position(x: w * 0.50, y: u * 6)
-                    SmallButton(state: state, bit: UInt32(SHADPS4_PAD_OPTIONS), label: "OPT",
-                               radius: u * 4.5)
-                        .position(x: w * 0.60, y: u * 6)
+                    StickView(state: state, axisX: \.leftX, axisY: \.leftY)
+                        .frame(width: u * 34, height: u * 34)
+                        .position(pos("leftStick", u * 20, h - u * 22))
+
+                    DPadView(state: state, radius: u * 13)
+                        .frame(width: u * 26, height: u * 26)
+                        .position(pos("dpad", u * 22, u * 38))
+
+                    StickView(state: state, axisX: \.rightX, axisY: \.rightY)
+                        .frame(width: u * 34, height: u * 34)
+                        .position(pos("rightStick", w - u * 36, h - u * 22))
+
+                    // radius/spread were u*8.5/u*12: diagonal neighbors (Triangle-Square,
+                    // Triangle-Circle, Cross-Square, Cross-Circle) are spread*sqrt(2) apart
+                    // center-to-center, so their hit circles' actual gap was
+                    // 12*1.41 - 2*8.5 = 0 -- exactly touching, not just visually close. Reported
+                    // on-device as bad, too-close hitboxes. u*10/u*17 gives each button a bigger
+                    // hit target and a real ~4u gap between diagonal neighbors
+                    // (17*1.41 - 2*10 ≈ 4). Cluster center moved further left (w - u*34, from
+                    // w - u*30) and the frame widened to match, since the bigger spread pushes
+                    // the rightmost button (Circle) further right again -- its edge now lands at
+                    // w - u*34 + u*17 + u*10 = w - u*7, still safely on-screen.
+                    FaceButtonsView(state: state, radius: u * 10, spread: u * 17)
+                        .frame(width: u * 54, height: u * 54)
+                        .position(pos("faceButtons", w - u * 34, u * 47))
+
+                    ShoulderButton(state: state, bit: UInt32(SHADPS4_PAD_L1), label: "L1",
+                                  width: u * 16, height: u * 8)
+                        .position(pos("L1", u * 10, u * 12))
+                    ShoulderButton(state: state, bit: UInt32(SHADPS4_PAD_L2), label: "L2",
+                                  width: u * 16, height: u * 8, isTrigger: true, triggerAxis: \.l2)
+                        .position(pos("L2", u * 10, u * 2))
+                    ShoulderButton(state: state, bit: UInt32(SHADPS4_PAD_R1), label: "R1",
+                                  width: u * 16, height: u * 8)
+                        .position(pos("R1", w - u * 40, u * 12))
+                    ShoulderButton(state: state, bit: UInt32(SHADPS4_PAD_R2), label: "R2",
+                                  width: u * 16, height: u * 8, isTrigger: true, triggerAxis: \.r2)
+                        .position(pos("R2", w - u * 40, u * 2))
+
+                    Group {
+                        SmallButton(state: state, bit: UInt32(SHADPS4_PAD_SHARE), label: "SH",
+                                   radius: u * 4.5)
+                            .position(pos("share", w * 0.40, u * 6))
+                        SmallButton(state: state, bit: UInt32(SHADPS4_PAD_TOUCHPAD), label: "TP",
+                                   radius: u * 4.5)
+                            .position(pos("touchpad", w * 0.50, u * 6))
+                        SmallButton(state: state, bit: UInt32(SHADPS4_PAD_OPTIONS), label: "OPT",
+                                   radius: u * 4.5)
+                            .position(pos("options", w * 0.60, u * 6))
+                    }
+                }
+                // While repositioning, the real controls must not also react to the same
+                // drag as a button press/stick move -- disable their hit-testing entirely
+                // and let the LayoutHandle overlay below own every touch instead.
+                .allowsHitTesting(!editMode)
+                .opacity(editMode ? 0.5 : 1.0)
+
+                if editMode {
+                    Group {
+                        LayoutHandle(layout: layout, key: "leftStick", label: "L Stick", size: u * 34)
+                            .position(pos("leftStick", u * 20, h - u * 22))
+                        LayoutHandle(layout: layout, key: "dpad", label: "D-Pad", size: u * 26)
+                            .position(pos("dpad", u * 22, u * 38))
+                        LayoutHandle(layout: layout, key: "rightStick", label: "R Stick", size: u * 34)
+                            .position(pos("rightStick", w - u * 36, h - u * 22))
+                        LayoutHandle(layout: layout, key: "faceButtons", label: "Face", size: u * 54)
+                            .position(pos("faceButtons", w - u * 34, u * 47))
+                        LayoutHandle(layout: layout, key: "L1", label: "L1", width: u * 16, height: u * 8)
+                            .position(pos("L1", u * 10, u * 12))
+                        LayoutHandle(layout: layout, key: "L2", label: "L2", width: u * 16, height: u * 8)
+                            .position(pos("L2", u * 10, u * 2))
+                        LayoutHandle(layout: layout, key: "R1", label: "R1", width: u * 16, height: u * 8)
+                            .position(pos("R1", w - u * 40, u * 12))
+                        LayoutHandle(layout: layout, key: "R2", label: "R2", width: u * 16, height: u * 8)
+                            .position(pos("R2", w - u * 40, u * 2))
+                        LayoutHandle(layout: layout, key: "share", label: "SH", size: u * 9)
+                            .position(pos("share", w * 0.40, u * 6))
+                        LayoutHandle(layout: layout, key: "touchpad", label: "TP", size: u * 9)
+                            .position(pos("touchpad", w * 0.50, u * 6))
+                        LayoutHandle(layout: layout, key: "options", label: "OPT", size: u * 9)
+                            .position(pos("options", w * 0.60, u * 6))
+                    }
+                }
+
+                // Always-available small toggle for layout-edit mode, and (while active) the
+                // controls to reset/exit it. Bottom-center so it stays clear of every control
+                // above and of the boot-progress ring (top-center).
+                VStack(spacing: 6) {
+                    if editMode {
+                        Button("Reset Layout") {
+                            layout.resetAll()
+                        }
+                        .font(.system(size: 12, weight: .semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(.black.opacity(0.55), in: Capsule())
+                        .foregroundStyle(.white)
+                    }
+                    Button(editMode ? "Done" : "Edit Layout") {
+                        editMode.toggle()
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(editMode ? Color.accentColor.opacity(0.85) : .black.opacity(0.4),
+                               in: Capsule())
+                    .foregroundStyle(.white)
+                }
+                .position(x: w * 0.5, y: h - u * 4)
+                } // if controlsEnabled
+
+                if perf.isEnabled {
+                    PerformanceOverlayBadge(perf: perf)
+                        .position(x: u * 12, y: u * 6)
                 }
 
                 if bootProgress.isVisible {
@@ -635,6 +815,70 @@ private struct SmallButton: View {
                 .onEnded { _ in
                     isPressed = false
                     state.setButton(bit, pressed: false)
+                }
+        )
+    }
+}
+
+// MARK: - Layout editing
+
+// A dashed placeholder shown in place of a real control while layout-edit mode is active
+// (see TouchControlsView.editMode). Deliberately not the real control itself: the real
+// controls' own gesture recognizers are for game input (press/drag-to-move-stick), which
+// would fight a drag-to-reposition gesture on the exact same view. Real controls get
+// allowsHitTesting(false) while this is showing, so this is the only thing receiving
+// touches during a reposition drag.
+private struct LayoutHandle: View {
+    @ObservedObject var layout: TouchLayoutStore
+    let key: String
+    let label: String
+    var width: CGFloat
+    var height: CGFloat
+
+    // Tracks the last-seen cumulative translation from the current drag so each onChanged
+    // call can compute just this step's delta -- DragGesture's translation is relative to
+    // the drag's start, not the previous callback, and TouchLayoutStore.addOffset is additive.
+    @State private var lastTranslation: CGSize = .zero
+
+    init(layout: TouchLayoutStore, key: String, label: String, size: CGFloat) {
+        self.layout = layout
+        self.key = key
+        self.label = label
+        self.width = size
+        self.height = size
+    }
+
+    init(layout: TouchLayoutStore, key: String, label: String, width: CGFloat, height: CGFloat) {
+        self.layout = layout
+        self.key = key
+        self.label = label
+        self.width = width
+        self.height = height
+    }
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.accentColor.opacity(0.35))
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.white, style: StrokeStyle(lineWidth: 2, dash: [4, 3]))
+            Text(label)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.white)
+        }
+        .frame(width: max(width, 28), height: max(height, 28))
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    let delta = CGSize(width: value.translation.width - lastTranslation.width,
+                                       height: value.translation.height - lastTranslation.height)
+                    layout.addOffset(delta, for: key)
+                    lastTranslation = value.translation
+                }
+                .onEnded { _ in
+                    lastTranslation = .zero
+                    layout.commit()
                 }
         )
     }
