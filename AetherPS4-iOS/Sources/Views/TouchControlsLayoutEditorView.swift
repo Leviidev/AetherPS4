@@ -8,6 +8,7 @@ import SwiftUI
 // exact same position math and TouchLayoutStore persistence the real overlay reads from, so
 // a drag here shows up in the next game launch's real controls.
 struct TouchControlsLayoutEditorView: View {
+    @Environment(EmulatorProcess.self) private var emulator
     @StateObject private var layout = TouchLayoutStore.shared
 
     var body: some View {
@@ -40,7 +41,7 @@ struct TouchControlsLayoutEditorView: View {
                     Spacer()
                 }
             }
-            .ignoresSafeArea(edges: .horizontal)
+            .ignoresSafeArea()
         }
         .navigationTitle("Touch Control Layout")
         .navigationBarTitleDisplayMode(.inline)
@@ -51,6 +52,12 @@ struct TouchControlsLayoutEditorView: View {
                 }
             }
         }
+        // Real gameplay is always landscape (see AetherPS4App's AppDelegate comment), so
+        // this preview has to match or a control dragged here in portrait would land
+        // somewhere different once the real overlay actually shows up. Uses the exact same
+        // lock/unlock EmulatorProcess uses for a real game session.
+        .onAppear { emulator.lockToLandscape() }
+        .onDisappear { emulator.unlockOrientation() }
     }
 }
 

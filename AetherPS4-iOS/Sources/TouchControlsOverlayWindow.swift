@@ -325,7 +325,13 @@ private final class PerformanceOverlayState: ObservableObject {
                 totalUsage += Double(threadInfo.cpu_usage) / Double(TH_USAGE_SCALE) * 100.0
             }
         }
-        return totalUsage
+        // Raw thread_info usage sums to >100% on a busy multi-threaded process (e.g. 200%
+        // means 2 full cores saturated) -- correct for reading it like `top` does, but not
+        // what a "CPU %" badge means to a player. Normalizing by core count instead gives
+        // "how loaded is the device overall", 0-100%, matching what a game performance
+        // overlay is actually expected to show.
+        let coreCount = max(1, ProcessInfo.processInfo.activeProcessorCount)
+        return min(100, totalUsage / Double(coreCount))
     }
 }
 

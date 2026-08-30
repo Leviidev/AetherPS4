@@ -244,7 +244,11 @@ final class EmulatorProcess {
         }
     }
 
-    private func unlockOrientation() {
+    // Not private: also called directly by TouchControlsLayoutEditorView, which locks to
+    // landscape for the same reason a real game session does (see lockToLandscape's own
+    // comment) but isn't itself a game session, so it can't rely on continueLaunch's own
+    // unlock-on-exit path.
+    func unlockOrientation() {
         AppDelegate.orientationLock = .all
         guard let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
