@@ -7,6 +7,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include "common/assert.h"
 #include "common/types.h"
@@ -92,6 +93,17 @@ public:
 
 private:
     std::vector<SymbolRecord> m_symbols;
+    // name (GenerateName's "nid#lib#version#module#type" key) -> index into m_symbols. Every
+    // insertion into m_symbols must go through an index update alongside it (see AddSymbol/
+    // AddFunction/AddUnsupportedFunction) -- this exists purely so FindSymbol (and the
+    // internal existing-record checks in AddFunction/AddUnsupportedFunction) don't have to
+    // linearly scan the whole vector, confirmed on-device as the real cause of a ~99 second
+    // module-loading stall: thousands of relocations each doing an O(n) scan (with a fresh
+    // fmt::format allocation per comparison) against a symbol table that itself grows into
+    // the thousands during InitHLELibs. try_emplace (never overwrites an existing key) keeps
+    // this pointing at the *first* entry for a given name, matching the original linear
+    // scan's own first-match-wins behavior.
+    std::unordered_map<std::string, size_t> m_symbol_index;
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
     std::unique_ptr<GuestCpu::HleCallRegistry> hle_registry;
 #endif
