@@ -106,15 +106,19 @@ private struct TouchControlsView: View {
                     .frame(width: u * 34, height: u * 34)
                     .position(x: w - u * 36, y: h - u * 22)
 
-                // Center was w - u*16: with spread (u*12) and the button's own radius (u*8.5)
-                // both pushing the rightmost face button (Circle) further right from there,
-                // its edge landed at w + u*4.5 -- clipped off the right side of the screen.
-                // w - u*30 keeps that same button's edge at w - u*9.5, safely on-screen, and
-                // separates the whole cluster further from the right edge and from R1/R2
-                // (moved to match below) at the same time.
-                FaceButtonsView(state: state, radius: u * 8.5, spread: u * 12)
-                    .frame(width: u * 40, height: u * 40)
-                    .position(x: w - u * 30, y: u * 42)
+                // radius/spread were u*8.5/u*12: diagonal neighbors (Triangle-Square,
+                // Triangle-Circle, Cross-Square, Cross-Circle) are spread*sqrt(2) apart
+                // center-to-center, so their hit circles' actual gap was
+                // 12*1.41 - 2*8.5 = 0 -- exactly touching, not just visually close. Reported
+                // on-device as bad, too-close hitboxes. u*10/u*17 gives each button a bigger
+                // hit target and a real ~4u gap between diagonal neighbors
+                // (17*1.41 - 2*10 ≈ 4). Cluster center moved further left (w - u*34, from
+                // w - u*30) and the frame widened to match, since the bigger spread pushes
+                // the rightmost button (Circle) further right again -- its edge now lands at
+                // w - u*34 + u*17 + u*10 = w - u*7, still safely on-screen.
+                FaceButtonsView(state: state, radius: u * 10, spread: u * 17)
+                    .frame(width: u * 54, height: u * 54)
+                    .position(x: w - u * 34, y: u * 47)
 
                 ShoulderButton(state: state, bit: UInt32(SHADPS4_PAD_L1), label: "L1",
                               width: u * 16, height: u * 8)
