@@ -57,6 +57,16 @@ int shadps4_run(const char* eboot_path);
 // must not be called.
 int shadps4_prepare_window(const char* eboot_path);
 
+// Same as shadps4_prepare_window(), but also passes guest argv entries through to the new
+// game's entry point -- args_joined_by_newline is a single string with each argument
+// separated by '\n' (an empty string means no args, same as calling shadps4_prepare_window()
+// directly). Needed for resuming after a restart request (see shadps4_take_pending_restart()
+// below): sceSystemServiceLoadExec's caller supplies its own argv, and on real hardware
+// those are what tell the newly-loaded image to resume mid-story instead of booting cold --
+// discarding them was confirmed on-device to drop the player back at the game's main menu
+// instead of continuing.
+int shadps4_prepare_window_with_args(const char* eboot_path, const char* args_joined_by_newline);
+
 // Runs the actual game session (starts guest execution, then blocks in SDL's event loop
 // until the game exits or shadps4_stop() is called) -- everything shadps4_prepare_window()
 // didn't already do. Safe to call from a background thread: by this point the window and
@@ -77,11 +87,14 @@ int shadps4_run_loop(void);
 // back here for the host to relaunch with, the same way it launched the first game, rather
 // than the whole app quick_exit()-ing the way an unhandled fork() failure otherwise would.
 //
-// Returns 1 and fills path_buf (NUL-terminated, truncated to path_buf_size if needed) if a
-// restart was requested; returns 0 (path_buf untouched) otherwise -- a normal exit, or the
-// path didn't fit and path_buf_size was 0. Guest args, if any, are not currently surfaced
-// here (no host caller needs them yet); they're discarded.
-int shadps4_take_pending_restart(char* path_buf, int path_buf_size);
+// Returns 1 and fills path_buf and args_buf (both NUL-terminated, each truncated to its own
+// buf_size if needed) if a restart was requested; returns 0 (both buffers untouched)
+// otherwise -- a normal exit. args_buf receives the guest's argv entries joined by '\n' (see
+// shadps4_prepare_window_with_args()'s own comment for the encoding and why these matter);
+// pass args_buf_size 0 (with args_buf possibly nullptr) to skip retrieving them if a caller
+// only cares about the path.
+int shadps4_take_pending_restart(char* path_buf, int path_buf_size, char* args_buf,
+                                 int args_buf_size);
 
 // Requests that a currently-running shadps4_run() call (on the main thread) return.
 // Safe to call from any other thread, e.g. from a UI "stop" button's handler while
