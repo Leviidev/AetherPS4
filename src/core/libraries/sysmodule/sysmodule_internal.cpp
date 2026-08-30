@@ -170,10 +170,24 @@ s32 loadModuleInternal(s32 index, s32 argc, const void* argv, s32* res_out,
     if ((mod.flags & OrbisSysmoduleModuleInternalFlags::IsGame) != 0) {
         std::string guest_path = std::string("/app0/sce_module/").append(mod.name);
         guest_path.append(".prx");
+        // Per-call timing: preloadModulesForLibkernel's own per-module timing narrowed a ~98
+        // second stall down to exactly this module (libSceFios2, which is flagged IsGame --
+        // see g_modules_array -- so it takes this branch, not the ModulesToLoad one).
+        // GetHostPath has a case-insensitive fallback search (see fs.cpp's own comment) that
+        // walks up to the nearest existing ancestor directory and scans it when the exact
+        // path doesn't exist, which this call hits three times (mods/patch/real variants) for
+        // a file that's confirmed not to exist here -- splitting the timing between this call
+        // and LoadAndStartModule below pins down which one is actually the cost.
+        const auto host_path_start_ms = Common::BootElapsedMs();
         const auto& host_path = mnt->GetHostPath(guest_path);
+        LOG_CRITICAL(Lib_SysModule, "BACHATA_BOOT_TIMING: GetHostPath({}) took {}ms", guest_path,
+                    Common::BootElapsedMs() - host_path_start_ms);
 
         // For convenience, load through linker directly instead of loading through libkernel calls.
+        const auto load_start_ms = Common::BootElapsedMs();
         s32 result = linker->LoadAndStartModule(host_path, argc, argv, &start_result);
+        LOG_CRITICAL(Lib_SysModule, "BACHATA_BOOT_TIMING: LoadAndStartModule({}) took {}ms",
+                    host_path.string(), Common::BootElapsedMs() - load_start_ms);
         // If the module is missing, the library prints a very helpful message for developers.
         // We'll just log an error.
         if (result < 0) {
