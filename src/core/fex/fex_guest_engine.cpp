@@ -170,6 +170,78 @@ std::atomic<bool> g_safepoint_resume {false};
 std::atomic<bool> g_safepoint_handler_installed {false};
 std::atomic<int> g_threads_in_hle_syscall {0};
 
+// Rocket League's Game:Main thread was observed running normally for ~1.6s after guest entry
+// (thousands of unaligned-access fixups, i.e. real JIT'd guest code executing), then going
+// completely silent for the rest of a 7+ minute session -- no more fixups, no unsupported-HLE
+// invocations (see UnsupportedHleCallAdapter's own trace), no draw calls, no crash. That
+// pattern -- not slow, just gone quiet -- is what a thread parked in a single long/indefinite
+// HLE call looks like from the outside, and there was no visibility into *which* call. This
+// watchdog gives that visibility cheaply: every HandleSyscall records which operation it's
+// about to invoke and when, and a background thread periodically checks whether that same
+// operation has been in flight unreasonably long. Deliberately NOT signal-based (unlike the
+// safepoint mechanism above) -- this only ever reads plain atomics from its own thread, so it
+// can't perturb the JIT/threading correctness work that's already gone into this file.
+std::atomic<uint64_t> g_last_hle_operation {0};
+std::atomic<int64_t> g_last_hle_operation_start_ms {0};
+std::atomic<int64_t> g_last_hle_operation_logged_start_ms {-1};
+std::atomic<bool> g_hle_stall_watchdog_started {false};
+
+void HleStallWatchdogThread() {
+  for (;;) {
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+    const auto start_ms = g_last_hle_operation_start_ms.load(std::memory_order_acquire);
+    if (start_ms == 0) {
+      continue;
+    }
+    const auto elapsed_ms = Common::BootElapsedMs() - start_ms;
+    // 3s: comfortably above any legitimate single HLE call's normal cost (even the slowest
+    // ones logged elsewhere in this codebase, e.g. GetHostPath's directory scans, finish in
+    // well under a second), so this only fires for a call that's genuinely stuck, not merely
+    // busy.
+    if (elapsed_ms < 3000) {
+      continue;
+    }
+    // Dedup by start_ms, not a bool: a *different* call stalling later (new start_ms) after an
+    // earlier one was already logged should still get its own log line.
+    auto already_logged = g_last_hle_operation_logged_start_ms.load(std::memory_order_acquire);
+    if (already_logged == start_ms) {
+      continue;
+    }
+    g_last_hle_operation_logged_start_ms.store(start_ms, std::memory_order_release);
+    LogMan::Msg::EFmt("BACHATA_HLE_STALL: operation={} has been in-flight for {}ms without "
+                      "returning -- cross-reference against this log's own "
+                      "BACHATA_FEX_VENEER lines for this operation number to find its name",
+                      g_last_hle_operation.load(std::memory_order_acquire), elapsed_ms);
+  }
+}
+
+void EnsureHleStallWatchdogStarted() {
+  bool expected = false;
+  if (!g_hle_stall_watchdog_started.compare_exchange_strong(expected, true)) {
+    return;
+  }
+  std::thread(HleStallWatchdogThread).detach();
+}
+
+// g_last_hle_operation/_start_ms above are single global slots, not per-thread -- with this
+// game's 13+ worker threads all making their own HLE calls concurrently (see the safepoint
+// mechanism's own findings), any of their fast, routine calls would constantly overwrite
+// whatever Game:Main's own slow/stuck call had recorded, hiding exactly the stall this
+// watchdog exists to catch. Cheaper than per-thread bookkeeping for the one thread actually
+// worth watching: only ever write these globals from Game:Main itself. thread_local caches
+// the pthread_getname_np() lookup (set once, in linker.cpp's RunMainEntry, before any guest
+// code -- including HLE calls -- ever runs) so this costs one string compare on this thread's
+// first HLE call and nothing on every call after.
+bool IsCurrentThreadGameMain() {
+  thread_local int cached = -1;
+  if (cached < 0) {
+    char name[64] = {};
+    pthread_getname_np(pthread_self(), name, sizeof(name));
+    cached = (std::strcmp(name, "Game:Main") == 0) ? 1 : 0;
+  }
+  return cached != 0;
+}
+
 void SafepointSignalHandler(int) noexcept {
   g_safepoint_paused_count.fetch_add(1, std::memory_order_acq_rel);
   while (!g_safepoint_resume.load(std::memory_order_acquire)) {
@@ -964,7 +1036,22 @@ public:
     for (size_t index = 0; index < hleFrame.xmm.size(); ++index) {
       hleFrame.xmm[index] = {frame->State.xmm.sse.data[index][0], frame->State.xmm.sse.data[index][1]};
     }
+    const bool is_main = IsCurrentThreadGameMain();
+    if (is_main) {
+      EnsureHleStallWatchdogStarted();
+      g_last_hle_operation.store(hleFrame.operation, std::memory_order_relaxed);
+      g_last_hle_operation_start_ms.store(Common::BootElapsedMs(), std::memory_order_relaxed);
+    }
     auto result = Bridge.Invoke(hleFrame);
+    // Only meaningful while this exact call is still in flight; once it returns (here, on
+    // every path below) the watchdog should stop attributing any new stall to it. Not reset to
+    // 0 unconditionally by the *next* call's own store above only because that store might be
+    // arbitrarily far in the future if this thread goes on to block in a signal handler or
+    // elsewhere before making another HLE call -- clearing it here, right as this call
+    // completes, is what actually matters.
+    if (is_main) {
+      g_last_hle_operation_start_ms.store(0, std::memory_order_relaxed);
+    }
     if (const auto* error = std::get_if<EngineFailure>(&result)) {
       invocation->Failure = *error;
       frame->State.gregs[FEXCore::X86State::REG_RAX] = static_cast<uint64_t>(-error->Error);
