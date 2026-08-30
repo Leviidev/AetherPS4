@@ -5,6 +5,14 @@ struct SettingsView: View {
     @AppStorage("networkEnabled") private var networkEnabled: Bool = true
     @AppStorage("consoleLoggingEnabled") private var consoleLoggingEnabled: Bool = false
 
+    private var versionLabel: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString")
+            as? String ?? "Unknown"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion")
+            as? String ?? "Unknown"
+        return "AetherPS4 \(version) (\(build))"
+    }
+
     var body: some View {
         Form {
             Section("Display & Performance") {
@@ -26,10 +34,18 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("Community") {
+            Section {
                 Link(destination: URL(string: "https://discord.gg/xApMHWAzkh")!) {
                     Label("Join the Discord", systemImage: "bubble.left.and.bubble.right")
                 }
+            } header: {
+                Text("Community")
+            } footer: {
+                Text(versionLabel)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Version \(versionLabel)")
             }
         }
     }

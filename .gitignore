@@ -20,6 +20,14 @@
 mono_crash.*
 
 # Build results
+.diagnostics/
+.downloads/
+/*.ipa
+dist/*.ipa
+dist/*.entitlements
+AetherPS4-iOS/Libs/
+**/*.xcodeproj/project.xcworkspace/
+**/*.xcodeproj/xcuserdata/
 [Dd]ebug/
 [Dd]ebugPublic/
 [Rr]elease/

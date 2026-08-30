@@ -215,6 +215,15 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, Input::GameControllers* controller
     window_info.type = WindowSystemType::Metal;
     window_info.render_surface = SDL_Metal_GetLayer(SDL_Metal_CreateView(window));
 #endif
+#if defined(SDL_PLATFORM_IOS)
+    // UIKit may give the CAMetalLayer a drawable size whose aspect ratio differs from the
+    // 1280x720 size requested above (for example 874x402 on iPhone 17 Pro). No resize event is
+    // guaranteed during initial window creation, so leaving these cached dimensions at the
+    // requested size makes ImGui lay out a 1280x720 frame and then non-uniformly scale it into
+    // the wider Metal drawable. Query the real pixel size before the swapchain/ImGui backend is
+    // initialized so their coordinate systems agree from the first present.
+    SDL_GetWindowSizeInPixels(window, &width, &height);
+#endif
     // input handler init-s
     Input::ControllerOutput::LinkJoystickAxes();
     Input::ParseInputConfig(std::string(Common::ElfInfo::Instance().GameSerial()));

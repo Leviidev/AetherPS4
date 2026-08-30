@@ -633,25 +633,28 @@
 				ENABLE_BITCODE = NO;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
-					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/AetherPS4-iOS/Frameworks",
+					"$(PROJECT_DIR)/Frameworks",
 				);
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
-					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/src/platform/ios",
-					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/src/core/pkg_extract",
+					"$(PROJECT_DIR)/../src/platform/ios",
+					"$(PROJECT_DIR)/../src/core/pkg_extract",
 				);
 				INFOPLIST_FILE = Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
-					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/runtime/build/shadps4-ios",
-					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/runtime/build/shadps4-ios/**",
+					"$(PROJECT_DIR)/Libs",
 				);
 				ONLY_ACTIVE_ARCH = YES;
 				OTHER_LDFLAGS = (
 					"-ObjC",
 					"-lc++",
+					"-framework",
+					CoreMedia,
+					"-framework",
+					CoreMotion,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.aether.ps4ios;
 				SDKROOT = iphoneos;
@@ -676,25 +679,28 @@
 				ENABLE_BITCODE = NO;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
-					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/AetherPS4-iOS/Frameworks",
+					"$(PROJECT_DIR)/Frameworks",
 				);
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
-					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/src/platform/ios",
-					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/src/core/pkg_extract",
+					"$(PROJECT_DIR)/../src/platform/ios",
+					"$(PROJECT_DIR)/../src/core/pkg_extract",
 				);
 				INFOPLIST_FILE = Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
-					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/runtime/build/shadps4-ios",
-					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/runtime/build/shadps4-ios/**",
+					"$(PROJECT_DIR)/Libs",
 				);
 				ONLY_ACTIVE_ARCH = YES;
 				OTHER_LDFLAGS = (
 					"-ObjC",
 					"-lc++",
+					"-framework",
+					CoreMedia,
+					"-framework",
+					CoreMotion,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.aether.ps4ios;
 				SDKROOT = iphoneos;

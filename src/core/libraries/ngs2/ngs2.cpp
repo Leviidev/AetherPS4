@@ -31,7 +31,7 @@ namespace {
 s32 CallGuestBufferHandler(void* handler, OrbisNgs2ContextBufferInfo* buffer_info,
                            std::string_view label) {
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-    return static_cast<s32>(Core::GuestCpu::RunGuestFunctionOrAbort(
+    return static_cast<s32>(AetherPS4::GuestCpu::RunGuestFunctionOrAbort(
         reinterpret_cast<const void*>(handler), label, buffer_info));
 #else
     return reinterpret_cast<s32 PS4_SYSV_ABI (*)(OrbisNgs2ContextBufferInfo*)>(handler)(

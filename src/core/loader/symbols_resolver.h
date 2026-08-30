@@ -56,6 +56,8 @@ public:
     void AddSymbol(const SymbolResolver& s, u64 virtual_addr);
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
     void AddFunction(const SymbolResolver& s, std::shared_ptr<GuestCpu::HleCallAdapter> adapter);
+    void AddFallbackFunction(const SymbolResolver& s,
+                             std::shared_ptr<GuestCpu::HleCallAdapter> adapter);
     const std::shared_ptr<GuestCpu::HleCallAdapter>& AddUnsupportedFunction(const SymbolResolver& s);
     std::shared_ptr<GuestCpu::HleCallAdapter> FindFunction(u64 operation) const;
     GuestCpu::HleCallRegistry& GetHleCallRegistry();

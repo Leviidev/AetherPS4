@@ -232,7 +232,7 @@ int PS4_SYSV_ABI sceKernelCreateEventFlag(OrbisKernelEventFlag* ef, const char* 
 
     *ef = new EventFlagInternal(std::string(pName), thread_mode, queue_mode, initPattern);
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-    (void)AetherPS4::GuestCpu::PublishHostRange(*ef, sizeof(EventFlagInternal), true);
+    (void)Core::GuestCpu::PublishHostRange(*ef, sizeof(EventFlagInternal), true);
 #endif
     return ORBIS_OK;
 }
@@ -243,7 +243,7 @@ int PS4_SYSV_ABI sceKernelDeleteEventFlag(OrbisKernelEventFlag ef) {
     }
 
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-    (void)AetherPS4::GuestCpu::RevokeHostRange(ef);
+    (void)Core::GuestCpu::RevokeHostRange(ef);
 #endif
     delete ef;
     return ORBIS_OK;
