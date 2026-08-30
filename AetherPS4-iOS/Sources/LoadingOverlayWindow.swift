@@ -24,25 +24,59 @@ import UIKit
 // firing inside this window's view tree -- it does not make the underlying UIWindow
 // transparent to UIKit's own hit-testing. UIKit routes each touch to exactly one window (the
 // topmost one whose hitTest(_:with:) returns non-nil at that point) and never falls through to
-// a lower window on its own; a plain UIWindow's default hitTest returns *some* view (its own
-// root) for any point inside its bounds, even where nothing SwiftUI-interactive is rendered,
-// which is enough for UIKit to award it the touch and never offer it to
-// TouchControlsOverlayWindow underneath. Confirmed on-device: disabling hit-testing at the
-// SwiftUI level alone did not fix on-screen controls being completely unresponsive.
-// This override makes that empty case explicit at the UIKit layer: if the default hit-test
-// result is nothing more specific than this window's own root view (no real SwiftUI content at
-// that exact point -- a button, the card, etc. would hit-test to something nested underneath
-// the root instead), return nil so UIKit moves on to the next window down in level order.
+// a lower window on its own; a plain UIWindow's default hitTest returns *some* view for any
+// point inside its bounds, even where nothing SwiftUI-interactive is rendered, which is enough
+// for UIKit to award it the touch and never offer it to TouchControlsOverlayWindow underneath.
+// Confirmed on-device: disabling hit-testing at the SwiftUI level alone did not fix on-screen
+// controls being unresponsive.
+//
+// A first attempt compared the hit-tested view against rootViewController?.view, on the
+// (wrong) assumption that a tap landing on real SwiftUI content -- a button, the card --
+// would hit-test to something more specific nested underneath the root. Also confirmed
+// on-device: it doesn't. SwiftUI's hosting view is typically one flat UIView handling all of
+// its own internal hit-testing/gesture dispatch, not a deep native UIKit view per SwiftUI
+// element, so hitTest returned that same single hosting view for *every* point regardless of
+// what was actually there -- making the check always pass and this window pass through
+// everything unconditionally, including taps on its own X/terminal/chevron buttons.
+//
+// This version tracks the actual interactive frames as SwiftUI reports them (via
+// InteractiveFrameReporter below, one per real control) instead of trying to infer them from
+// UIKit's hit-test result. A touch only gets awarded to this window if it falls inside one of
+// those frames; everything else passes through to the window below.
 private final class PassthroughWindow: UIWindow {
+    var interactiveFrames: [CGRect] = []
+
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        guard let hitView = super.hitTest(point, with: event) else { return nil }
-        return hitView == rootViewController?.view ? nil : hitView
+        guard interactiveFrames.contains(where: { $0.contains(point) }) else { return nil }
+        return super.hitTest(point, with: event)
+    }
+}
+
+// Attach to any view that should count as "real, tappable content" for PassthroughWindow's
+// hitTest above -- reports this view's frame (in window coordinates) up through the
+// .interactiveFrame(id:) view modifier below every time it changes (position, or appearing/
+// disappearing, e.g. the card's chevron-collapse toggling visibility).
+private struct InteractiveFrameKey: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
+private extension View {
+    func interactiveFrame(id: String) -> some View {
+        background(
+            GeometryReader { geo in
+                Color.clear.preference(key: InteractiveFrameKey.self,
+                                       value: [id: geo.frame(in: .global)])
+            }
+        )
     }
 }
 
 @MainActor
 enum LoadingOverlayWindow {
-    private static var window: UIWindow?
+    private static var window: PassthroughWindow?
     private static var uiState: LoadingOverlayUIState?
 
     /// Call once shadps4_prepare_window() has returned successfully -- SDL's window
@@ -67,8 +101,10 @@ enum LoadingOverlayWindow {
         // is independent of key-window status, unlike relying on presentation z-order.
         overlayWindow.windowLevel = .alert + 1
         overlayWindow.backgroundColor = .clear
-        overlayWindow.rootViewController =
-            UIHostingController(rootView: LoadingOverlayRootView(gameName: gameName, state: state))
+        overlayWindow.rootViewController = UIHostingController(
+            rootView: LoadingOverlayRootView(gameName: gameName, state: state) { frames in
+                overlayWindow.interactiveFrames = frames
+            })
         overlayWindow.rootViewController?.view.backgroundColor = .clear
         overlayWindow.isHidden = false
         window = overlayWindow
@@ -162,27 +198,22 @@ private final class LoadingOverlayUIState: ObservableObject {
 private struct LoadingOverlayRootView: View {
     let gameName: String
     @ObservedObject var state: LoadingOverlayUIState
+    // Reported to PassthroughWindow every time the collected interactive frames change (see
+    // LoadingOverlayWindow.show(), which wires this to the window's own interactiveFrames) --
+    // this view has no UIWindow reference of its own, so this is the only path back.
+    let onInteractiveFramesChanged: ([CGRect]) -> Void
 
     var body: some View {
         ZStack {
             if state.isCardVisible {
                 LoadingCard(gameName: gameName, state: state)
+                    .interactiveFrame(id: "card")
             }
 
             // X (exit game) and terminal (reopen the card) buttons, both top-center, same
             // placement AetherX uses. X is always available, even mid-load, so a stuck-
             // looking boot isn't a dead end. The reopen button only shows once there's
             // actually a hidden card to reopen.
-            //
-            // allowsHitTesting(false) here, re-enabled just on the HStack of actual buttons,
-            // is load-bearing, not cosmetic: this VStack's trailing Spacer() makes it (and so
-            // this whole ZStack, and so this whole window's rootViewController) expand to
-            // cover the entire screen at all times, even once the card is collapsed and
-            // nothing is visually here. This window sits at .alert + 1, above
-            // TouchControlsOverlayWindow's .normal + 1 -- without this, that full-screen
-            // (functionally invisible) region silently intercepts every touch meant for the
-            // controls window underneath it. Confirmed on-device: on-screen controls were
-            // fully visible and completely unresponsive until this was added.
             VStack {
                 HStack(spacing: 20) {
                     Button {
@@ -203,10 +234,12 @@ private struct LoadingOverlayRootView: View {
                     }
                 }
                 .padding(.top, 8)
-                .allowsHitTesting(true)
+                .interactiveFrame(id: "buttons")
                 Spacer()
             }
-            .allowsHitTesting(false)
+        }
+        .onPreferenceChange(InteractiveFrameKey.self) { frames in
+            onInteractiveFramesChanged(Array(frames.values))
         }
     }
 }

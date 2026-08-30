@@ -100,15 +100,21 @@ private struct TouchControlsView: View {
 
                 DPadView(state: state, radius: u * 13)
                     .frame(width: u * 26, height: u * 26)
-                    .position(x: u * 18, y: u * 36)
+                    .position(x: u * 22, y: u * 38)
 
                 StickView(state: state, axisX: \.rightX, axisY: \.rightY)
                     .frame(width: u * 34, height: u * 34)
                     .position(x: w - u * 36, y: h - u * 22)
 
+                // Center was w - u*16: with spread (u*12) and the button's own radius (u*8.5)
+                // both pushing the rightmost face button (Circle) further right from there,
+                // its edge landed at w + u*4.5 -- clipped off the right side of the screen.
+                // w - u*30 keeps that same button's edge at w - u*9.5, safely on-screen, and
+                // separates the whole cluster further from the right edge and from R1/R2
+                // (moved to match below) at the same time.
                 FaceButtonsView(state: state, radius: u * 8.5, spread: u * 12)
                     .frame(width: u * 40, height: u * 40)
-                    .position(x: w - u * 16, y: u * 42)
+                    .position(x: w - u * 30, y: u * 42)
 
                 ShoulderButton(state: state, bit: UInt32(SHADPS4_PAD_L1), label: "L1",
                               width: u * 16, height: u * 8)
@@ -118,10 +124,10 @@ private struct TouchControlsView: View {
                     .position(x: u * 10, y: u * 2)
                 ShoulderButton(state: state, bit: UInt32(SHADPS4_PAD_R1), label: "R1",
                               width: u * 16, height: u * 8)
-                    .position(x: w - u * 24, y: u * 12)
+                    .position(x: w - u * 40, y: u * 12)
                 ShoulderButton(state: state, bit: UInt32(SHADPS4_PAD_R2), label: "R2",
                               width: u * 16, height: u * 8, isTrigger: true, triggerAxis: \.r2)
-                    .position(x: w - u * 24, y: u * 2)
+                    .position(x: w - u * 40, y: u * 2)
 
                 SmallButton(state: state, bit: UInt32(SHADPS4_PAD_OPTIONS), label: "OPT",
                            radius: u * 4.5)
