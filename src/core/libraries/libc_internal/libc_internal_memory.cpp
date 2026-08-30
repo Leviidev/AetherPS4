@@ -259,6 +259,24 @@ void RegisterlibSceLibcInternalMemory(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("Q3VBxCXhUHs", "libSceLibcInternal", 1, "libSceLibcInternal", internal_memcpy);
     LIB_FUNCTION("8zTFvBIAIN8", "libSceLibcInternal", 1, "libSceLibcInternal", internal_memset);
     LIB_FUNCTION("DfivPArhucg", "libSceLibcInternal", 1, "libSceLibcInternal", internal_memcmp);
+    // malloc/free/realloc/memalign were only ever registered under the "libc" library tag
+    // (RegisterFexLibcMemoryAliases above), as a LIB_FUNCTION_FALLBACK there specifically so a
+    // game-bundled libc.prx offering its own allocator wins when present. libSceFios2.prx (a
+    // game-bundled module, not a system one -- see loadModuleInternal's IsGame branch) imports
+    // this exact same malloc NID (confirmed via its own BACHATA_FEX_VENEER log line:
+    // gQX+4GDQjpM#libSceLibcInternal#1#libSceLibcInternal#Function) tagged under
+    // "libSceLibcInternal" instead of "libc" -- a combination nothing registered, so Resolve()
+    // fell all the way through to AddUnsupportedFunction's unconditional-ENOSYS stub even
+    // though the exact same NID already has a real, working implementation two lines below
+    // under a different tag. Registered here unconditionally (LIB_FUNCTION, not _FALLBACK),
+    // matching every other symbol already registered under "libSceLibcInternal" in this same
+    // function (the sceLibcMspace* family right below) -- unlike "libc", nothing else tagged
+    // "libSceLibcInternal" in this codebase defers to a guest export, so there's no established
+    // fallback precedent to follow for it specifically.
+    LIB_FUNCTION("gQX+4GDQjpM", "libSceLibcInternal", 1, "libSceLibcInternal", internal_malloc);
+    LIB_FUNCTION("tIhsqj0qsFE", "libSceLibcInternal", 1, "libSceLibcInternal", internal_free);
+    LIB_FUNCTION("Y7aJ1uydPMo", "libSceLibcInternal", 1, "libSceLibcInternal", internal_realloc);
+    LIB_FUNCTION("Ujf3KzMvRmI", "libSceLibcInternal", 1, "libSceLibcInternal", internal_memalign);
     LIB_FUNCTION("-hn1tcVHq5Q", "libSceLibcInternal", 1, "libSceLibcInternal", internal_sceLibcMspaceCreate);
     LIB_FUNCTION("W6SiVSiCDtI", "libSceLibcInternal", 1, "libSceLibcInternal", internal_sceLibcMspaceDestroy);
     LIB_FUNCTION("OJjm-QOIHlI", "libSceLibcInternal", 1, "libSceLibcInternal", internal_sceLibcMspaceMalloc);
