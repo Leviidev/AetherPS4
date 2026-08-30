@@ -117,7 +117,8 @@ bool validateModuleId(s32 id) {
     return ORBIS_OK;
 }
 
-s32 loadModuleInternal(s32 index, s32 argc, const void* argv, s32* res_out) {
+s32 loadModuleInternal(s32 index, s32 argc, const void* argv, s32* res_out,
+                       bool defer_relocate_all) {
     auto* mnt = Common::Singleton<Core::FileSys::MntPoints>::Instance();
     auto* linker = Common::Singleton<Core::Linker>::Instance();
     auto* game_info = Common::Singleton<Common::ElfInfo>::Instance();
@@ -132,7 +133,26 @@ s32 loadModuleInternal(s32 index, s32 argc, const void* argv, s32* res_out) {
     s32 start_result = 0;
     // Bloodborne ships libSceFios2 as a game module, but its LLE path opens menu assets without
     // reading them. Use the synchronous HLE implementation, matching the native Android port.
-    if (index == 3) {
+    //
+    // This was applied unconditionally to every title, not just Bloodborne -- confirmed on-device
+    // this actively breaks Rocket League (CUSA01433), which never reaches this path on upstream
+    // shadPS4 or real hardware at all: there, libSceFios2 preloading (the branch below this one)
+    // simply fails since libSceFios2.prx isn't a real dumpable system module, and the game falls
+    // back to its own libc-based file loading -- which works. Reporting FIOS2 as successfully
+    // loaded for every title instead commits games like Rocket League to our still-incomplete
+    // HLE FIOS2 implementation, with no chance to use the fallback path they actually rely on.
+    // Scope this to Bloodborne's known CUSA IDs (US/EU retail + Game of the Year Edition) so
+    // other titles get the upstream-matching "let it fail naturally" behavior below instead.
+    static constexpr std::string_view kBloodborneSerials[] = {"CUSA00207", "CUSA00208",
+                                                               "CUSA03173"};
+    bool is_bloodborne = false;
+    for (const auto& serial : kBloodborneSerials) {
+        if (game_info->GameSerial() == serial) {
+            is_bloodborne = true;
+            break;
+        }
+    }
+    if (index == 3 && is_bloodborne) {
         LOG_INFO(Lib_SysModule, "Using HLE libSceFios2 for {}", game_info->GameSerial());
         Fios2::RegisterLib(&linker->GetHLESymbols());
         linker->RelocateAllImports();
@@ -270,9 +290,20 @@ s32 loadModuleInternal(s32 index, s32 argc, const void* argv, s32* res_out) {
                 LOG_INFO(Loader, "Can't Load {} switching to HLE", mod_name);
                 init_func(&linker->GetHLESymbols());
 
-                // When loading HLEs, we need to relocate imports
-                // This ensures later module loads can see our HLE functions.
-                linker->RelocateAllImports();
+                // When loading HLEs, we need to relocate imports so already-loaded modules'
+                // previously-unresolved relocations can pick up the symbols this one just
+                // registered. defer_relocate_all lets a caller looping over many modules (see
+                // preloadModulesForLibkernel) skip this per-module and do it once at the end
+                // instead -- confirmed on-device this was the actual cause of a ~99 second
+                // boot delay: virtually none of the ~30 modules in that preload list have a
+                // real .sprx file to load, so nearly every one of them hit this HLE-fallback
+                // branch, and RelocateAllImports() re-processes *every* already-loaded
+                // module's full relocation table on every single call -- O(n^2) in the module
+                // count for work that only needs to happen once, after the last module in the
+                // batch registers its symbols.
+                if (!defer_relocate_all) {
+                    linker->RelocateAllImports();
+                }
             } else {
                 LOG_INFO(Loader, "No HLE available for {} module", mod_name);
             }
@@ -446,8 +477,10 @@ s32 preloadModulesForLibkernel() {
             continue;
         }
 
-        // Load the actual module
-        s32 result = loadModuleInternal(module_index, 0, nullptr, nullptr);
+        // Load the actual module. defer_relocate_all=true: see loadModuleInternal's own
+        // comment on the HLE-fallback branch for why -- this loop is exactly the O(n^2)
+        // case that was costing ~99 seconds of boot time on-device.
+        s32 result = loadModuleInternal(module_index, 0, nullptr, nullptr, true);
         if (result != ORBIS_OK) {
             // On real hardware, module preloading must succeed or the game will abort.
             // To enable users to test homebrew easier, we'll log a critical error instead.
@@ -455,6 +488,9 @@ s32 preloadModulesForLibkernel() {
                          g_modules_array[module_index].name);
         }
     }
+    // One relocation pass covering every module this loop just HLE-registered, instead of one
+    // pass per module inside the loop -- see loadModuleInternal's own comment for why.
+    Common::Singleton<Core::Linker>::Instance()->RelocateAllImports();
     return ORBIS_OK;
 }
 
