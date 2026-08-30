@@ -7,99 +7,100 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		01950DC4D7B5D705A17D4626 /* libsirit.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 703FDAB8A70EA5721C093099 /* libsirit.a */; };
-		02109CBC891AFE80289F7D49 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D52DED55C504931ADF381276 /* LibraryView.swift */; };
-		0733C6ED78AF4B8B23668D63 /* libhwinfo_ram.a in Frameworks */ = {isa = PBXBuildFile; fileRef = BABCC7000BC13ED516F612E2 /* libhwinfo_ram.a */; };
-		0B33CE9A31A89C5FA117B925 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7BC294F1A0C2E62BC0EE08B6 /* Foundation.framework */; };
-		0F2DDB22E2688D0DFCB149F6 /* AudioToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 000228AC8C02B95C8D039879 /* AudioToolbox.framework */; };
-		10F0120FAC7E060C84C69136 /* libglslang.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 21EB11DBACD21FBF8388C332 /* libglslang.a */; };
-		119C7CCCA81C4E20BE2F704A /* libhwinfo_gpu.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 67923C2D1FB86D14F9E41244 /* libhwinfo_gpu.a */; };
-		1394F34021D4A89892CD1CA4 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2212A1EE11A893B59E0E24C3 /* AVFoundation.framework */; };
-		190F435E4098CDE494400665 /* libminiupnpc.a in Frameworks */ = {isa = PBXBuildFile; fileRef = C50CA446F01D3774FDA6BBE0 /* libminiupnpc.a */; };
-		22C50197916940C204DD4C19 /* JITSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57C0F4B9F0326E987E6E72D1 /* JITSupport.swift */; };
-		26C63852DB02F85B3F5C9978 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FB09CCD07CC589EF96B39A13 /* Metal.framework */; };
-		2D48BD5A906F4BC14ADD6278 /* libhwinfo_disk.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 89104242C5B5882D69236A74 /* libhwinfo_disk.a */; };
-		312D6EC80A05EE5750358002 /* libspdlog.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 3557A12CC846EEF1F720EA74 /* libspdlog.a */; };
-		3783CCEC10062E3018407D23 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 76457599A61F5CBDF689855D /* Assets.xcassets */; };
-		3BECC0E76E4E3EE9AE75CD89 /* libiconv.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 007F4DB90E91C26C2337B75F /* libiconv.tbd */; };
-		3C4D4791CF9B05300C00F298 /* libpng.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 12BD9F1656B82CFB1776FF22 /* libpng.a */; };
-		47FD728A58DCA57971B84889 /* ConsoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA315D6C6CA3B106D3E7382D /* ConsoleView.swift */; };
-		4E8505041F03CBBC0D47C74A /* GameCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 141C5DC1DAF565D3F12D1D66 /* GameCardView.swift */; };
-		537630E7BDDDF09840CB2A4A /* libJemallocLibs.a in Frameworks */ = {isa = PBXBuildFile; fileRef = BBC0AE039F7B167A4D9BF5EA /* libJemallocLibs.a */; };
-		579972C06BB9D7C03AB10029 /* libImGui_Resources.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 69F9E9847A51ED1C7A8E6AB2 /* libImGui_Resources.a */; };
-		5B905B3BE8F8D3A2EAA2302B /* Game.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4F60303409F3609F4D468D1 /* Game.swift */; };
-		5E0C5793EC4609FF9B5C1E4B /* libopenal.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 02DC2DB7429A398C8DB26214 /* libopenal.a */; };
-		66E6ABC58AC7157E1A400E55 /* libImGuiFileDialog.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 330F6DCECA636362E6B13AB5 /* libImGuiFileDialog.a */; };
-		6CAC2B102D63D0ACC8BF2C90 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA0E8D23E0DA4BF454C4ED22 /* SettingsView.swift */; };
-		700926786028D79E5DDAAA66 /* CrashLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7D35E4145DA9849E85DFFC8 /* CrashLogger.swift */; };
-		7082020FBF767056ED3B8CEC /* libhwinfo_network.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 0E0A9BBECEE821F3D59CD9FA /* libhwinfo_network.a */; };
-		714383077C53B6F1220ADFD8 /* libhwinfo_os.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 69A40A7D4C4FC999F60F54BA /* libhwinfo_os.a */; };
-		74F21F6A7B144BD91FDCFBB8 /* GameDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4BB405501B330FED145B877 /* GameDetailView.swift */; };
-		77EE10E2FF76834C3E540426 /* libZycore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = C6E0250669EB359E311446C2 /* libZycore.a */; };
-		791F75DB7A12308660D16AAF /* libfmt.a in Frameworks */ = {isa = PBXBuildFile; fileRef = CD2DAFFE62D592534BEAF7AB /* libfmt.a */; };
-		7B94E0C9850021D5F86FB71C /* libz.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 45CB90D0AC1028565E75758C /* libz.a */; };
-		7E1DB1535C8152E4F51F3EE5 /* BreakpointJIT.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3BD6A32E9C604B74E69B01FE /* BreakpointJIT.framework */; };
-		7EB937BBD12D830ABE67593E /* libshadps4_ios.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 24FA25FFFC4A8866AFC68297 /* libshadps4_ios.a */; };
-		82B9689D6FAEA0A34F478D2C /* libfreetype.a in Frameworks */ = {isa = PBXBuildFile; fileRef = FA0869651F52ACF5B2064A2A /* libfreetype.a */; };
-		8491DF3F0B336B8C7A26ADE4 /* CoreAudio.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7D84803DE7DB142FFFFF201D /* CoreAudio.framework */; };
-		84C816722A289260D780EAD9 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 824A368DAA7D19A5DF567832 /* ContentView.swift */; };
-		87DA26764B95DFA6A48EDDFB /* libfmt.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5B17B0F5D565EC2E2A16905C /* libfmt.a */; };
-		8C5B77DE1390C010C949A08F /* AetherPS4App.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B544ABF49DD87DA5FD6A4B3 /* AetherPS4App.swift */; };
-		8FAEDC4BBE9939C5B711BB8A /* libsoftfloat_3e.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 490C344526AA0540F92F0767 /* libsoftfloat_3e.a */; };
-		9090BF8255CE482483A0D57D /* libfdk-aac.a in Frameworks */ = {isa = PBXBuildFile; fileRef = DB9F88A598C8D11EE8C8A98B /* libfdk-aac.a */; };
-		93B706008E0207F939A6C7AE /* libDear_ImGui.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 11C4C1260C845D1D7D8DCE0E /* libDear_ImGui.a */; };
-		94D2AC1FC35146D0884A47DD /* libxxhash.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 6097B3BD52C9DA4936AEE3C9 /* libxxhash.a */; };
-		9D6AAD92E475A5AB86C26E27 /* libZydis.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 2057ACB470D11EB3E90A997F /* libZydis.a */; };
-		9DB24D105F96CB41C403104E /* libtiny-json.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 76E3498E98791F32404F7B04 /* libtiny-json.a */; };
-		A0EFF12A962239EA9A414A27 /* libhwinfo_cpu.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 102D9859E511140FE9266025 /* libhwinfo_cpu.a */; };
-		A10E564176BFE4BC74A263A6 /* libepoll-shim.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7FDF6A78AF01932F8957DC1E /* libepoll-shim.a */; };
-		A26E0BAF6F56A56E93D12B0F /* libTracyClient.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 725DE6885D1A1EB50DAF8B3F /* libTracyClient.a */; };
-		AABB6D09C2CBF5A3248FC6B0 /* libCommonTools.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 1D1199BFF5F3F4389B2C6F40 /* libCommonTools.a */; };
-		ADF6D280D417317D8DD1F2D6 /* TouchControlsOverlayWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C1157F22CB3E036CEC0A551 /* TouchControlsOverlayWindow.swift */; };
-		B37909EE9B47AD6B0DCD888D /* libLibAtrac9.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 947435278551F0D09504CF75 /* libLibAtrac9.a */; };
-		B8AF78AE0DC28F41A74DECEB /* libcephes_128bit.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 468F1E9AE6CC761DFB8EE418 /* libcephes_128bit.a */; };
-		BAC7CC842ECB662DBB42EF2F /* GameLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85C2E36F440D0203D3B00D10 /* GameLibrary.swift */; };
-		BDC201B0D5EB63BBEC940C8F /* libpugixml.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F02F52A83FF48F38A87DA334 /* libpugixml.a */; };
-		C0DC5C08229239F929D7FD47 /* libFEXCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 78E66A473D0079025C8B49D8 /* libFEXCore.a */; };
-		C204CF988CA441A59814583B /* libssl.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 138927354E291136D59B0BFE /* libssl.a */; };
-		C2CD389B0B4FF1EABE54F7CB /* libxxhash.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 2BB6F07ACB4BEBAE94E3EF97 /* libxxhash.a */; };
-		C4E0C5DC3107E145D994A50A /* BreakpointJIT.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 3BD6A32E9C604B74E69B01FE /* BreakpointJIT.framework */; };
-		C54970FB763AC2F394A03CE6 /* libc++.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 7A57331E6543040BB747F0B8 /* libc++.tbd */; };
-		C6BF89FD808FEFDB6FF6CAD3 /* libcrypto.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5A43CF8328F202B1FDF19E97 /* libcrypto.a */; };
-		CAF1A36F4891B953E26F61C1 /* EmulatorProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210F681BB46A86595AADB0FC /* EmulatorProcess.swift */; };
-		CDB9174C19A09DF7883AD814 /* libvulkan.dylib in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = D8F23EDBDA3C7C712B34D67C /* libvulkan.dylib */; };
-		CEDC3BCE1FD27151EF113C40 /* libembedded-resources.a in Frameworks */ = {isa = PBXBuildFile; fileRef = AE9127F0C0FE2495CBE45EFD /* libembedded-resources.a */; };
-		CF2B6828B9B5344628B79CF6 /* libcpp-optparse.a in Frameworks */ = {isa = PBXBuildFile; fileRef = C562DB56C140BC6E1847DE84 /* libcpp-optparse.a */; };
-		CFC68CFDB73CCAD0DC58BF64 /* libSDL3.a in Frameworks */ = {isa = PBXBuildFile; fileRef = C3CF0A7399138DF5C1F57805 /* libSDL3.a */; };
-		D0102495C3019B1929C1AD3C /* CoreHaptics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BAEEBF725E91345E434643AA /* CoreHaptics.framework */; };
-		D0ED352DE9EE5BD00A3AFABE /* SetupCheckView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE6B56211678FF5FC00B84FB /* SetupCheckView.swift */; };
-		D301AA1A4FB21A7CE4617EE1 /* libpng16.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 2E9DF7072E17C293C43036D5 /* libpng16.a */; };
-		D529C76FEE2A5531C4E0F48B /* libCommon.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 1692D47BB7C4877D7E897EDC /* libCommon.a */; };
-		D73F975F94EAAC9C73E82BF0 /* RestartRequiredOverlayWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 764AC21E1CF025E3B6D51F4F /* RestartRequiredOverlayWindow.swift */; };
-		DB2AD8A0755C1895BF87D0E3 /* GameController.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 988812F885E61F34461C2229 /* GameController.framework */; };
-		DE653584D2057F8CC0964B84 /* libdate-tz.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 781BBE0D5A9F4A60080F6E93 /* libdate-tz.a */; };
-		DF00F9B94952F01E95AAE934 /* CoreBluetooth.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 96A75281566500AE9CCBB335 /* CoreBluetooth.framework */; };
-		E2377E47DDB68EBC2CD0992A /* libhwinfo_mainboard.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 3BF8FE94E755B1A64096930A /* libhwinfo_mainboard.a */; };
-		E62781A8001BD1FFFCA532FB /* librpmalloc.a in Frameworks */ = {isa = PBXBuildFile; fileRef = FFED0050CB581819A365E521 /* librpmalloc.a */; };
-		E92C3CE7BA0040F90000842E /* ParamSfoReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = C488407DCE75A2370AA5288D /* ParamSfoReader.swift */; };
-		E984C3D2B4524EFA5B6851DF /* GameOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0843046B987BB815828396CE /* GameOverlay.swift */; };
-		F001E1E80C66E51F45903D3D /* libFEXCore_Base.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A43B0EEA99D9A70A0B794D16 /* libFEXCore_Base.a */; };
-		F2E2C5372C592373670E3A10 /* LoadingOverlayWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC29919F598092178CA3C38C /* LoadingOverlayWindow.swift */; };
-		F51CF79142D1FBC4960CF87D /* libhwinfo_battery.a in Frameworks */ = {isa = PBXBuildFile; fileRef = FBF6CD5C1DE6387ABBACAC78 /* libhwinfo_battery.a */; };
-		F5225DE54459A76134840595 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 633C0D032615A7455A823C2F /* QuartzCore.framework */; };
-		F6DBB7DC53A4B572B6FF8217 /* PlayTimeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF811D22BBB451A3F38BE582 /* PlayTimeStore.swift */; };
-		F9D54D941195FB399DB01D7D /* libminiz.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A1691038780E411719EA94F4 /* libminiz.a */; };
+		0887F925E99C21416AB875F3 /* libz.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 64382E3D33DD2B7F2D579147 /* libz.a */; };
+		0984C58145134EFC1E082E3B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 80B00218C694A48DA12DD030 /* Assets.xcassets */; };
+		0BC61BB6411E36E177E6C03E /* EmulatorProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = 548146B82A47AE882D49B129 /* EmulatorProcess.swift */; };
+		0D27DDC98260A03B282F5DD7 /* libZycore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 66442A99EA402D3C3B4CA4A7 /* libZycore.a */; };
+		0DEC9EC38915AD621191D5C9 /* libminiz.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 8DD3BC8017AC8D05CA8CBB13 /* libminiz.a */; };
+		0E898B1F7B05C841B36774F3 /* libpugixml.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 24B2EC648E7E5DA7BCAA7151 /* libpugixml.a */; };
+		1437E48E87762D06A4E45AF5 /* AetherPS4App.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACAA615249CF98AF49794D08 /* AetherPS4App.swift */; };
+		1879A24903C361481E1C9575 /* GameDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5892492D1F08180646AA6536 /* GameDetailView.swift */; };
+		19EE0DB6304D3E871DA80FD8 /* libopenal.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5DCD135F546FF856DB48F9D9 /* libopenal.a */; };
+		1A061A8AC2EBF1EB4137F264 /* libxxhash.a in Frameworks */ = {isa = PBXBuildFile; fileRef = BBDE247E51CB29FDA6703948 /* libxxhash.a */; };
+		1E89D8D4C60BD30946B1C646 /* LoadingOverlayWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = C228768301F412A185CF348C /* LoadingOverlayWindow.swift */; };
+		1F8F7F6B878B07F85AA89EB7 /* libcpp-optparse.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 41C32DDFA523FE021405B26E /* libcpp-optparse.a */; };
+		233D333154561E4784711569 /* ParamSfoReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52208BE4041C7496606707E4 /* ParamSfoReader.swift */; };
+		2561AF8A2E3DBC9E8774BE73 /* libCommon.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F40C8AB64C3CBFC090B2A98F /* libCommon.a */; };
+		28DC3B2768F6E6825CBBB3F0 /* ConfigStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39B6E32C73FF798AFF87F675 /* ConfigStore.swift */; };
+		296C474FF579A18078AB6FEE /* libembedded-resources.a in Frameworks */ = {isa = PBXBuildFile; fileRef = CCC750BBD993D27337260DF1 /* libembedded-resources.a */; };
+		2B16F6298F95A6E39768BAF6 /* libvulkan.dylib in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 77902B805D4A1731DAC14D6D /* libvulkan.dylib */; };
+		2B55CBD064E8EE6FD14A97C1 /* CoreAudio.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A6B99C8FBDE412C58BDC7989 /* CoreAudio.framework */; };
+		2D5634D2D8F3DE50373514C2 /* GameCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21157241B19C22A61FAE6FA6 /* GameCardView.swift */; };
+		2FAC73AE71B1E36410E93D9B /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 687842FC18B6C223D6EE9FD6 /* SettingsView.swift */; };
+		32C874C484B4CA0053C3C442 /* libSDL3.a in Frameworks */ = {isa = PBXBuildFile; fileRef = B23F3C7F02734988356B140F /* libSDL3.a */; };
+		356F06299F5F579400C57E30 /* libDear_ImGui.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 9FA5A23527B438C66369C3E4 /* libDear_ImGui.a */; };
+		3E2D7C165B0D3783A4938DF6 /* libsirit.a in Frameworks */ = {isa = PBXBuildFile; fileRef = ED4BB8AFE93432BE9F5B6127 /* libsirit.a */; };
+		3EAEE677933397BE1A48974B /* GameLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 174E5F1EE6F5D1BE194BBF76 /* GameLibrary.swift */; };
+		40A3D6FF7FA1ABD4DDB8801F /* libfmt.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 2441453A3200B1FA88E7DC2A /* libfmt.a */; };
+		41C05684FB0FC41AC8A618BC /* CoreBluetooth.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 43DC36F572CFC682EA6FA8C6 /* CoreBluetooth.framework */; };
+		4AB8085537D434E6A8188A82 /* libminiupnpc.a in Frameworks */ = {isa = PBXBuildFile; fileRef = C5FD106A4DD5FCD0CC870F78 /* libminiupnpc.a */; };
+		5201ADC883E1EE0B13E926F4 /* Game.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B2E05CB524155AD0556DDC1 /* Game.swift */; };
+		56F1FBC66715FEC4382A13F1 /* JITSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A84043D4EF70A4B5CDC51B6 /* JITSupport.swift */; };
+		57A6298CCF1C1D533989C6CD /* libCommonTools.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7A6E182CA97D1FCDA2516E6E /* libCommonTools.a */; };
+		585C4DA199C960DF438DAEF6 /* GameController.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 59A0EDDD0C1007B369496861 /* GameController.framework */; };
+		5A55B1D55F05E548FE9E202A /* PlayTimeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B261420C93EA155BDCD17427 /* PlayTimeStore.swift */; };
+		5AC2A0C99A061AD2FCF81BBD /* libfdk-aac.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 1D64D752781D48EAF9D6D40F /* libfdk-aac.a */; };
+		5F8FEA5E8730113686AD0F5C /* BreakpointJIT.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = F968B6005FDF13E81D34CDC8 /* BreakpointJIT.framework */; };
+		61F759279C05E86786DB94F9 /* libImGui_Resources.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 4A5993DCAFD9D14491C49225 /* libImGui_Resources.a */; };
+		648B71561C3A6E8753810263 /* libglslang.a in Frameworks */ = {isa = PBXBuildFile; fileRef = D67E796E5DCBF5A51F9F553B /* libglslang.a */; };
+		6F418AB924FDF4A9B62AF5BC /* SetupCheckView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 920C82B594FE15AF718CAFDA /* SetupCheckView.swift */; };
+		705E5760FF61577AAC2CB1B7 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 593B2DC3D9B90143ECD5B7E2 /* AVFoundation.framework */; };
+		7332B8190CB6ABCEF2769041 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4E2B236C5494CAFC790DF5A4 /* Metal.framework */; };
+		7A10F2849570E91663955315 /* libspdlog.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 0F904867498E2F495D67FCBF /* libspdlog.a */; };
+		7BBFFD2E22EE7B78527F91CF /* libtiny-json.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 0E4C89E0173E3B4C3316D18F /* libtiny-json.a */; };
+		7D7C719492EA15ACC0BB5AFC /* libsoftfloat_3e.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 1E23FB3452797D48C5CBAB1C /* libsoftfloat_3e.a */; };
+		7E07C37B5EAD8C55ED695D9F /* libhwinfo_disk.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 30C4ED442E5414B39F47B3D4 /* libhwinfo_disk.a */; };
+		7EB4A06EAEF192FB15082CFC /* ConsoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93E1094D61A6770F4824CBC7 /* ConsoleView.swift */; };
+		7F0C2EA4C356C5EE14EA44CF /* libhwinfo_ram.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 3DB211529CD978E344E6E073 /* libhwinfo_ram.a */; };
+		812489D0599807C8CF896181 /* libFEXCore_Base.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 13E13BCB8EA72E177A374402 /* libFEXCore_Base.a */; };
+		81AC293D6573A1CC3657C747 /* libhwinfo_battery.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 34FD737EC77E2B0E4585C7C2 /* libhwinfo_battery.a */; };
+		830247BBD10A60E5BD98B9BA /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FD2EB4C6472944FEDB46EC06 /* QuartzCore.framework */; };
+		84DB63AC23D3915A15595282 /* libcephes_128bit.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 102666F4CE18E2288BB24E9B /* libcephes_128bit.a */; };
+		851901478E945FC92DC9AE91 /* libJemallocLibs.a in Frameworks */ = {isa = PBXBuildFile; fileRef = B06B5030B552D0FB00A9C81B /* libJemallocLibs.a */; };
+		890BA0A548C69951C29D30E2 /* libxxhash.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 1482F1A291EA4DEEA61AB3BA /* libxxhash.a */; };
+		8A291378CCF090E1CFA16BA9 /* GameOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1618AADC696F07E28FD77993 /* GameOverlay.swift */; };
+		961D634ED8A1B2B7D9EA4D33 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 534781866CFE5391A51F031D /* Foundation.framework */; };
+		9932FE45F026CFA941765D39 /* BreakpointJIT.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F968B6005FDF13E81D34CDC8 /* BreakpointJIT.framework */; };
+		9AF47177E68897D280BE8A71 /* libFEXCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = C66702613C95F1AFBB9B832B /* libFEXCore.a */; };
+		9D3BD7C74D08A1020FF44103 /* AudioToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 56F540E7B6B0EBC89A98EBE5 /* AudioToolbox.framework */; };
+		A864712336F444A072FD050D /* TouchControlsOverlayWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D48ECA05D07F26AA99C14B9 /* TouchControlsOverlayWindow.swift */; };
+		ACFB6D8D724EA96C07EFEE17 /* libfreetype.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 558CFF1836D980797AD7D64D /* libfreetype.a */; };
+		AF7510C2F81943AD4C042305 /* libTracyClient.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 6CAC931BBA152F2FB099FBA7 /* libTracyClient.a */; };
+		B1AE57717F6808A1C2E9DB1D /* libc++.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 05E9EA784999D2A54DEA9AE6 /* libc++.tbd */; };
+		B1F8F9D5F49BFD9672793E03 /* libhwinfo_mainboard.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 77AD48AC37FBA24493FA844C /* libhwinfo_mainboard.a */; };
+		B2EEC2878BBD7B6D7FF33902 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 803C5F052088F806DDDD6CAC /* LibraryView.swift */; };
+		B8303C0E6829B75E84426651 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE6EFBAE479C81AA5CE21F5E /* ContentView.swift */; };
+		B93259302062A39528A2A5E0 /* libLibAtrac9.a in Frameworks */ = {isa = PBXBuildFile; fileRef = EF8A2606BA7A4DF50A945A01 /* libLibAtrac9.a */; };
+		BAB8031D96821618A26DA024 /* libepoll-shim.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 2DCDE0FB8F1710A9D7AAAF4F /* libepoll-shim.a */; };
+		BBBC497558256405C6345A83 /* libshadps4_ios.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7352216EF57F4705422F4FCB /* libshadps4_ios.a */; };
+		C06DD4A2CDB3FA7216E055D4 /* libImGuiFileDialog.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 2190E0FD065F7F9434636F94 /* libImGuiFileDialog.a */; };
+		C26E68F0BFABF946D80D1E4C /* libiconv.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 731658AC033E4A41E44FAF8E /* libiconv.tbd */; };
+		C44671FD21372443D47BB784 /* libdate-tz.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F77F0426F982896052A206E4 /* libdate-tz.a */; };
+		D08DA316E5AA92CB55E32539 /* libZydis.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 4771D4EBB2F0D6A883B4F277 /* libZydis.a */; };
+		D511EA4039303EA565908F94 /* libfmt.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7F34EE89CD207266F72886B4 /* libfmt.a */; };
+		D955A57D35B677D449D5E4D0 /* libhwinfo_cpu.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 12B1D7AE131749106466A1A1 /* libhwinfo_cpu.a */; };
+		DB1E3ECEB25AE24BE116AE61 /* libhwinfo_gpu.a in Frameworks */ = {isa = PBXBuildFile; fileRef = B7C24777DBBB75A2F8ABEC5D /* libhwinfo_gpu.a */; };
+		DC6C2F9E4E41529504951051 /* libhwinfo_network.a in Frameworks */ = {isa = PBXBuildFile; fileRef = CAAC15C72892727B175954D3 /* libhwinfo_network.a */; };
+		DEE9C4D5E07ED17959162547 /* libhwinfo_os.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 51FA2773A6317E413072CFCF /* libhwinfo_os.a */; };
+		DFD3C5B6F0EB5E623639B046 /* libssl.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 280F4B3C8905A95732EC3994 /* libssl.a */; };
+		EE75898F580D114D39D1F769 /* librpmalloc.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 66C709B18CBC5603752F884E /* librpmalloc.a */; };
+		EE801E304AE8390BDC1C2D36 /* CoreHaptics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1D141BBA8F0E4A5C1CFEE179 /* CoreHaptics.framework */; };
+		F5145671DF77285D6329FCD4 /* libpng.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 8466451335C22393617F4D4B /* libpng.a */; };
+		F64CE35C7B64475959092A4B /* RestartRequiredOverlayWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78B941B5F49E05280E7B44A8 /* RestartRequiredOverlayWindow.swift */; };
+		F9364B97BD4BA70777EC5F77 /* libpng16.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 2788185B487A51FF8A2507C3 /* libpng16.a */; };
+		FB933DB8F7DB15247D31F80F /* CrashLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 677ADB18ADF606E29D32B758 /* CrashLogger.swift */; };
+		FC8819330FDB8F1B3C0D5430 /* libcrypto.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 9A9699FF81B16B33FA3AAD6B /* libcrypto.a */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
-		83C54F212FD473892675A34B /* Embed Frameworks */ = {
+		B257FB4895FC2FF4939907FE /* Embed Frameworks */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = "";
 			dstSubfolderSpec = 10;
 			files = (
-				C4E0C5DC3107E145D994A50A /* BreakpointJIT.framework in Embed Frameworks */,
-				CDB9174C19A09DF7883AD814 /* libvulkan.dylib in Embed Frameworks */,
+				5F8FEA5E8730113686AD0F5C /* BreakpointJIT.framework in Embed Frameworks */,
+				2B16F6298F95A6E39768BAF6 /* libvulkan.dylib in Embed Frameworks */,
 			);
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -107,323 +108,325 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		000228AC8C02B95C8D039879 /* AudioToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioToolbox.framework; path = System/Library/Frameworks/AudioToolbox.framework; sourceTree = SDKROOT; };
-		007F4DB90E91C26C2337B75F /* libiconv.tbd */ = {isa = PBXFileReference; includeInIndex = 1; name = libiconv.tbd; path = usr/lib/libiconv.tbd; sourceTree = SDKROOT; };
-		02DC2DB7429A398C8DB26214 /* libopenal.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libopenal.a; path = "../runtime/build/shadps4-ios/externals/openal-soft/libopenal.a"; sourceTree = "<group>"; };
-		03088EA1ECCC4FB2AAC8A86A /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; name = Info.plist; path = ../Info.plist; sourceTree = "<group>"; };
-		0843046B987BB815828396CE /* GameOverlay.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GameOverlay.swift; sourceTree = "<group>"; };
-		0E0A9BBECEE821F3D59CD9FA /* libhwinfo_network.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libhwinfo_network.a; path = "../runtime/build/shadps4-ios/externals/hwinfo/src/libhwinfo_network.a"; sourceTree = "<group>"; };
-		102D9859E511140FE9266025 /* libhwinfo_cpu.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libhwinfo_cpu.a; path = "../runtime/build/shadps4-ios/externals/hwinfo/src/libhwinfo_cpu.a"; sourceTree = "<group>"; };
-		11C4C1260C845D1D7D8DCE0E /* libDear_ImGui.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libDear_ImGui.a; path = "../runtime/build/shadps4-ios/externals/libDear_ImGui.a"; sourceTree = "<group>"; };
-		12BD9F1656B82CFB1776FF22 /* libpng.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libpng.a; path = "../runtime/build/shadps4-ios/externals/libpng/libpng.a"; sourceTree = "<group>"; };
-		138927354E291136D59B0BFE /* libssl.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libssl.a; path = "../runtime/build/shadps4-ios/externals/libressl/ssl/libssl.a"; sourceTree = "<group>"; };
-		141C5DC1DAF565D3F12D1D66 /* GameCardView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GameCardView.swift; path = Views/GameCardView.swift; sourceTree = "<group>"; };
-		1692D47BB7C4877D7E897EDC /* libCommon.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libCommon.a; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/libCommon.a"; sourceTree = "<group>"; };
-		1D1199BFF5F3F4389B2C6F40 /* libCommonTools.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libCommonTools.a; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/libCommonTools.a"; sourceTree = "<group>"; };
-		1D6DC13EB401E62D553BEE26 /* AetherPS4-iOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "AetherPS4-iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		2057ACB470D11EB3E90A997F /* libZydis.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libZydis.a; path = "../runtime/build/shadps4-ios/externals/zydis/libZydis.a"; sourceTree = "<group>"; };
-		210F681BB46A86595AADB0FC /* EmulatorProcess.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EmulatorProcess.swift; path = Models/EmulatorProcess.swift; sourceTree = "<group>"; };
-		21EB11DBACD21FBF8388C332 /* libglslang.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libglslang.a; path = "../runtime/build/shadps4-ios/externals/glslang/glslang/libglslang.a"; sourceTree = "<group>"; };
-		2212A1EE11A893B59E0E24C3 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
-		24FA25FFFC4A8866AFC68297 /* libshadps4_ios.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libshadps4_ios.a; path = "../runtime/build/shadps4-ios/libshadps4_ios.a"; sourceTree = "<group>"; };
-		2BB6F07ACB4BEBAE94E3EF97 /* libxxhash.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libxxhash.a; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/libxxhash.a"; sourceTree = "<group>"; };
-		2E9DF7072E17C293C43036D5 /* libpng16.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libpng16.a; path = "../runtime/build/shadps4-ios/externals/libpng/libpng16.a"; sourceTree = "<group>"; };
-		330F6DCECA636362E6B13AB5 /* libImGuiFileDialog.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libImGuiFileDialog.a; path = "../runtime/build/shadps4-ios/externals/libImGuiFileDialog.a"; sourceTree = "<group>"; };
-		3557A12CC846EEF1F720EA74 /* libspdlog.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libspdlog.a; path = "../runtime/build/shadps4-ios/externals/spdlog/libspdlog.a"; sourceTree = "<group>"; };
-		3BD6A32E9C604B74E69B01FE /* BreakpointJIT.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; path = BreakpointJIT.framework; sourceTree = "<group>"; };
-		3BF8FE94E755B1A64096930A /* libhwinfo_mainboard.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libhwinfo_mainboard.a; path = "../runtime/build/shadps4-ios/externals/hwinfo/src/libhwinfo_mainboard.a"; sourceTree = "<group>"; };
-		45CB90D0AC1028565E75758C /* libz.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libz.a; path = "../runtime/build/shadps4-ios/_deps/zlib-build/libz.a"; sourceTree = "<group>"; };
-		468F1E9AE6CC761DFB8EE418 /* libcephes_128bit.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libcephes_128bit.a; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/libcephes_128bit.a"; sourceTree = "<group>"; };
-		490C344526AA0540F92F0767 /* libsoftfloat_3e.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libsoftfloat_3e.a; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/libsoftfloat_3e.a"; sourceTree = "<group>"; };
-		57C0F4B9F0326E987E6E72D1 /* JITSupport.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = JITSupport.swift; sourceTree = "<group>"; };
-		57F5EDAA37BC0C8F4F8AAF81 /* AetherPS4-iOS-Bridging-Header.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; path = "AetherPS4-iOS-Bridging-Header.h"; sourceTree = "<group>"; };
-		5A43CF8328F202B1FDF19E97 /* libcrypto.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libcrypto.a; path = "../runtime/build/shadps4-ios/externals/libressl/crypto/libcrypto.a"; sourceTree = "<group>"; };
-		5B17B0F5D565EC2E2A16905C /* libfmt.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libfmt.a; path = "../runtime/build/shadps4-ios/_deps/fmt-build/libfmt.a"; sourceTree = "<group>"; };
-		6097B3BD52C9DA4936AEE3C9 /* libxxhash.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libxxhash.a; path = "../runtime/build/shadps4-ios/externals/libxxhash.a"; sourceTree = "<group>"; };
-		633C0D032615A7455A823C2F /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
-		67923C2D1FB86D14F9E41244 /* libhwinfo_gpu.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libhwinfo_gpu.a; path = "../runtime/build/shadps4-ios/externals/hwinfo/src/libhwinfo_gpu.a"; sourceTree = "<group>"; };
-		69A40A7D4C4FC999F60F54BA /* libhwinfo_os.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libhwinfo_os.a; path = "../runtime/build/shadps4-ios/externals/hwinfo/src/libhwinfo_os.a"; sourceTree = "<group>"; };
-		69F9E9847A51ED1C7A8E6AB2 /* libImGui_Resources.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libImGui_Resources.a; path = "../runtime/build/shadps4-ios/src/imgui/renderer/libImGui_Resources.a"; sourceTree = "<group>"; };
-		703FDAB8A70EA5721C093099 /* libsirit.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libsirit.a; path = "../runtime/build/shadps4-ios/externals/sirit/src/libsirit.a"; sourceTree = "<group>"; };
-		725DE6885D1A1EB50DAF8B3F /* libTracyClient.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libTracyClient.a; path = "../runtime/build/shadps4-ios/externals/tracy/libTracyClient.a"; sourceTree = "<group>"; };
-		76457599A61F5CBDF689855D /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		764AC21E1CF025E3B6D51F4F /* RestartRequiredOverlayWindow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RestartRequiredOverlayWindow.swift; sourceTree = "<group>"; };
-		76E3498E98791F32404F7B04 /* libtiny-json.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = "libtiny-json.a"; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/libtiny-json.a"; sourceTree = "<group>"; };
-		781BBE0D5A9F4A60080F6E93 /* libdate-tz.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = "libdate-tz.a"; path = "../runtime/build/shadps4-ios/externals/date/libdate-tz.a"; sourceTree = "<group>"; };
-		78E66A473D0079025C8B49D8 /* libFEXCore.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libFEXCore.a; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/libFEXCore.a"; sourceTree = "<group>"; };
-		7A57331E6543040BB747F0B8 /* libc++.tbd */ = {isa = PBXFileReference; includeInIndex = 1; name = "libc++.tbd"; path = "usr/lib/libc++.tbd"; sourceTree = SDKROOT; };
-		7BC294F1A0C2E62BC0EE08B6 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
-		7D84803DE7DB142FFFFF201D /* CoreAudio.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreAudio.framework; path = System/Library/Frameworks/CoreAudio.framework; sourceTree = SDKROOT; };
-		7FDF6A78AF01932F8957DC1E /* libepoll-shim.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = "libepoll-shim.a"; path = "../runtime/build/shadps4-ios/externals/epoll-shim/src/libepoll-shim.a"; sourceTree = "<group>"; };
-		824A368DAA7D19A5DF567832 /* ContentView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ContentView.swift; path = Views/ContentView.swift; sourceTree = "<group>"; };
-		85C2E36F440D0203D3B00D10 /* GameLibrary.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GameLibrary.swift; path = Models/GameLibrary.swift; sourceTree = "<group>"; };
-		89104242C5B5882D69236A74 /* libhwinfo_disk.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libhwinfo_disk.a; path = "../runtime/build/shadps4-ios/externals/hwinfo/src/libhwinfo_disk.a"; sourceTree = "<group>"; };
-		947435278551F0D09504CF75 /* libLibAtrac9.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libLibAtrac9.a; path = "../runtime/build/shadps4-ios/externals/libLibAtrac9.a"; sourceTree = "<group>"; };
-		96A75281566500AE9CCBB335 /* CoreBluetooth.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreBluetooth.framework; path = System/Library/Frameworks/CoreBluetooth.framework; sourceTree = SDKROOT; };
-		988812F885E61F34461C2229 /* GameController.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = GameController.framework; path = System/Library/Frameworks/GameController.framework; sourceTree = SDKROOT; };
-		9B544ABF49DD87DA5FD6A4B3 /* AetherPS4App.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AetherPS4App.swift; path = App/AetherPS4App.swift; sourceTree = "<group>"; };
-		9C1157F22CB3E036CEC0A551 /* TouchControlsOverlayWindow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TouchControlsOverlayWindow.swift; sourceTree = "<group>"; };
-		A1691038780E411719EA94F4 /* libminiz.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libminiz.a; path = "../runtime/build/shadps4-ios/externals/miniz/libminiz.a"; sourceTree = "<group>"; };
-		A43B0EEA99D9A70A0B794D16 /* libFEXCore_Base.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libFEXCore_Base.a; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/libFEXCore_Base.a"; sourceTree = "<group>"; };
-		AA315D6C6CA3B106D3E7382D /* ConsoleView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ConsoleView.swift; path = Views/ConsoleView.swift; sourceTree = "<group>"; };
-		AE9127F0C0FE2495CBE45EFD /* libembedded-resources.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = "libembedded-resources.a"; path = "../runtime/build/shadps4-ios/libembedded-resources.a"; sourceTree = "<group>"; };
-		AF811D22BBB451A3F38BE582 /* PlayTimeStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PlayTimeStore.swift; path = Models/PlayTimeStore.swift; sourceTree = "<group>"; };
-		BA0E8D23E0DA4BF454C4ED22 /* SettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsView.swift; path = Views/SettingsView.swift; sourceTree = "<group>"; };
-		BABCC7000BC13ED516F612E2 /* libhwinfo_ram.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libhwinfo_ram.a; path = "../runtime/build/shadps4-ios/externals/hwinfo/src/libhwinfo_ram.a"; sourceTree = "<group>"; };
-		BAEEBF725E91345E434643AA /* CoreHaptics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreHaptics.framework; path = System/Library/Frameworks/CoreHaptics.framework; sourceTree = SDKROOT; };
-		BBC0AE039F7B167A4D9BF5EA /* libJemallocLibs.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libJemallocLibs.a; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/libJemallocLibs.a"; sourceTree = "<group>"; };
-		BC29919F598092178CA3C38C /* LoadingOverlayWindow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LoadingOverlayWindow.swift; sourceTree = "<group>"; };
-		C3CF0A7399138DF5C1F57805 /* libSDL3.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libSDL3.a; path = "../runtime/build/shadps4-ios/externals/sdl3/libSDL3.a"; sourceTree = "<group>"; };
-		C488407DCE75A2370AA5288D /* ParamSfoReader.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ParamSfoReader.swift; path = Models/ParamSfoReader.swift; sourceTree = "<group>"; };
-		C4F60303409F3609F4D468D1 /* Game.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Game.swift; path = Models/Game.swift; sourceTree = "<group>"; };
-		C50CA446F01D3774FDA6BBE0 /* libminiupnpc.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libminiupnpc.a; path = "../runtime/build/shadps4-ios/externals/miniupnp/miniupnpc/libminiupnpc.a"; sourceTree = "<group>"; };
-		C562DB56C140BC6E1847DE84 /* libcpp-optparse.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = "libcpp-optparse.a"; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/libcpp-optparse.a"; sourceTree = "<group>"; };
-		C6E0250669EB359E311446C2 /* libZycore.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libZycore.a; path = "../runtime/build/shadps4-ios/externals/zydis/zycore/libZycore.a"; sourceTree = "<group>"; };
-		CD2DAFFE62D592534BEAF7AB /* libfmt.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libfmt.a; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/libfmt.a"; sourceTree = "<group>"; };
-		CE6B56211678FF5FC00B84FB /* SetupCheckView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SetupCheckView.swift; path = Views/SetupCheckView.swift; sourceTree = "<group>"; };
-		D52DED55C504931ADF381276 /* LibraryView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LibraryView.swift; path = Views/LibraryView.swift; sourceTree = "<group>"; };
-		D7D35E4145DA9849E85DFFC8 /* CrashLogger.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CrashLogger.swift; path = App/CrashLogger.swift; sourceTree = "<group>"; };
-		D8F23EDBDA3C7C712B34D67C /* libvulkan.dylib */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = "compiled.mach-o.dylib"; path = libvulkan.dylib; sourceTree = "<group>"; };
-		DB9F88A598C8D11EE8C8A98B /* libfdk-aac.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = "libfdk-aac.a"; path = "../runtime/build/shadps4-ios/externals/aacdec/libfdk-aac.a"; sourceTree = "<group>"; };
-		F02F52A83FF48F38A87DA334 /* libpugixml.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libpugixml.a; path = "../runtime/build/shadps4-ios/externals/pugixml/libpugixml.a"; sourceTree = "<group>"; };
-		F4BB405501B330FED145B877 /* GameDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GameDetailView.swift; path = Views/GameDetailView.swift; sourceTree = "<group>"; };
-		FA0869651F52ACF5B2064A2A /* libfreetype.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libfreetype.a; path = "../runtime/build/shadps4-ios/externals/freetype/libfreetype.a"; sourceTree = "<group>"; };
-		FB09CCD07CC589EF96B39A13 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
-		FBF6CD5C1DE6387ABBACAC78 /* libhwinfo_battery.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libhwinfo_battery.a; path = "../runtime/build/shadps4-ios/externals/hwinfo/src/libhwinfo_battery.a"; sourceTree = "<group>"; };
-		FFED0050CB581819A365E521 /* librpmalloc.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = librpmalloc.a; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/librpmalloc.a"; sourceTree = "<group>"; };
+		05E9EA784999D2A54DEA9AE6 /* libc++.tbd */ = {isa = PBXFileReference; includeInIndex = 1; name = "libc++.tbd"; path = "usr/lib/libc++.tbd"; sourceTree = SDKROOT; };
+		0650266BE9CE57E819343599 /* AetherPS4-iOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "AetherPS4-iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		0D48ECA05D07F26AA99C14B9 /* TouchControlsOverlayWindow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TouchControlsOverlayWindow.swift; sourceTree = "<group>"; };
+		0E4C89E0173E3B4C3316D18F /* libtiny-json.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = "libtiny-json.a"; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/libtiny-json.a"; sourceTree = "<group>"; };
+		0F904867498E2F495D67FCBF /* libspdlog.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libspdlog.a; path = "../runtime/build/shadps4-ios/externals/spdlog/libspdlog.a"; sourceTree = "<group>"; };
+		102666F4CE18E2288BB24E9B /* libcephes_128bit.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libcephes_128bit.a; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/libcephes_128bit.a"; sourceTree = "<group>"; };
+		104B9423B51D9320D24DE7D2 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; name = Info.plist; path = ../Info.plist; sourceTree = "<group>"; };
+		12B1D7AE131749106466A1A1 /* libhwinfo_cpu.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libhwinfo_cpu.a; path = "../runtime/build/shadps4-ios/externals/hwinfo/src/libhwinfo_cpu.a"; sourceTree = "<group>"; };
+		13E13BCB8EA72E177A374402 /* libFEXCore_Base.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libFEXCore_Base.a; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/libFEXCore_Base.a"; sourceTree = "<group>"; };
+		1482F1A291EA4DEEA61AB3BA /* libxxhash.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libxxhash.a; path = "../runtime/build/shadps4-ios/externals/libxxhash.a"; sourceTree = "<group>"; };
+		1618AADC696F07E28FD77993 /* GameOverlay.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GameOverlay.swift; sourceTree = "<group>"; };
+		174E5F1EE6F5D1BE194BBF76 /* GameLibrary.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GameLibrary.swift; path = Models/GameLibrary.swift; sourceTree = "<group>"; };
+		1956A099D4ED7B968694411C /* AetherPS4-iOS-Bridging-Header.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; path = "AetherPS4-iOS-Bridging-Header.h"; sourceTree = "<group>"; };
+		1A84043D4EF70A4B5CDC51B6 /* JITSupport.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = JITSupport.swift; sourceTree = "<group>"; };
+		1D141BBA8F0E4A5C1CFEE179 /* CoreHaptics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreHaptics.framework; path = System/Library/Frameworks/CoreHaptics.framework; sourceTree = SDKROOT; };
+		1D64D752781D48EAF9D6D40F /* libfdk-aac.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = "libfdk-aac.a"; path = "../runtime/build/shadps4-ios/externals/aacdec/libfdk-aac.a"; sourceTree = "<group>"; };
+		1E23FB3452797D48C5CBAB1C /* libsoftfloat_3e.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libsoftfloat_3e.a; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/libsoftfloat_3e.a"; sourceTree = "<group>"; };
+		21157241B19C22A61FAE6FA6 /* GameCardView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GameCardView.swift; path = Views/GameCardView.swift; sourceTree = "<group>"; };
+		2190E0FD065F7F9434636F94 /* libImGuiFileDialog.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libImGuiFileDialog.a; path = "../runtime/build/shadps4-ios/externals/libImGuiFileDialog.a"; sourceTree = "<group>"; };
+		2441453A3200B1FA88E7DC2A /* libfmt.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libfmt.a; path = "../runtime/build/shadps4-ios/_deps/fmt-build/libfmt.a"; sourceTree = "<group>"; };
+		24B2EC648E7E5DA7BCAA7151 /* libpugixml.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libpugixml.a; path = "../runtime/build/shadps4-ios/externals/pugixml/libpugixml.a"; sourceTree = "<group>"; };
+		2788185B487A51FF8A2507C3 /* libpng16.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libpng16.a; path = "../runtime/build/shadps4-ios/externals/libpng/libpng16.a"; sourceTree = "<group>"; };
+		280F4B3C8905A95732EC3994 /* libssl.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libssl.a; path = "../runtime/build/shadps4-ios/externals/libressl/ssl/libssl.a"; sourceTree = "<group>"; };
+		2DCDE0FB8F1710A9D7AAAF4F /* libepoll-shim.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = "libepoll-shim.a"; path = "../runtime/build/shadps4-ios/externals/epoll-shim/src/libepoll-shim.a"; sourceTree = "<group>"; };
+		30C4ED442E5414B39F47B3D4 /* libhwinfo_disk.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libhwinfo_disk.a; path = "../runtime/build/shadps4-ios/externals/hwinfo/src/libhwinfo_disk.a"; sourceTree = "<group>"; };
+		34FD737EC77E2B0E4585C7C2 /* libhwinfo_battery.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libhwinfo_battery.a; path = "../runtime/build/shadps4-ios/externals/hwinfo/src/libhwinfo_battery.a"; sourceTree = "<group>"; };
+		39B6E32C73FF798AFF87F675 /* ConfigStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ConfigStore.swift; path = Models/ConfigStore.swift; sourceTree = "<group>"; };
+		3DB211529CD978E344E6E073 /* libhwinfo_ram.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libhwinfo_ram.a; path = "../runtime/build/shadps4-ios/externals/hwinfo/src/libhwinfo_ram.a"; sourceTree = "<group>"; };
+		41C32DDFA523FE021405B26E /* libcpp-optparse.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = "libcpp-optparse.a"; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/libcpp-optparse.a"; sourceTree = "<group>"; };
+		43DC36F572CFC682EA6FA8C6 /* CoreBluetooth.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreBluetooth.framework; path = System/Library/Frameworks/CoreBluetooth.framework; sourceTree = SDKROOT; };
+		4771D4EBB2F0D6A883B4F277 /* libZydis.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libZydis.a; path = "../runtime/build/shadps4-ios/externals/zydis/libZydis.a"; sourceTree = "<group>"; };
+		4A5993DCAFD9D14491C49225 /* libImGui_Resources.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libImGui_Resources.a; path = "../runtime/build/shadps4-ios/src/imgui/renderer/libImGui_Resources.a"; sourceTree = "<group>"; };
+		4E2B236C5494CAFC790DF5A4 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
+		51FA2773A6317E413072CFCF /* libhwinfo_os.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libhwinfo_os.a; path = "../runtime/build/shadps4-ios/externals/hwinfo/src/libhwinfo_os.a"; sourceTree = "<group>"; };
+		52208BE4041C7496606707E4 /* ParamSfoReader.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ParamSfoReader.swift; path = Models/ParamSfoReader.swift; sourceTree = "<group>"; };
+		534781866CFE5391A51F031D /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		548146B82A47AE882D49B129 /* EmulatorProcess.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EmulatorProcess.swift; path = Models/EmulatorProcess.swift; sourceTree = "<group>"; };
+		558CFF1836D980797AD7D64D /* libfreetype.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libfreetype.a; path = "../runtime/build/shadps4-ios/externals/freetype/libfreetype.a"; sourceTree = "<group>"; };
+		56F540E7B6B0EBC89A98EBE5 /* AudioToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioToolbox.framework; path = System/Library/Frameworks/AudioToolbox.framework; sourceTree = SDKROOT; };
+		5892492D1F08180646AA6536 /* GameDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GameDetailView.swift; path = Views/GameDetailView.swift; sourceTree = "<group>"; };
+		593B2DC3D9B90143ECD5B7E2 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
+		59A0EDDD0C1007B369496861 /* GameController.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = GameController.framework; path = System/Library/Frameworks/GameController.framework; sourceTree = SDKROOT; };
+		5DCD135F546FF856DB48F9D9 /* libopenal.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libopenal.a; path = "../runtime/build/shadps4-ios/externals/openal-soft/libopenal.a"; sourceTree = "<group>"; };
+		64382E3D33DD2B7F2D579147 /* libz.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libz.a; path = "../runtime/build/shadps4-ios/_deps/zlib-build/libz.a"; sourceTree = "<group>"; };
+		66442A99EA402D3C3B4CA4A7 /* libZycore.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libZycore.a; path = "../runtime/build/shadps4-ios/externals/zydis/zycore/libZycore.a"; sourceTree = "<group>"; };
+		66C709B18CBC5603752F884E /* librpmalloc.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = librpmalloc.a; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/librpmalloc.a"; sourceTree = "<group>"; };
+		677ADB18ADF606E29D32B758 /* CrashLogger.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CrashLogger.swift; path = App/CrashLogger.swift; sourceTree = "<group>"; };
+		687842FC18B6C223D6EE9FD6 /* SettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsView.swift; path = Views/SettingsView.swift; sourceTree = "<group>"; };
+		6CAC931BBA152F2FB099FBA7 /* libTracyClient.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libTracyClient.a; path = "../runtime/build/shadps4-ios/externals/tracy/libTracyClient.a"; sourceTree = "<group>"; };
+		731658AC033E4A41E44FAF8E /* libiconv.tbd */ = {isa = PBXFileReference; includeInIndex = 1; name = libiconv.tbd; path = usr/lib/libiconv.tbd; sourceTree = SDKROOT; };
+		7352216EF57F4705422F4FCB /* libshadps4_ios.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libshadps4_ios.a; path = "../runtime/build/shadps4-ios/libshadps4_ios.a"; sourceTree = "<group>"; };
+		77902B805D4A1731DAC14D6D /* libvulkan.dylib */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = "compiled.mach-o.dylib"; path = libvulkan.dylib; sourceTree = "<group>"; };
+		77AD48AC37FBA24493FA844C /* libhwinfo_mainboard.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libhwinfo_mainboard.a; path = "../runtime/build/shadps4-ios/externals/hwinfo/src/libhwinfo_mainboard.a"; sourceTree = "<group>"; };
+		78B941B5F49E05280E7B44A8 /* RestartRequiredOverlayWindow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RestartRequiredOverlayWindow.swift; sourceTree = "<group>"; };
+		7A6E182CA97D1FCDA2516E6E /* libCommonTools.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libCommonTools.a; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/libCommonTools.a"; sourceTree = "<group>"; };
+		7F34EE89CD207266F72886B4 /* libfmt.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libfmt.a; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/libfmt.a"; sourceTree = "<group>"; };
+		803C5F052088F806DDDD6CAC /* LibraryView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LibraryView.swift; path = Views/LibraryView.swift; sourceTree = "<group>"; };
+		80B00218C694A48DA12DD030 /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		8466451335C22393617F4D4B /* libpng.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libpng.a; path = "../runtime/build/shadps4-ios/externals/libpng/libpng.a"; sourceTree = "<group>"; };
+		8B2E05CB524155AD0556DDC1 /* Game.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Game.swift; path = Models/Game.swift; sourceTree = "<group>"; };
+		8DD3BC8017AC8D05CA8CBB13 /* libminiz.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libminiz.a; path = "../runtime/build/shadps4-ios/externals/miniz/libminiz.a"; sourceTree = "<group>"; };
+		920C82B594FE15AF718CAFDA /* SetupCheckView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SetupCheckView.swift; path = Views/SetupCheckView.swift; sourceTree = "<group>"; };
+		93E1094D61A6770F4824CBC7 /* ConsoleView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ConsoleView.swift; path = Views/ConsoleView.swift; sourceTree = "<group>"; };
+		9A9699FF81B16B33FA3AAD6B /* libcrypto.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libcrypto.a; path = "../runtime/build/shadps4-ios/externals/libressl/crypto/libcrypto.a"; sourceTree = "<group>"; };
+		9FA5A23527B438C66369C3E4 /* libDear_ImGui.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libDear_ImGui.a; path = "../runtime/build/shadps4-ios/externals/libDear_ImGui.a"; sourceTree = "<group>"; };
+		A6B99C8FBDE412C58BDC7989 /* CoreAudio.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreAudio.framework; path = System/Library/Frameworks/CoreAudio.framework; sourceTree = SDKROOT; };
+		ACAA615249CF98AF49794D08 /* AetherPS4App.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AetherPS4App.swift; path = App/AetherPS4App.swift; sourceTree = "<group>"; };
+		B06B5030B552D0FB00A9C81B /* libJemallocLibs.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libJemallocLibs.a; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/libJemallocLibs.a"; sourceTree = "<group>"; };
+		B23F3C7F02734988356B140F /* libSDL3.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libSDL3.a; path = "../runtime/build/shadps4-ios/externals/sdl3/libSDL3.a"; sourceTree = "<group>"; };
+		B261420C93EA155BDCD17427 /* PlayTimeStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PlayTimeStore.swift; path = Models/PlayTimeStore.swift; sourceTree = "<group>"; };
+		B7C24777DBBB75A2F8ABEC5D /* libhwinfo_gpu.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libhwinfo_gpu.a; path = "../runtime/build/shadps4-ios/externals/hwinfo/src/libhwinfo_gpu.a"; sourceTree = "<group>"; };
+		BBDE247E51CB29FDA6703948 /* libxxhash.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libxxhash.a; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/libxxhash.a"; sourceTree = "<group>"; };
+		BE6EFBAE479C81AA5CE21F5E /* ContentView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ContentView.swift; path = Views/ContentView.swift; sourceTree = "<group>"; };
+		C228768301F412A185CF348C /* LoadingOverlayWindow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LoadingOverlayWindow.swift; sourceTree = "<group>"; };
+		C5FD106A4DD5FCD0CC870F78 /* libminiupnpc.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libminiupnpc.a; path = "../runtime/build/shadps4-ios/externals/miniupnp/miniupnpc/libminiupnpc.a"; sourceTree = "<group>"; };
+		C66702613C95F1AFBB9B832B /* libFEXCore.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libFEXCore.a; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/libFEXCore.a"; sourceTree = "<group>"; };
+		CAAC15C72892727B175954D3 /* libhwinfo_network.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libhwinfo_network.a; path = "../runtime/build/shadps4-ios/externals/hwinfo/src/libhwinfo_network.a"; sourceTree = "<group>"; };
+		CCC750BBD993D27337260DF1 /* libembedded-resources.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = "libembedded-resources.a"; path = "../runtime/build/shadps4-ios/libembedded-resources.a"; sourceTree = "<group>"; };
+		D67E796E5DCBF5A51F9F553B /* libglslang.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libglslang.a; path = "../runtime/build/shadps4-ios/externals/glslang/glslang/libglslang.a"; sourceTree = "<group>"; };
+		ED4BB8AFE93432BE9F5B6127 /* libsirit.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libsirit.a; path = "../runtime/build/shadps4-ios/externals/sirit/src/libsirit.a"; sourceTree = "<group>"; };
+		EF8A2606BA7A4DF50A945A01 /* libLibAtrac9.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libLibAtrac9.a; path = "../runtime/build/shadps4-ios/externals/libLibAtrac9.a"; sourceTree = "<group>"; };
+		F40C8AB64C3CBFC090B2A98F /* libCommon.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libCommon.a; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/libCommon.a"; sourceTree = "<group>"; };
+		F77F0426F982896052A206E4 /* libdate-tz.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = "libdate-tz.a"; path = "../runtime/build/shadps4-ios/externals/date/libdate-tz.a"; sourceTree = "<group>"; };
+		F968B6005FDF13E81D34CDC8 /* BreakpointJIT.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; path = BreakpointJIT.framework; sourceTree = "<group>"; };
+		FD2EB4C6472944FEDB46EC06 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		AF41574BB6FCBAAFD968C9D9 /* Frameworks */ = {
+		C4C3D33494AA7CDE679AC40E /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				0B33CE9A31A89C5FA117B925 /* Foundation.framework in Frameworks */,
-				7E1DB1535C8152E4F51F3EE5 /* BreakpointJIT.framework in Frameworks */,
-				CF2B6828B9B5344628B79CF6 /* libcpp-optparse.a in Frameworks */,
-				AABB6D09C2CBF5A3248FC6B0 /* libCommonTools.a in Frameworks */,
-				F001E1E80C66E51F45903D3D /* libFEXCore_Base.a in Frameworks */,
-				C0DC5C08229239F929D7FD47 /* libFEXCore.a in Frameworks */,
-				537630E7BDDDF09840CB2A4A /* libJemallocLibs.a in Frameworks */,
-				9DB24D105F96CB41C403104E /* libtiny-json.a in Frameworks */,
-				791F75DB7A12308660D16AAF /* libfmt.a in Frameworks */,
-				8FAEDC4BBE9939C5B711BB8A /* libsoftfloat_3e.a in Frameworks */,
-				C2CD389B0B4FF1EABE54F7CB /* libxxhash.a in Frameworks */,
-				E62781A8001BD1FFFCA532FB /* librpmalloc.a in Frameworks */,
-				D529C76FEE2A5531C4E0F48B /* libCommon.a in Frameworks */,
-				B8AF78AE0DC28F41A74DECEB /* libcephes_128bit.a in Frameworks */,
-				D301AA1A4FB21A7CE4617EE1 /* libpng16.a in Frameworks */,
-				3C4D4791CF9B05300C00F298 /* libpng.a in Frameworks */,
-				A26E0BAF6F56A56E93D12B0F /* libTracyClient.a in Frameworks */,
-				9090BF8255CE482483A0D57D /* libfdk-aac.a in Frameworks */,
-				82B9689D6FAEA0A34F478D2C /* libfreetype.a in Frameworks */,
-				66E6ABC58AC7157E1A400E55 /* libImGuiFileDialog.a in Frameworks */,
-				E2377E47DDB68EBC2CD0992A /* libhwinfo_mainboard.a in Frameworks */,
-				A0EFF12A962239EA9A414A27 /* libhwinfo_cpu.a in Frameworks */,
-				F51CF79142D1FBC4960CF87D /* libhwinfo_battery.a in Frameworks */,
-				119C7CCCA81C4E20BE2F704A /* libhwinfo_gpu.a in Frameworks */,
-				2D48BD5A906F4BC14ADD6278 /* libhwinfo_disk.a in Frameworks */,
-				714383077C53B6F1220ADFD8 /* libhwinfo_os.a in Frameworks */,
-				7082020FBF767056ED3B8CEC /* libhwinfo_network.a in Frameworks */,
-				0733C6ED78AF4B8B23668D63 /* libhwinfo_ram.a in Frameworks */,
-				93B706008E0207F939A6C7AE /* libDear_ImGui.a in Frameworks */,
-				DE653584D2057F8CC0964B84 /* libdate-tz.a in Frameworks */,
-				94D2AC1FC35146D0884A47DD /* libxxhash.a in Frameworks */,
-				B37909EE9B47AD6B0DCD888D /* libLibAtrac9.a in Frameworks */,
-				F9D54D941195FB399DB01D7D /* libminiz.a in Frameworks */,
-				10F0120FAC7E060C84C69136 /* libglslang.a in Frameworks */,
-				01950DC4D7B5D705A17D4626 /* libsirit.a in Frameworks */,
-				312D6EC80A05EE5750358002 /* libspdlog.a in Frameworks */,
-				5E0C5793EC4609FF9B5C1E4B /* libopenal.a in Frameworks */,
-				190F435E4098CDE494400665 /* libminiupnpc.a in Frameworks */,
-				C6BF89FD808FEFDB6FF6CAD3 /* libcrypto.a in Frameworks */,
-				C204CF988CA441A59814583B /* libssl.a in Frameworks */,
-				BDC201B0D5EB63BBEC940C8F /* libpugixml.a in Frameworks */,
-				CFC68CFDB73CCAD0DC58BF64 /* libSDL3.a in Frameworks */,
-				A10E564176BFE4BC74A263A6 /* libepoll-shim.a in Frameworks */,
-				9D6AAD92E475A5AB86C26E27 /* libZydis.a in Frameworks */,
-				77EE10E2FF76834C3E540426 /* libZycore.a in Frameworks */,
-				CEDC3BCE1FD27151EF113C40 /* libembedded-resources.a in Frameworks */,
-				87DA26764B95DFA6A48EDDFB /* libfmt.a in Frameworks */,
-				7B94E0C9850021D5F86FB71C /* libz.a in Frameworks */,
-				7EB937BBD12D830ABE67593E /* libshadps4_ios.a in Frameworks */,
-				579972C06BB9D7C03AB10029 /* libImGui_Resources.a in Frameworks */,
-				C54970FB763AC2F394A03CE6 /* libc++.tbd in Frameworks */,
-				3BECC0E76E4E3EE9AE75CD89 /* libiconv.tbd in Frameworks */,
-				26C63852DB02F85B3F5C9978 /* Metal.framework in Frameworks */,
-				F5225DE54459A76134840595 /* QuartzCore.framework in Frameworks */,
-				DB2AD8A0755C1895BF87D0E3 /* GameController.framework in Frameworks */,
-				D0102495C3019B1929C1AD3C /* CoreHaptics.framework in Frameworks */,
-				1394F34021D4A89892CD1CA4 /* AVFoundation.framework in Frameworks */,
-				8491DF3F0B336B8C7A26ADE4 /* CoreAudio.framework in Frameworks */,
-				0F2DDB22E2688D0DFCB149F6 /* AudioToolbox.framework in Frameworks */,
-				DF00F9B94952F01E95AAE934 /* CoreBluetooth.framework in Frameworks */,
+				961D634ED8A1B2B7D9EA4D33 /* Foundation.framework in Frameworks */,
+				9932FE45F026CFA941765D39 /* BreakpointJIT.framework in Frameworks */,
+				1F8F7F6B878B07F85AA89EB7 /* libcpp-optparse.a in Frameworks */,
+				57A6298CCF1C1D533989C6CD /* libCommonTools.a in Frameworks */,
+				812489D0599807C8CF896181 /* libFEXCore_Base.a in Frameworks */,
+				9AF47177E68897D280BE8A71 /* libFEXCore.a in Frameworks */,
+				851901478E945FC92DC9AE91 /* libJemallocLibs.a in Frameworks */,
+				7BBFFD2E22EE7B78527F91CF /* libtiny-json.a in Frameworks */,
+				D511EA4039303EA565908F94 /* libfmt.a in Frameworks */,
+				7D7C719492EA15ACC0BB5AFC /* libsoftfloat_3e.a in Frameworks */,
+				1A061A8AC2EBF1EB4137F264 /* libxxhash.a in Frameworks */,
+				EE75898F580D114D39D1F769 /* librpmalloc.a in Frameworks */,
+				2561AF8A2E3DBC9E8774BE73 /* libCommon.a in Frameworks */,
+				84DB63AC23D3915A15595282 /* libcephes_128bit.a in Frameworks */,
+				F9364B97BD4BA70777EC5F77 /* libpng16.a in Frameworks */,
+				F5145671DF77285D6329FCD4 /* libpng.a in Frameworks */,
+				AF7510C2F81943AD4C042305 /* libTracyClient.a in Frameworks */,
+				5AC2A0C99A061AD2FCF81BBD /* libfdk-aac.a in Frameworks */,
+				ACFB6D8D724EA96C07EFEE17 /* libfreetype.a in Frameworks */,
+				C06DD4A2CDB3FA7216E055D4 /* libImGuiFileDialog.a in Frameworks */,
+				B1F8F9D5F49BFD9672793E03 /* libhwinfo_mainboard.a in Frameworks */,
+				D955A57D35B677D449D5E4D0 /* libhwinfo_cpu.a in Frameworks */,
+				81AC293D6573A1CC3657C747 /* libhwinfo_battery.a in Frameworks */,
+				DB1E3ECEB25AE24BE116AE61 /* libhwinfo_gpu.a in Frameworks */,
+				7E07C37B5EAD8C55ED695D9F /* libhwinfo_disk.a in Frameworks */,
+				DEE9C4D5E07ED17959162547 /* libhwinfo_os.a in Frameworks */,
+				DC6C2F9E4E41529504951051 /* libhwinfo_network.a in Frameworks */,
+				7F0C2EA4C356C5EE14EA44CF /* libhwinfo_ram.a in Frameworks */,
+				356F06299F5F579400C57E30 /* libDear_ImGui.a in Frameworks */,
+				C44671FD21372443D47BB784 /* libdate-tz.a in Frameworks */,
+				890BA0A548C69951C29D30E2 /* libxxhash.a in Frameworks */,
+				B93259302062A39528A2A5E0 /* libLibAtrac9.a in Frameworks */,
+				0DEC9EC38915AD621191D5C9 /* libminiz.a in Frameworks */,
+				648B71561C3A6E8753810263 /* libglslang.a in Frameworks */,
+				3E2D7C165B0D3783A4938DF6 /* libsirit.a in Frameworks */,
+				7A10F2849570E91663955315 /* libspdlog.a in Frameworks */,
+				19EE0DB6304D3E871DA80FD8 /* libopenal.a in Frameworks */,
+				4AB8085537D434E6A8188A82 /* libminiupnpc.a in Frameworks */,
+				FC8819330FDB8F1B3C0D5430 /* libcrypto.a in Frameworks */,
+				DFD3C5B6F0EB5E623639B046 /* libssl.a in Frameworks */,
+				0E898B1F7B05C841B36774F3 /* libpugixml.a in Frameworks */,
+				32C874C484B4CA0053C3C442 /* libSDL3.a in Frameworks */,
+				BAB8031D96821618A26DA024 /* libepoll-shim.a in Frameworks */,
+				D08DA316E5AA92CB55E32539 /* libZydis.a in Frameworks */,
+				0D27DDC98260A03B282F5DD7 /* libZycore.a in Frameworks */,
+				296C474FF579A18078AB6FEE /* libembedded-resources.a in Frameworks */,
+				40A3D6FF7FA1ABD4DDB8801F /* libfmt.a in Frameworks */,
+				0887F925E99C21416AB875F3 /* libz.a in Frameworks */,
+				BBBC497558256405C6345A83 /* libshadps4_ios.a in Frameworks */,
+				61F759279C05E86786DB94F9 /* libImGui_Resources.a in Frameworks */,
+				B1AE57717F6808A1C2E9DB1D /* libc++.tbd in Frameworks */,
+				C26E68F0BFABF946D80D1E4C /* libiconv.tbd in Frameworks */,
+				7332B8190CB6ABCEF2769041 /* Metal.framework in Frameworks */,
+				830247BBD10A60E5BD98B9BA /* QuartzCore.framework in Frameworks */,
+				585C4DA199C960DF438DAEF6 /* GameController.framework in Frameworks */,
+				EE801E304AE8390BDC1C2D36 /* CoreHaptics.framework in Frameworks */,
+				705E5760FF61577AAC2CB1B7 /* AVFoundation.framework in Frameworks */,
+				2B55CBD064E8EE6FD14A97C1 /* CoreAudio.framework in Frameworks */,
+				9D3BD7C74D08A1020FF44103 /* AudioToolbox.framework in Frameworks */,
+				41C05684FB0FC41AC8A618BC /* CoreBluetooth.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		36B962176D0018358A6ED1CF /* Resources */ = {
+		3C7CE09C3FFDC6EB1B00A220 = {
 			isa = PBXGroup;
 			children = (
-				03088EA1ECCC4FB2AAC8A86A /* Info.plist */,
-				76457599A61F5CBDF689855D /* Assets.xcassets */,
-			);
-			name = Resources;
-			path = Resources;
-			sourceTree = "<group>";
-		};
-		72951DF5803E0A5E293697F5 /* Products */ = {
-			isa = PBXGroup;
-			children = (
-				1D6DC13EB401E62D553BEE26 /* AetherPS4-iOS.app */,
-			);
-			name = Products;
-			sourceTree = "<group>";
-		};
-		B34EB2781977AA5E87C7F75C = {
-			isa = PBXGroup;
-			children = (
-				72951DF5803E0A5E293697F5 /* Products */,
-				FC707573FA3E566035926C26 /* Frameworks */,
-				F31E0CE7D12F639447C10217 /* Sources */,
-				D78D9A9306276F3BE344D15A /* Frameworks */,
-				36B962176D0018358A6ED1CF /* Resources */,
-				57F5EDAA37BC0C8F4F8AAF81 /* AetherPS4-iOS-Bridging-Header.h */,
-				DCA37AA8D11D83B01D20CC2F /* Libs */,
+				D781B14FE5D6552A2EBF7075 /* Products */,
+				91A2CDB8D1C4C424927408F7 /* Frameworks */,
+				9AA9A99BE96B584A0F7A9544 /* Sources */,
+				F603250D9A0981C649F8377B /* Frameworks */,
+				B0888EE6E1ADB575971E815D /* Resources */,
+				1956A099D4ED7B968694411C /* AetherPS4-iOS-Bridging-Header.h */,
+				494C44954F21F4DC4D61CD48 /* Libs */,
 			);
 			sourceTree = "<group>";
 		};
-		D78D9A9306276F3BE344D15A /* Frameworks */ = {
+		494C44954F21F4DC4D61CD48 /* Libs */ = {
 			isa = PBXGroup;
 			children = (
-				3BD6A32E9C604B74E69B01FE /* BreakpointJIT.framework */,
-				D8F23EDBDA3C7C712B34D67C /* libvulkan.dylib */,
-			);
-			name = Frameworks;
-			path = Frameworks;
-			sourceTree = "<group>";
-		};
-		DCA37AA8D11D83B01D20CC2F /* Libs */ = {
-			isa = PBXGroup;
-			children = (
-				C562DB56C140BC6E1847DE84 /* libcpp-optparse.a */,
-				1D1199BFF5F3F4389B2C6F40 /* libCommonTools.a */,
-				A43B0EEA99D9A70A0B794D16 /* libFEXCore_Base.a */,
-				78E66A473D0079025C8B49D8 /* libFEXCore.a */,
-				BBC0AE039F7B167A4D9BF5EA /* libJemallocLibs.a */,
-				76E3498E98791F32404F7B04 /* libtiny-json.a */,
-				CD2DAFFE62D592534BEAF7AB /* libfmt.a */,
-				490C344526AA0540F92F0767 /* libsoftfloat_3e.a */,
-				2BB6F07ACB4BEBAE94E3EF97 /* libxxhash.a */,
-				FFED0050CB581819A365E521 /* librpmalloc.a */,
-				1692D47BB7C4877D7E897EDC /* libCommon.a */,
-				468F1E9AE6CC761DFB8EE418 /* libcephes_128bit.a */,
-				2E9DF7072E17C293C43036D5 /* libpng16.a */,
-				12BD9F1656B82CFB1776FF22 /* libpng.a */,
-				725DE6885D1A1EB50DAF8B3F /* libTracyClient.a */,
-				DB9F88A598C8D11EE8C8A98B /* libfdk-aac.a */,
-				FA0869651F52ACF5B2064A2A /* libfreetype.a */,
-				330F6DCECA636362E6B13AB5 /* libImGuiFileDialog.a */,
-				3BF8FE94E755B1A64096930A /* libhwinfo_mainboard.a */,
-				102D9859E511140FE9266025 /* libhwinfo_cpu.a */,
-				FBF6CD5C1DE6387ABBACAC78 /* libhwinfo_battery.a */,
-				67923C2D1FB86D14F9E41244 /* libhwinfo_gpu.a */,
-				89104242C5B5882D69236A74 /* libhwinfo_disk.a */,
-				69A40A7D4C4FC999F60F54BA /* libhwinfo_os.a */,
-				0E0A9BBECEE821F3D59CD9FA /* libhwinfo_network.a */,
-				BABCC7000BC13ED516F612E2 /* libhwinfo_ram.a */,
-				11C4C1260C845D1D7D8DCE0E /* libDear_ImGui.a */,
-				781BBE0D5A9F4A60080F6E93 /* libdate-tz.a */,
-				6097B3BD52C9DA4936AEE3C9 /* libxxhash.a */,
-				947435278551F0D09504CF75 /* libLibAtrac9.a */,
-				A1691038780E411719EA94F4 /* libminiz.a */,
-				21EB11DBACD21FBF8388C332 /* libglslang.a */,
-				703FDAB8A70EA5721C093099 /* libsirit.a */,
-				3557A12CC846EEF1F720EA74 /* libspdlog.a */,
-				02DC2DB7429A398C8DB26214 /* libopenal.a */,
-				C50CA446F01D3774FDA6BBE0 /* libminiupnpc.a */,
-				5A43CF8328F202B1FDF19E97 /* libcrypto.a */,
-				138927354E291136D59B0BFE /* libssl.a */,
-				F02F52A83FF48F38A87DA334 /* libpugixml.a */,
-				C3CF0A7399138DF5C1F57805 /* libSDL3.a */,
-				7FDF6A78AF01932F8957DC1E /* libepoll-shim.a */,
-				2057ACB470D11EB3E90A997F /* libZydis.a */,
-				C6E0250669EB359E311446C2 /* libZycore.a */,
-				AE9127F0C0FE2495CBE45EFD /* libembedded-resources.a */,
-				5B17B0F5D565EC2E2A16905C /* libfmt.a */,
-				45CB90D0AC1028565E75758C /* libz.a */,
-				24FA25FFFC4A8866AFC68297 /* libshadps4_ios.a */,
-				69F9E9847A51ED1C7A8E6AB2 /* libImGui_Resources.a */,
+				41C32DDFA523FE021405B26E /* libcpp-optparse.a */,
+				7A6E182CA97D1FCDA2516E6E /* libCommonTools.a */,
+				13E13BCB8EA72E177A374402 /* libFEXCore_Base.a */,
+				C66702613C95F1AFBB9B832B /* libFEXCore.a */,
+				B06B5030B552D0FB00A9C81B /* libJemallocLibs.a */,
+				0E4C89E0173E3B4C3316D18F /* libtiny-json.a */,
+				7F34EE89CD207266F72886B4 /* libfmt.a */,
+				1E23FB3452797D48C5CBAB1C /* libsoftfloat_3e.a */,
+				BBDE247E51CB29FDA6703948 /* libxxhash.a */,
+				66C709B18CBC5603752F884E /* librpmalloc.a */,
+				F40C8AB64C3CBFC090B2A98F /* libCommon.a */,
+				102666F4CE18E2288BB24E9B /* libcephes_128bit.a */,
+				2788185B487A51FF8A2507C3 /* libpng16.a */,
+				8466451335C22393617F4D4B /* libpng.a */,
+				6CAC931BBA152F2FB099FBA7 /* libTracyClient.a */,
+				1D64D752781D48EAF9D6D40F /* libfdk-aac.a */,
+				558CFF1836D980797AD7D64D /* libfreetype.a */,
+				2190E0FD065F7F9434636F94 /* libImGuiFileDialog.a */,
+				77AD48AC37FBA24493FA844C /* libhwinfo_mainboard.a */,
+				12B1D7AE131749106466A1A1 /* libhwinfo_cpu.a */,
+				34FD737EC77E2B0E4585C7C2 /* libhwinfo_battery.a */,
+				B7C24777DBBB75A2F8ABEC5D /* libhwinfo_gpu.a */,
+				30C4ED442E5414B39F47B3D4 /* libhwinfo_disk.a */,
+				51FA2773A6317E413072CFCF /* libhwinfo_os.a */,
+				CAAC15C72892727B175954D3 /* libhwinfo_network.a */,
+				3DB211529CD978E344E6E073 /* libhwinfo_ram.a */,
+				9FA5A23527B438C66369C3E4 /* libDear_ImGui.a */,
+				F77F0426F982896052A206E4 /* libdate-tz.a */,
+				1482F1A291EA4DEEA61AB3BA /* libxxhash.a */,
+				EF8A2606BA7A4DF50A945A01 /* libLibAtrac9.a */,
+				8DD3BC8017AC8D05CA8CBB13 /* libminiz.a */,
+				D67E796E5DCBF5A51F9F553B /* libglslang.a */,
+				ED4BB8AFE93432BE9F5B6127 /* libsirit.a */,
+				0F904867498E2F495D67FCBF /* libspdlog.a */,
+				5DCD135F546FF856DB48F9D9 /* libopenal.a */,
+				C5FD106A4DD5FCD0CC870F78 /* libminiupnpc.a */,
+				9A9699FF81B16B33FA3AAD6B /* libcrypto.a */,
+				280F4B3C8905A95732EC3994 /* libssl.a */,
+				24B2EC648E7E5DA7BCAA7151 /* libpugixml.a */,
+				B23F3C7F02734988356B140F /* libSDL3.a */,
+				2DCDE0FB8F1710A9D7AAAF4F /* libepoll-shim.a */,
+				4771D4EBB2F0D6A883B4F277 /* libZydis.a */,
+				66442A99EA402D3C3B4CA4A7 /* libZycore.a */,
+				CCC750BBD993D27337260DF1 /* libembedded-resources.a */,
+				2441453A3200B1FA88E7DC2A /* libfmt.a */,
+				64382E3D33DD2B7F2D579147 /* libz.a */,
+				7352216EF57F4705422F4FCB /* libshadps4_ios.a */,
+				4A5993DCAFD9D14491C49225 /* libImGui_Resources.a */,
 			);
 			name = Libs;
 			sourceTree = "<group>";
 		};
-		EF24EF4CB96710DF9E33CDAE /* iOS */ = {
+		91A2CDB8D1C4C424927408F7 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				7BC294F1A0C2E62BC0EE08B6 /* Foundation.framework */,
+				ED2DABCA359DB3851CAEFF56 /* iOS */,
+				05E9EA784999D2A54DEA9AE6 /* libc++.tbd */,
+				731658AC033E4A41E44FAF8E /* libiconv.tbd */,
+				4E2B236C5494CAFC790DF5A4 /* Metal.framework */,
+				FD2EB4C6472944FEDB46EC06 /* QuartzCore.framework */,
+				59A0EDDD0C1007B369496861 /* GameController.framework */,
+				1D141BBA8F0E4A5C1CFEE179 /* CoreHaptics.framework */,
+				593B2DC3D9B90143ECD5B7E2 /* AVFoundation.framework */,
+				A6B99C8FBDE412C58BDC7989 /* CoreAudio.framework */,
+				56F540E7B6B0EBC89A98EBE5 /* AudioToolbox.framework */,
+				43DC36F572CFC682EA6FA8C6 /* CoreBluetooth.framework */,
 			);
-			name = iOS;
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
-		F31E0CE7D12F639447C10217 /* Sources */ = {
+		9AA9A99BE96B584A0F7A9544 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
-				BC29919F598092178CA3C38C /* LoadingOverlayWindow.swift */,
-				9B544ABF49DD87DA5FD6A4B3 /* AetherPS4App.swift */,
-				D7D35E4145DA9849E85DFFC8 /* CrashLogger.swift */,
-				9C1157F22CB3E036CEC0A551 /* TouchControlsOverlayWindow.swift */,
-				764AC21E1CF025E3B6D51F4F /* RestartRequiredOverlayWindow.swift */,
-				210F681BB46A86595AADB0FC /* EmulatorProcess.swift */,
-				C4F60303409F3609F4D468D1 /* Game.swift */,
-				AF811D22BBB451A3F38BE582 /* PlayTimeStore.swift */,
-				C488407DCE75A2370AA5288D /* ParamSfoReader.swift */,
-				85C2E36F440D0203D3B00D10 /* GameLibrary.swift */,
-				0843046B987BB815828396CE /* GameOverlay.swift */,
-				57C0F4B9F0326E987E6E72D1 /* JITSupport.swift */,
-				BA0E8D23E0DA4BF454C4ED22 /* SettingsView.swift */,
-				CE6B56211678FF5FC00B84FB /* SetupCheckView.swift */,
-				F4BB405501B330FED145B877 /* GameDetailView.swift */,
-				141C5DC1DAF565D3F12D1D66 /* GameCardView.swift */,
-				AA315D6C6CA3B106D3E7382D /* ConsoleView.swift */,
-				D52DED55C504931ADF381276 /* LibraryView.swift */,
-				824A368DAA7D19A5DF567832 /* ContentView.swift */,
+				C228768301F412A185CF348C /* LoadingOverlayWindow.swift */,
+				ACAA615249CF98AF49794D08 /* AetherPS4App.swift */,
+				677ADB18ADF606E29D32B758 /* CrashLogger.swift */,
+				0D48ECA05D07F26AA99C14B9 /* TouchControlsOverlayWindow.swift */,
+				78B941B5F49E05280E7B44A8 /* RestartRequiredOverlayWindow.swift */,
+				548146B82A47AE882D49B129 /* EmulatorProcess.swift */,
+				8B2E05CB524155AD0556DDC1 /* Game.swift */,
+				39B6E32C73FF798AFF87F675 /* ConfigStore.swift */,
+				B261420C93EA155BDCD17427 /* PlayTimeStore.swift */,
+				52208BE4041C7496606707E4 /* ParamSfoReader.swift */,
+				174E5F1EE6F5D1BE194BBF76 /* GameLibrary.swift */,
+				1618AADC696F07E28FD77993 /* GameOverlay.swift */,
+				1A84043D4EF70A4B5CDC51B6 /* JITSupport.swift */,
+				687842FC18B6C223D6EE9FD6 /* SettingsView.swift */,
+				920C82B594FE15AF718CAFDA /* SetupCheckView.swift */,
+				5892492D1F08180646AA6536 /* GameDetailView.swift */,
+				21157241B19C22A61FAE6FA6 /* GameCardView.swift */,
+				93E1094D61A6770F4824CBC7 /* ConsoleView.swift */,
+				803C5F052088F806DDDD6CAC /* LibraryView.swift */,
+				BE6EFBAE479C81AA5CE21F5E /* ContentView.swift */,
 			);
 			name = Sources;
 			path = Sources;
 			sourceTree = "<group>";
 		};
-		FC707573FA3E566035926C26 /* Frameworks */ = {
+		B0888EE6E1ADB575971E815D /* Resources */ = {
 			isa = PBXGroup;
 			children = (
-				EF24EF4CB96710DF9E33CDAE /* iOS */,
-				7A57331E6543040BB747F0B8 /* libc++.tbd */,
-				007F4DB90E91C26C2337B75F /* libiconv.tbd */,
-				FB09CCD07CC589EF96B39A13 /* Metal.framework */,
-				633C0D032615A7455A823C2F /* QuartzCore.framework */,
-				988812F885E61F34461C2229 /* GameController.framework */,
-				BAEEBF725E91345E434643AA /* CoreHaptics.framework */,
-				2212A1EE11A893B59E0E24C3 /* AVFoundation.framework */,
-				7D84803DE7DB142FFFFF201D /* CoreAudio.framework */,
-				000228AC8C02B95C8D039879 /* AudioToolbox.framework */,
-				96A75281566500AE9CCBB335 /* CoreBluetooth.framework */,
+				104B9423B51D9320D24DE7D2 /* Info.plist */,
+				80B00218C694A48DA12DD030 /* Assets.xcassets */,
+			);
+			name = Resources;
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		D781B14FE5D6552A2EBF7075 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				0650266BE9CE57E819343599 /* AetherPS4-iOS.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		ED2DABCA359DB3851CAEFF56 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				534781866CFE5391A51F031D /* Foundation.framework */,
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
+		F603250D9A0981C649F8377B /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				F968B6005FDF13E81D34CDC8 /* BreakpointJIT.framework */,
+				77902B805D4A1731DAC14D6D /* libvulkan.dylib */,
 			);
 			name = Frameworks;
+			path = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		0682A6C75342CCBEF1AFA22D /* AetherPS4-iOS */ = {
+		0113E1679F18A18C1A390C04 /* AetherPS4-iOS */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 5BF66B302E628C08A56A7637 /* Build configuration list for PBXNativeTarget "AetherPS4-iOS" */;
+			buildConfigurationList = B090EC4EA3065780DA66AC19 /* Build configuration list for PBXNativeTarget "AetherPS4-iOS" */;
 			buildPhases = (
-				BBAF79007601B30C019DEA81 /* Sources */,
-				AF41574BB6FCBAAFD968C9D9 /* Frameworks */,
-				09D57323D9D7868F8E58DA72 /* Resources */,
-				83C54F212FD473892675A34B /* Embed Frameworks */,
+				7E940288A4994B0AE8907F7B /* Sources */,
+				C4C3D33494AA7CDE679AC40E /* Frameworks */,
+				B66E640582873C45A691B684 /* Resources */,
+				B257FB4895FC2FF4939907FE /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
@@ -431,19 +434,19 @@
 			);
 			name = "AetherPS4-iOS";
 			productName = "AetherPS4-iOS";
-			productReference = 1D6DC13EB401E62D553BEE26 /* AetherPS4-iOS.app */;
+			productReference = 0650266BE9CE57E819343599 /* AetherPS4-iOS.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		FC49C17ACCCFAA5C5C994696 /* Project object */ = {
+		31CAA07D4A2EA9F8FABCCBDB /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
 				LastSwiftUpdateCheck = 1600;
 				LastUpgradeCheck = 1600;
 			};
-			buildConfigurationList = 49C003DAF121EA6EFEE1FFA4 /* Build configuration list for PBXProject "AetherPS4-iOS" */;
+			buildConfigurationList = 291C2852550A8C787C5480D1 /* Build configuration list for PBXProject "AetherPS4-iOS" */;
 			compatibilityVersion = "Xcode 3.2";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -451,114 +454,61 @@
 				en,
 				Base,
 			);
-			mainGroup = B34EB2781977AA5E87C7F75C;
+			mainGroup = 3C7CE09C3FFDC6EB1B00A220;
 			minimizedProjectReferenceProxies = 0;
 			preferredProjectObjectVersion = 100;
-			productRefGroup = 72951DF5803E0A5E293697F5 /* Products */;
+			productRefGroup = D781B14FE5D6552A2EBF7075 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				0682A6C75342CCBEF1AFA22D /* AetherPS4-iOS */,
+				0113E1679F18A18C1A390C04 /* AetherPS4-iOS */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		09D57323D9D7868F8E58DA72 /* Resources */ = {
+		B66E640582873C45A691B684 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3783CCEC10062E3018407D23 /* Assets.xcassets in Resources */,
+				0984C58145134EFC1E082E3B /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		BBAF79007601B30C019DEA81 /* Sources */ = {
+		7E940288A4994B0AE8907F7B /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				F2E2C5372C592373670E3A10 /* LoadingOverlayWindow.swift in Sources */,
-				8C5B77DE1390C010C949A08F /* AetherPS4App.swift in Sources */,
-				700926786028D79E5DDAAA66 /* CrashLogger.swift in Sources */,
-				ADF6D280D417317D8DD1F2D6 /* TouchControlsOverlayWindow.swift in Sources */,
-				D73F975F94EAAC9C73E82BF0 /* RestartRequiredOverlayWindow.swift in Sources */,
-				CAF1A36F4891B953E26F61C1 /* EmulatorProcess.swift in Sources */,
-				5B905B3BE8F8D3A2EAA2302B /* Game.swift in Sources */,
-				F6DBB7DC53A4B572B6FF8217 /* PlayTimeStore.swift in Sources */,
-				E92C3CE7BA0040F90000842E /* ParamSfoReader.swift in Sources */,
-				BAC7CC842ECB662DBB42EF2F /* GameLibrary.swift in Sources */,
-				E984C3D2B4524EFA5B6851DF /* GameOverlay.swift in Sources */,
-				22C50197916940C204DD4C19 /* JITSupport.swift in Sources */,
-				6CAC2B102D63D0ACC8BF2C90 /* SettingsView.swift in Sources */,
-				D0ED352DE9EE5BD00A3AFABE /* SetupCheckView.swift in Sources */,
-				74F21F6A7B144BD91FDCFBB8 /* GameDetailView.swift in Sources */,
-				4E8505041F03CBBC0D47C74A /* GameCardView.swift in Sources */,
-				47FD728A58DCA57971B84889 /* ConsoleView.swift in Sources */,
-				02109CBC891AFE80289F7D49 /* LibraryView.swift in Sources */,
-				84C816722A289260D780EAD9 /* ContentView.swift in Sources */,
+				1E89D8D4C60BD30946B1C646 /* LoadingOverlayWindow.swift in Sources */,
+				1437E48E87762D06A4E45AF5 /* AetherPS4App.swift in Sources */,
+				FB933DB8F7DB15247D31F80F /* CrashLogger.swift in Sources */,
+				A864712336F444A072FD050D /* TouchControlsOverlayWindow.swift in Sources */,
+				F64CE35C7B64475959092A4B /* RestartRequiredOverlayWindow.swift in Sources */,
+				0BC61BB6411E36E177E6C03E /* EmulatorProcess.swift in Sources */,
+				5201ADC883E1EE0B13E926F4 /* Game.swift in Sources */,
+				28DC3B2768F6E6825CBBB3F0 /* ConfigStore.swift in Sources */,
+				5A55B1D55F05E548FE9E202A /* PlayTimeStore.swift in Sources */,
+				233D333154561E4784711569 /* ParamSfoReader.swift in Sources */,
+				3EAEE677933397BE1A48974B /* GameLibrary.swift in Sources */,
+				8A291378CCF090E1CFA16BA9 /* GameOverlay.swift in Sources */,
+				56F1FBC66715FEC4382A13F1 /* JITSupport.swift in Sources */,
+				2FAC73AE71B1E36410E93D9B /* SettingsView.swift in Sources */,
+				6F418AB924FDF4A9B62AF5BC /* SetupCheckView.swift in Sources */,
+				1879A24903C361481E1C9575 /* GameDetailView.swift in Sources */,
+				2D5634D2D8F3DE50373514C2 /* GameCardView.swift in Sources */,
+				7EB4A06EAEF192FB15082CFC /* ConsoleView.swift in Sources */,
+				B2EEC2878BBD7B6D7FF33902 /* LibraryView.swift in Sources */,
+				B8303C0E6829B75E84426651 /* ContentView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
-		1367FE35234D171AB9424337 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ALWAYS_SEARCH_USER_PATHS = NO;
-				CLANG_ANALYZER_NONNULL = YES;
-				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
-				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
-				CLANG_CXX_LIBRARY = "libc++";
-				CLANG_ENABLE_MODULES = YES;
-				CLANG_ENABLE_OBJC_ARC = YES;
-				CLANG_ENABLE_OBJC_WEAK = YES;
-				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
-				CLANG_WARN_BOOL_CONVERSION = YES;
-				CLANG_WARN_COMMA = YES;
-				CLANG_WARN_CONSTANT_CONVERSION = YES;
-				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
-				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
-				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
-				CLANG_WARN_EMPTY_BODY = YES;
-				CLANG_WARN_ENUM_CONVERSION = YES;
-				CLANG_WARN_INFINITE_RECURSION = YES;
-				CLANG_WARN_INT_CONVERSION = YES;
-				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
-				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
-				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
-				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
-				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
-				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
-				CLANG_WARN_STRICT_PROTOTYPES = YES;
-				CLANG_WARN_SUSPICIOUS_MOVE = YES;
-				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
-				CLANG_WARN_UNREACHABLE_CODE = YES;
-				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				COPY_PHASE_STRIP = NO;
-				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				ENABLE_NS_ASSERTIONS = NO;
-				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				GCC_C_LANGUAGE_STANDARD = gnu11;
-				GCC_NO_COMMON_BLOCKS = YES;
-				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
-				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
-				GCC_WARN_UNDECLARED_SELECTOR = YES;
-				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
-				GCC_WARN_UNUSED_FUNCTION = YES;
-				GCC_WARN_UNUSED_VARIABLE = YES;
-				MTL_ENABLE_DEBUG_INFO = NO;
-				MTL_FAST_MATH = YES;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_COMPILATION_MODE = wholemodule;
-				SWIFT_OPTIMIZATION_LEVEL = "-O";
-				SWIFT_VERSION = 5.0;
-			};
-			name = Release;
-		};
-		1E890C1EC51183550AE968BC /* Debug */ = {
+		29D802C779000D07F38DE9CC /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -619,53 +569,61 @@
 			};
 			name = Debug;
 		};
-		7ECA172ECFD9DD3DF805C43A /* Debug */ = {
+		87EC16C6C5C888389FA29783 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CLANG_CXX_LANGUAGE_STANDARD = "c++20";
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
 				CLANG_CXX_LIBRARY = "libc++";
-				CLANG_ENABLE_OBJC_WEAK = NO;
-				CODE_SIGN_ENTITLEMENTS = "AetherPS4-iOS.entitlements";
-				CODE_SIGN_IDENTITY = "Apple Development";
-				DEVELOPMENT_TEAM = "";
-				ENABLE_BITCODE = NO;
-				FRAMEWORK_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(PROJECT_DIR)/Frameworks",
-				);
-				HEADER_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(PROJECT_DIR)/../src/platform/ios",
-					"$(PROJECT_DIR)/../src/core/pkg_extract",
-				);
-				INFOPLIST_FILE = Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
-				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
-				LIBRARY_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(PROJECT_DIR)/Libs",
-				);
-				ONLY_ACTIVE_ARCH = YES;
-				OTHER_LDFLAGS = (
-					"-ObjC",
-					"-lc++",
-					"-framework",
-					CoreMedia,
-					"-framework",
-					CoreMotion,
-				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.aether.ps4ios;
-				SDKROOT = iphoneos;
-				SWIFT_OBJC_BRIDGING_HEADER = "AetherPS4-iOS-Bridging-Header.h";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-				VALID_ARCHS = arm64;
 			};
-			name = Debug;
+			name = Release;
 		};
-		D2DBB6F845EBC86C8E7A6E54 /* Release */ = {
+		AECF86C8B407B5C2E55F8D08 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -679,28 +637,25 @@
 				ENABLE_BITCODE = NO;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
-					"$(PROJECT_DIR)/Frameworks",
+					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/AetherPS4-iOS/Frameworks",
 				);
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
-					"$(PROJECT_DIR)/../src/platform/ios",
-					"$(PROJECT_DIR)/../src/core/pkg_extract",
+					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/src/platform/ios",
+					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/src/core/pkg_extract",
 				);
 				INFOPLIST_FILE = Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
-					"$(PROJECT_DIR)/Libs",
+					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/runtime/build/shadps4-ios",
+					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/runtime/build/shadps4-ios/**",
 				);
 				ONLY_ACTIVE_ARCH = YES;
 				OTHER_LDFLAGS = (
 					"-ObjC",
 					"-lc++",
-					"-framework",
-					CoreMedia,
-					"-framework",
-					CoreMotion,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.aether.ps4ios;
 				SDKROOT = iphoneos;
@@ -712,28 +667,71 @@
 			};
 			name = Release;
 		};
+		F00BF5FE0F1279B9EFD2D437 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_CXX_LANGUAGE_STANDARD = "c++20";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = "AetherPS4-iOS.entitlements";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_BITCODE = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/AetherPS4-iOS/Frameworks",
+				);
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/src/platform/ios",
+					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/src/core/pkg_extract",
+				);
+				INFOPLIST_FILE = Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/runtime/build/shadps4-ios",
+					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/runtime/build/shadps4-ios/**",
+				);
+				ONLY_ACTIVE_ARCH = YES;
+				OTHER_LDFLAGS = (
+					"-ObjC",
+					"-lc++",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.aether.ps4ios;
+				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = "AetherPS4-iOS-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALID_ARCHS = arm64;
+			};
+			name = Debug;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		49C003DAF121EA6EFEE1FFA4 /* Build configuration list for PBXProject "AetherPS4-iOS" */ = {
+		291C2852550A8C787C5480D1 /* Build configuration list for PBXProject "AetherPS4-iOS" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				1E890C1EC51183550AE968BC /* Debug */,
-				1367FE35234D171AB9424337 /* Release */,
+				29D802C779000D07F38DE9CC /* Debug */,
+				87EC16C6C5C888389FA29783 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		5BF66B302E628C08A56A7637 /* Build configuration list for PBXNativeTarget "AetherPS4-iOS" */ = {
+		B090EC4EA3065780DA66AC19 /* Build configuration list for PBXNativeTarget "AetherPS4-iOS" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				D2DBB6F845EBC86C8E7A6E54 /* Release */,
-				7ECA172ECFD9DD3DF805C43A /* Debug */,
+				AECF86C8B407B5C2E55F8D08 /* Release */,
+				F00BF5FE0F1279B9EFD2D437 /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
 	};
-	rootObject = FC49C17ACCCFAA5C5C994696 /* Project object */;
+	rootObject = 31CAA07D4A2EA9F8FABCCBDB /* Project object */;
 }
