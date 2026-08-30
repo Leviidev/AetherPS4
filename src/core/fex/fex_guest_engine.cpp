@@ -2215,7 +2215,21 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
       }
       int final_hle = g_threads_in_hle_syscall.load(std::memory_order_acquire);
       LogMan::Msg::IFmt("BACHATA_SAFEPOINT: hle wait done, final_hle_count={}", final_hle);
-      if (final_paused < signaled || final_hle > 0) {
+      // Only final_paused < signaled is actually disqualifying here -- final_hle > 0 alone is
+      // not, and used to be treated as equally unsafe by mistake. A thread that confirmed
+      // paused (ran the signal handler and is now blocked there on g_safepoint_resume, per
+      // EndBufferInvalidationSafepoint below) cannot touch the JIT buffer again until *after*
+      // this reuse and its cache clear are done, however long g_threads_in_hle_syscall stays
+      // incremented for it -- that counter tracks "hasn't returned from Bridge.Invoke() yet",
+      // which for a thread parked in the signal handler mid-syscall is genuinely still true,
+      // but says nothing about whether it's unsafe to reuse the buffer right now. Confirmed
+      // on Rocket League's log: paused=13/13 (full success) with hle_still_active=13 still
+      // logged this as unsafe on every occurrence -- exactly the "stuck count held constant"
+      // case the HLE-wait's own 5ms-cap comment above already describes as measuring nothing
+      // useful once every thread has independently confirmed paused. This was a false alarm on
+      // every occurrence observed so far (no crash followed either time), not a fix for a
+      // fault -- the actual safety-relevant wait (paused < signaled) is unchanged.
+      if (final_paused < signaled) {
         // Deliberately impossible to miss or mistake for routine logging: the buffer reuse
         // this safepoint exists to guard is about to happen anyway (see this call's own
         // caller, Core.cpp's ClearCodeCache -- reclaiming the buffer isn't optional once
@@ -2228,6 +2242,10 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
                           "quiescence -- paused={}/{} hle_still_active={} -- a crash "
                           "shortly after this line is this exact race, not a new bug",
                           final_paused, signaled, final_hle);
+      } else if (final_hle > 0) {
+        LogMan::Msg::IFmt("BACHATA_SAFEPOINT: proceeding, all {} threads paused ({} still "
+                          "mid-HLE-call but blocked in the safepoint handler, not guest code)",
+                          signaled, final_hle);
       }
     };
     static_cast<FEXCore::Context::ContextImpl*>(impl->Context.get())
