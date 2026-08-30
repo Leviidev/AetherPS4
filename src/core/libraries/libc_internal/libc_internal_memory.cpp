@@ -215,10 +215,14 @@ void RegisterFexLibcMemoryAliases(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("Q3VBxCXhUHs", "libc", 1, "libc", internal_memcpy);
     LIB_FUNCTION("8zTFvBIAIN8", "libc", 1, "libc", internal_memset);
     LIB_FUNCTION("DfivPArhucg", "libc", 1, "libc", internal_memcmp);
-    LIB_FUNCTION("gQX+4GDQjpM", "libc", 1, "libc", internal_malloc);
-    LIB_FUNCTION("tIhsqj0qsFE", "libc", 1, "libc", internal_free);
-    LIB_FUNCTION("Y7aJ1uydPMo", "libc", 1, "libc", internal_realloc);
-    LIB_FUNCTION("Ujf3KzMvRmI", "libc", 1, "libc", internal_memalign);
+    // These return pointers from the host allocator. If a loaded libc.prx later frees one
+    // internally through its guest SceLibcHeap, it reports heap corruption and traps. Prefer
+    // the complete guest allocator family whenever it is available; retain these adapters for
+    // titles that do not provide a usable LLE export.
+    LIB_FUNCTION_FALLBACK("gQX+4GDQjpM", "libc", 1, "libc", internal_malloc);
+    LIB_FUNCTION_FALLBACK("tIhsqj0qsFE", "libc", 1, "libc", internal_free);
+    LIB_FUNCTION_FALLBACK("Y7aJ1uydPMo", "libc", 1, "libc", internal_realloc);
+    LIB_FUNCTION_FALLBACK("Ujf3KzMvRmI", "libc", 1, "libc", internal_memalign);
     // The sceLibcMspace* family below already has real implementations registered under
     // "libSceLibcInternal" (see RegisterlibSceLibcInternalMemory) -- these are the same
     // functions under the "libc" name/library/module a game can *also* import them as
@@ -229,18 +233,23 @@ void RegisterFexLibcMemoryAliases(Core::Loader::SymbolsResolver* sym) {
     // Journey actually makes -- if a game creates its heap arena through "libc"'s name for
     // this call, it's reasonable to expect it might reach the rest of the family the same
     // way, so all of them are aliased here rather than only the one confirmed so far.
-    LIB_FUNCTION("-hn1tcVHq5Q", "libc", 1, "libc", internal_sceLibcMspaceCreate);
-    LIB_FUNCTION("W6SiVSiCDtI", "libc", 1, "libc", internal_sceLibcMspaceDestroy);
-    LIB_FUNCTION("OJjm-QOIHlI", "libc", 1, "libc", internal_sceLibcMspaceMalloc);
-    LIB_FUNCTION("Vla-Z+eXlxo", "libc", 1, "libc", internal_sceLibcMspaceFree);
-    LIB_FUNCTION("LYo3GhIlB38", "libc", 1, "libc", internal_sceLibcMspaceCalloc);
-    LIB_FUNCTION("gigoVHZvVPE", "libc", 1, "libc", internal_sceLibcMspaceRealloc);
-    LIB_FUNCTION("iF1iQHzxBJU", "libc", 1, "libc", internal_sceLibcMspaceMemalign);
-    LIB_FUNCTION("fEoW6BJsPt4", "libc", 1, "libc", internal_sceLibcMspaceMallocUsableSize);
-    LIB_FUNCTION("qWESlyXMI3E", "libc", 1, "libc", internal_sceLibcMspacePosixMemalign);
-    LIB_FUNCTION("p6lrRW8-MLY", "libc", 1, "libc", internal_sceLibcMspaceReallocalign);
-    LIB_FUNCTION("mfHdJTIvhuo", "libc", 1, "libc", internal_sceLibcMspaceMallocStats);
-    LIB_FUNCTION("k04jLXu3+Ic", "libc", 1, "libc", internal_sceLibcMspaceMallocStatsFast);
+    LIB_FUNCTION_FALLBACK("-hn1tcVHq5Q", "libc", 1, "libc", internal_sceLibcMspaceCreate);
+    LIB_FUNCTION_FALLBACK("W6SiVSiCDtI", "libc", 1, "libc", internal_sceLibcMspaceDestroy);
+    LIB_FUNCTION_FALLBACK("OJjm-QOIHlI", "libc", 1, "libc", internal_sceLibcMspaceMalloc);
+    LIB_FUNCTION_FALLBACK("Vla-Z+eXlxo", "libc", 1, "libc", internal_sceLibcMspaceFree);
+    LIB_FUNCTION_FALLBACK("LYo3GhIlB38", "libc", 1, "libc", internal_sceLibcMspaceCalloc);
+    LIB_FUNCTION_FALLBACK("gigoVHZvVPE", "libc", 1, "libc", internal_sceLibcMspaceRealloc);
+    LIB_FUNCTION_FALLBACK("iF1iQHzxBJU", "libc", 1, "libc", internal_sceLibcMspaceMemalign);
+    LIB_FUNCTION_FALLBACK("fEoW6BJsPt4", "libc", 1, "libc",
+                          internal_sceLibcMspaceMallocUsableSize);
+    LIB_FUNCTION_FALLBACK("qWESlyXMI3E", "libc", 1, "libc",
+                          internal_sceLibcMspacePosixMemalign);
+    LIB_FUNCTION_FALLBACK("p6lrRW8-MLY", "libc", 1, "libc",
+                          internal_sceLibcMspaceReallocalign);
+    LIB_FUNCTION_FALLBACK("mfHdJTIvhuo", "libc", 1, "libc",
+                          internal_sceLibcMspaceMallocStats);
+    LIB_FUNCTION_FALLBACK("k04jLXu3+Ic", "libc", 1, "libc",
+                          internal_sceLibcMspaceMallocStatsFast);
 }
 #endif
 

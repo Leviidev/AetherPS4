@@ -16,10 +16,10 @@
 #endif
 
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-namespace AetherPS4::GuestCpu {
+namespace Core::GuestCpu {
 class HleGuestBridge;
 class HleVeneerAllocator;
-} // namespace AetherPS4::GuestCpu
+} // namespace Core::GuestCpu
 #endif
 
 namespace Core {
@@ -33,7 +33,7 @@ class FexGuestCpuBackend;
 // HLE veneers are host mmap pages not present in the guest VMM.
 struct FexExecutableQueryContext final {
     MemoryManager* memory{};
-    AetherPS4::GuestCpu::HleVeneerAllocator* veneers{};
+    Core::GuestCpu::HleVeneerAllocator* veneers{};
 };
 #endif
 
@@ -202,8 +202,8 @@ private:
     // Must outlive m_fex_bridge; bridge holds a raw pointer into this for
     // dynamic executable-range queries (guest VMM + late HLE veneers).
     FexExecutableQueryContext m_fex_exec_query{};
-    std::unique_ptr<AetherPS4::GuestCpu::HleVeneerAllocator> m_hle_veneers;
-    std::unique_ptr<AetherPS4::GuestCpu::HleGuestBridge> m_fex_bridge;
+    std::unique_ptr<Core::GuestCpu::HleVeneerAllocator> m_hle_veneers;
+    std::unique_ptr<Core::GuestCpu::HleGuestBridge> m_fex_bridge;
     std::unique_ptr<Core::FexGuestCpuBackend> m_fex_backend;
     std::mutex m_fex_runtime_mutex;
     VAddr m_fex_exit_veneer{};

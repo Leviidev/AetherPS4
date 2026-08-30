@@ -4,6 +4,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <deque>
 #include <mutex>
 #include <type_traits>
@@ -27,6 +28,18 @@ public:
     explicit MemoryTracker(PageManager& tracker_) : tracker{&tracker_} {}
     ~MemoryTracker() = default;
 
+    /// Ensure every 4 MB tracking manager covering a registered GPU buffer exists.
+    ///
+    /// A buffer can be written exclusively by the GPU before any CPU upload occurs. The
+    /// upload path used to be the only path that lazily created RegionManagers, so those
+    /// write-only buffers had no modification state. A later CPU readback consequently
+    /// skipped the GPU download and observed stale zero-filled guest memory. Register the
+    /// tracking range at the same time as the buffer cache entry instead.
+    void TrackRegion(VAddr cpu_addr, u64 size) {
+        IteratePages<true>(cpu_addr, size,
+                           [](RegionManager*, u64, size_t) { /* Creation is the operation. */ });
+    }
+
     /// Returns true if a region has been modified from the CPU
     bool IsRegionCpuModified(VAddr query_cpu_addr, u64 query_size) noexcept {
         return IteratePages<true>(
@@ -38,7 +51,7 @@ public:
 
     /// Returns true if a region has been modified from the GPU
     bool IsRegionGpuModified(VAddr query_cpu_addr, u64 query_size) noexcept {
-        return IteratePages<false>(
+        return IteratePages<true>(
             query_cpu_addr, query_size, [](RegionManager* manager, u64 offset, size_t size) {
                 std::scoped_lock lk{manager->lock};
                 return manager->template IsRegionModified<Type::GPU>(offset, size);
@@ -47,7 +60,7 @@ public:
 
     /// Mark region as CPU modified, notifying the device_tracker about this change
     void MarkRegionAsCpuModified(VAddr dirty_cpu_addr, u64 query_size) {
-        IteratePages<false>(dirty_cpu_addr, query_size,
+        IteratePages<true>(dirty_cpu_addr, query_size,
                             [](RegionManager* manager, u64 offset, size_t size) {
                                 std::scoped_lock lk{manager->lock};
                                 manager->template ChangeRegionState<Type::CPU, true>(
@@ -57,7 +70,7 @@ public:
 
     /// Unmark region as modified from the host GPU
     void UnmarkRegionAsGpuModified(VAddr dirty_cpu_addr, u64 query_size) noexcept {
-        IteratePages<false>(dirty_cpu_addr, query_size,
+        IteratePages<true>(dirty_cpu_addr, query_size,
                             [](RegionManager* manager, u64 offset, size_t size) {
                                 std::scoped_lock lk{manager->lock};
                                 manager->template ChangeRegionState<Type::GPU, false>(
@@ -67,7 +80,7 @@ public:
 
     /// Removes all protection from a page and ensures GPU data has been flushed if requested
     void InvalidateRegion(VAddr cpu_addr, u64 size, auto&& on_flush) noexcept {
-        IteratePages<false>(
+        IteratePages<true>(
             cpu_addr, size, [&on_flush](RegionManager* manager, u64 offset, size_t size) {
                 const bool should_flush = [&] {
                     // Perform both the GPU modification check and CPU state change with the lock
@@ -105,7 +118,7 @@ public:
         if (!is_written) {
             return;
         }
-        IteratePages<false>(query_cpu_range, query_size,
+        IteratePages<true>(query_cpu_range, query_size,
                             [&func, is_written](RegionManager* manager, u64 offset, size_t size) {
                                 manager->template ChangeRegionState<Type::GPU, true>(
                                     manager->GetCpuAddr() + offset, size);
@@ -116,7 +129,11 @@ public:
     /// Call 'func' for each GPU modified range and unmark those pages as GPU modified
     template <bool clear>
     void ForEachDownloadRange(VAddr query_cpu_range, u64 query_size, auto&& func) {
-        IteratePages<false>(query_cpu_range, query_size,
+        // GPU command processing can discover a direct-memory buffer before the normal CPU
+        // upload/registration path sees it (Journey's resource streamer does this). Never skip
+        // modification tracking for that range: create its manager here so a later readback does
+        // not expose stale zero-filled guest memory.
+        IteratePages<true>(query_cpu_range, query_size,
                             [&func](RegionManager* manager, u64 offset, size_t size) {
                                 std::scoped_lock lk{manager->lock};
                                 manager->template ForEachModifiedRange<Type::GPU, clear>(
@@ -143,7 +160,14 @@ private:
         while (remaining_size > 0) {
             const std::size_t copy_amount{
                 std::min<std::size_t>(TRACKER_HIGHER_PAGE_SIZE - page_offset, remaining_size)};
-            auto* manager{top_tier[page_index]};
+            if (page_index >= NUM_HIGH_PAGES) [[unlikely]] {
+                LOG_CRITICAL(Render_Vulkan,
+                             "Memory tracker address exceeds its {}-bit range: addr={:#x}, "
+                             "size={:#x}",
+                             MAX_CPU_PAGE_BITS, cpu_address, size);
+                return false;
+            }
+            auto* manager{top_tier[page_index].load(std::memory_order_acquire)};
             if (manager) {
                 if constexpr (BOOL_BREAK) {
                     if (func(manager, page_offset, copy_amount)) {
@@ -153,8 +177,7 @@ private:
                     func(manager, page_offset, copy_amount);
                 }
             } else if constexpr (create_region_on_fail) {
-                CreateRegion(page_index);
-                manager = top_tier[page_index];
+                manager = CreateRegion(page_index);
                 if constexpr (BOOL_BREAK) {
                     if (func(manager, page_offset, copy_amount)) {
                         return true;
@@ -175,27 +198,31 @@ private:
         return false;
     }
 
-    void CreateRegion(std::size_t page_index) {
+    RegionManager* CreateRegion(std::size_t page_index) {
+        std::scoped_lock lock{manager_pool_mutex};
+        if (auto* existing = top_tier[page_index].load(std::memory_order_relaxed)) {
+            return existing;
+        }
         const VAddr base_cpu_addr = page_index << TRACKER_HIGHER_PAGE_BITS;
         if (free_managers.empty()) {
-            manager_pool.emplace_back();
-            auto& last_pool = manager_pool.back();
             for (size_t i = 0; i < MANAGER_POOL_SIZE; i++) {
-                std::construct_at(&last_pool[i], tracker, 0);
-                free_managers.push_back(&last_pool[i]);
+                manager_pool.emplace_back(tracker, 0);
+                free_managers.push_back(&manager_pool.back());
             }
         }
         // Each manager tracks a 4_MB virtual address space.
         auto* new_manager = free_managers.back();
         new_manager->SetCpuAddress(base_cpu_addr);
         free_managers.pop_back();
-        top_tier[page_index] = new_manager;
+        top_tier[page_index].store(new_manager, std::memory_order_release);
+        return new_manager;
     }
 
     PageManager* tracker;
-    std::deque<std::array<RegionManager, MANAGER_POOL_SIZE>> manager_pool;
+    std::mutex manager_pool_mutex;
+    std::deque<RegionManager> manager_pool;
     std::vector<RegionManager*> free_managers;
-    std::array<RegionManager*, NUM_HIGH_PAGES> top_tier{};
+    std::array<std::atomic<RegionManager*>, NUM_HIGH_PAGES> top_tier{};
 };
 
 } // namespace VideoCore

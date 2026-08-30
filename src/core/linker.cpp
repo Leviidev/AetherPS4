@@ -89,7 +89,7 @@ static bool ValidateGuestMemory(void* context, std::uintptr_t address, std::size
     auto* memory = static_cast<MemoryManager*>(context);
     const auto required = static_cast<u32>(MemoryProt::CpuRead) |
                           (writable ? static_cast<u32>(MemoryProt::CpuWrite) : 0);
-    static thread_local GuestCpu::GuestMemoryValidationCache validation_cache;
+    static thread_local AetherPS4::GuestCpu::GuestMemoryValidationCache validation_cache;
     const auto generation = memory->MappingGeneration();
     if (validation_cache.Contains(memory, generation, address, size, required)) {
         return true;

@@ -5,12 +5,17 @@
 #include <iostream>
 #include <SDL3/SDL_messagebox.h>
 #include <common/assert.h>
+#include <common/logging/log.h>
 #include <common/path_util.h>
 #include <pugixml.hpp>
 #include "emulator_settings.h"
 #include "libraries/system/userservice.h"
 #include "user_manager.h"
 #include "user_settings.h"
+
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -146,6 +151,12 @@ static void MoveFolder(fs::path const& _from, fs::path const& _to) {
 }
 
 static void CheckAndMigrateSaves(TransferOption option) {
+    // Nothing is an explicit request to leave legacy data untouched. Return before even
+    // probing the old paths: those probes can fail in a sandbox and migration is optional.
+    if (option == TransferOption::Nothing || option == TransferOption::SdlCancelled) {
+        return;
+    }
+
     auto const new_save_dir = EmulatorSettings.GetHomeDir() / "1000" / "savedata";
     auto const old_save_dir =
         Common::FS::GetUserPath(Common::FS::PathType::UserDir) / "savedata" / "1";
@@ -169,12 +180,16 @@ static void CheckAndMigrateSaves(TransferOption option) {
                 UNREACHABLE();
             }
         } catch (std::exception const& e) {
-            UNREACHABLE_MSG("Error while migrating saves: {}", e.what());
+            LOG_ERROR(Common_Filesystem, "Unable to migrate legacy saves: {}", e.what());
         }
     }
 }
 
 static void CheckAndMigrateTrophies(TransferOption option) {
+    if (option == TransferOption::Nothing || option == TransferOption::SdlCancelled) {
+        return;
+    }
+
     auto const user_dir = EmulatorSettings.GetHomeDir() / "1000";
     auto const old_trophy_base_dir =
         Common::FS::GetUserPath(Common::FS::PathType::UserDir) / "game_data";
@@ -236,7 +251,7 @@ static void CheckAndMigrateTrophies(TransferOption option) {
             }
         }
     } catch (std::exception const& e) {
-        UNREACHABLE_MSG("Error while migrating trophies: {}", e.what());
+        LOG_ERROR(Common_Filesystem, "Unable to migrate legacy trophies: {}", e.what());
     }
 }
 
@@ -298,7 +313,10 @@ Users UserManager::CreateDefaultUsers() {
             std::filesystem::create_directory(user_dir / "trophy");
             std::filesystem::create_directory(user_dir / "inputs");
             if (u.user_id == 1000) {
-#ifdef ENABLE_BACHATA_RUNTIME
+#if defined(ENABLE_BACHATA_RUNTIME) || (defined(__APPLE__) && TARGET_OS_IPHONE)
+                // This SDL desktop modal interrupts the UIKit-to-renderer handoff and makes a
+                // successful game launch look like an app crash. iOS app containers also do
+                // not need desktop legacy-path migration, so preserve old data in place.
                 constexpr TransferOption user_choice = TransferOption::Nothing;
 #else
                 TransferOption user_choice = AskMigrationOption();

@@ -9,7 +9,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-namespace AetherPS4::GuestCpu {
+namespace Core::GuestCpu {
 
 std::shared_ptr<HleCallAdapter> HleCallRegistry::Register(std::shared_ptr<HleCallAdapter> adapter,
                                                            std::string_view name) {
@@ -142,4 +142,4 @@ std::optional<Core::GuestExecutionRange> HleVeneerAllocator::QueryExecutableRang
     return std::nullopt;
 }
 
-} // namespace AetherPS4::GuestCpu
+} // namespace Core::GuestCpu

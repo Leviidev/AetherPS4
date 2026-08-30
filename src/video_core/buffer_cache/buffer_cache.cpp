@@ -890,6 +890,13 @@ void BufferCache::ChangeRegister(BufferId buffer_id) {
     const auto size = buffer.SizeBytes();
     const VAddr device_addr_begin = buffer.CpuAddr();
     const VAddr device_addr_end = device_addr_begin + size;
+    if constexpr (insert) {
+        // Establish modification tracking before publishing this buffer in page_table and
+        // buffer_ranges. GPU-only destinations do not necessarily pass through the CPU-upload
+        // path that used to create RegionManagers lazily; without this, their later readback
+        // can be silently skipped and the guest observes stale zeroes.
+        memory_tracker->TrackRegion(device_addr_begin, size);
+    }
     const u64 page_begin = device_addr_begin / CACHING_PAGESIZE;
     const u64 page_end = Common::DivCeil(device_addr_end, CACHING_PAGESIZE);
     const u64 size_pages = page_end - page_begin;

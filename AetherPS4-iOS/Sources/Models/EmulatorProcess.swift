@@ -122,19 +122,10 @@ final class EmulatorProcess {
             return
         }
 
-        // LoadingOverlayWindow puts a live SwiftUI loading screen on top of everything using
-        // a second UIWindow at a higher windowLevel -- no shared view hierarchy with SDL's
-        // window, no child-view-controller containment, no constraints anchored to a window
-        // this app doesn't own. (GameOverlayHost's subview-of-SDL's-window approach crashed
-        // with an uncaught exception on its first real run; see LoadingOverlayWindow's own
-        // header comment for why this is the simpler, safer replacement.) Only viable now
-        // that shadps4_prepare_window() above is synchronous and already returned and the
-        // main thread stays free for the whole session -- its own internal Timer needs that.
-        LoadingOverlayWindow.show(gameName: gameName)
-
-        // TouchControlsOverlayWindow: same second-window pattern, at a lower windowLevel so
-        // the loading card stays on top of it while open. Shown for the whole session so
-        // controls are already there once the loading card is closed/minimized.
+        // TouchControlsOverlayWindow also owns the compact, touch-to-hide boot progress
+        // badge. Keeping both in one UIWindow avoids the old loading window's landscape
+        // coordinate mismatch and guarantees the progress UI cannot intercept controls in
+        // another window. The badge removes itself after sustained successful presentation.
         TouchControlsOverlayWindow.show()
 
         // shadps4_run_loop() is everything shadps4_prepare_window() didn't already do:

@@ -161,6 +161,7 @@ void* shadps4_get_uikit_window(void);
 // Button bit values match Libraries::Pad::OrbisPadButtonDataOffset exactly (kept in sync by
 // hand: a C header can't reference that C++ enum class directly). OR these together and
 // pass as `buttons` to shadps4_apply_touch_input below.
+#define SHADPS4_PAD_SHARE    0x1
 #define SHADPS4_PAD_L3       0x2
 #define SHADPS4_PAD_R3       0x4
 #define SHADPS4_PAD_OPTIONS  0x8

@@ -8,6 +8,7 @@ option(BUILD_FEX_LINUX_TESTS "Build FEXLinuxTests (requires x86 compiler)" FALSE
 option(BUILD_THUNKS "Build thunks" FALSE)
 option(BUILD_FEXCONFIG "Build FEXConfig" TRUE)
 option(BUILD_FEXCORE_ONLY "Build only FEXCore and an embedding smoke executable" OFF)
+option(BUILD_FEXCORE_SMOKE "Build the embedding smoke executable with BUILD_FEXCORE_ONLY" ON)
 set(FEXCORE_SMOKE_SOURCE "" CACHE FILEPATH "Embedding smoke executable source")
 set(FEXCORE_GUEST_HARNESS_SOURCES "" CACHE STRING "Semicolon-separated absolute guest harness sources")
 set(FEXCORE_PROJECT_SOURCE_DIR "" CACHE PATH "Embedding project source directory")
@@ -610,38 +611,40 @@ else()
 endif()
 
 if (BUILD_FEXCORE_ONLY)
-  if (NOT IS_ABSOLUTE "${FEXCORE_SMOKE_SOURCE}")
-    message(FATAL_ERROR "FEXCORE_SMOKE_SOURCE must be an absolute path")
-  endif()
   add_subdirectory(Source/Common/ EXCLUDE_FROM_ALL)
   add_subdirectory(Source/Tools/CommonTools/ EXCLUDE_FROM_ALL)
-  add_executable(fexcore-smoke "${FEXCORE_SMOKE_SOURCE}")
-  target_compile_features(fexcore-smoke PRIVATE cxx_std_20)
-  target_include_directories(fexcore-smoke PRIVATE
-    "${CMAKE_BINARY_DIR}/generated"
-    "${CMAKE_SOURCE_DIR}/Source/Tools/CommonTools")
-  target_link_libraries(fexcore-smoke PRIVATE
-    FEXCore Common CommonTools JemallocLibs ${PTHREAD_LIB})
-  if (FEXCORE_GUEST_HARNESS_SOURCES)
-    if (NOT IS_ABSOLUTE "${FEXCORE_PROJECT_SOURCE_DIR}" OR NOT IS_DIRECTORY "${FEXCORE_PROJECT_SOURCE_DIR}")
-      message(FATAL_ERROR "FEXCORE_PROJECT_SOURCE_DIR must be an absolute source directory")
+  if (BUILD_FEXCORE_SMOKE)
+    if (NOT IS_ABSOLUTE "${FEXCORE_SMOKE_SOURCE}")
+      message(FATAL_ERROR "FEXCORE_SMOKE_SOURCE must be an absolute path")
     endif()
-    foreach(source IN LISTS FEXCORE_GUEST_HARNESS_SOURCES)
-      if (NOT IS_ABSOLUTE "${source}")
-        message(FATAL_ERROR "fexcore-guest-harness source must be absolute: ${source}")
-      endif()
-    endforeach()
-    add_executable(fexcore-guest-harness ${FEXCORE_GUEST_HARNESS_SOURCES})
-    target_compile_features(fexcore-guest-harness PRIVATE cxx_std_20)
-    target_include_directories(fexcore-guest-harness PRIVATE
-      "${FEXCORE_PROJECT_SOURCE_DIR}"
+    add_executable(fexcore-smoke "${FEXCORE_SMOKE_SOURCE}")
+    target_compile_features(fexcore-smoke PRIVATE cxx_std_20)
+    target_include_directories(fexcore-smoke PRIVATE
       "${CMAKE_BINARY_DIR}/generated"
       "${CMAKE_SOURCE_DIR}/Source/Tools/CommonTools")
-    target_link_libraries(fexcore-guest-harness PRIVATE
+    target_link_libraries(fexcore-smoke PRIVATE
       FEXCore Common CommonTools JemallocLibs ${PTHREAD_LIB})
-    install(TARGETS fexcore-smoke fexcore-guest-harness RUNTIME DESTINATION bin)
-  else()
-    install(TARGETS fexcore-smoke RUNTIME DESTINATION bin)
+    if (FEXCORE_GUEST_HARNESS_SOURCES)
+      if (NOT IS_ABSOLUTE "${FEXCORE_PROJECT_SOURCE_DIR}" OR NOT IS_DIRECTORY "${FEXCORE_PROJECT_SOURCE_DIR}")
+        message(FATAL_ERROR "FEXCORE_PROJECT_SOURCE_DIR must be an absolute source directory")
+      endif()
+      foreach(source IN LISTS FEXCORE_GUEST_HARNESS_SOURCES)
+        if (NOT IS_ABSOLUTE "${source}")
+          message(FATAL_ERROR "fexcore-guest-harness source must be absolute: ${source}")
+        endif()
+      endforeach()
+      add_executable(fexcore-guest-harness ${FEXCORE_GUEST_HARNESS_SOURCES})
+      target_compile_features(fexcore-guest-harness PRIVATE cxx_std_20)
+      target_include_directories(fexcore-guest-harness PRIVATE
+        "${FEXCORE_PROJECT_SOURCE_DIR}"
+        "${CMAKE_BINARY_DIR}/generated"
+        "${CMAKE_SOURCE_DIR}/Source/Tools/CommonTools")
+      target_link_libraries(fexcore-guest-harness PRIVATE
+        FEXCore Common CommonTools JemallocLibs ${PTHREAD_LIB})
+      install(TARGETS fexcore-smoke fexcore-guest-harness RUNTIME DESTINATION bin)
+    else()
+      install(TARGETS fexcore-smoke RUNTIME DESTINATION bin)
+    endif()
   endif()
   return()
 endif()
