@@ -72,6 +72,17 @@ struct SetupCheckView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.large)
+
+                    Button {
+                        onPassed()
+                    } label: {
+                        Text("Continue Anyway")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.plain)
+                    .controlSize(.large)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 4)
                 }
             }
             .padding(24)
