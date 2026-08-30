@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
+
 #include "common/debug.h"
+#include "common/logging/log.h"
 #include "core/emulator_settings.h"
 #include "core/memory.h"
 #include "shader_recompiler/runtime_info.h"
@@ -190,19 +193,49 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
 
     scheduler.PopPendingOperations();
 
+    // Trace-once diagnostics (BACHATA_DRAW_TRACE): three early-return paths below can each
+    // silently skip every single draw call while frame presentation keeps succeeding
+    // normally, since Present() just flips whatever's already in the swapchain image
+    // regardless of whether anything was ever actually drawn into it -- reported on-device as
+    // "no video though frames are being presented" for Rocket League. None of these paths
+    // logged anything before, so there was no way to tell "nothing is being drawn" apart from
+    // "drawing is fine but something else hides it downstream" from the logs alone.
+    static std::atomic_bool traced_filtered{false};
+    static std::atomic_bool traced_no_pipeline{false};
+    static std::atomic_bool traced_bind_failed{false};
+    static std::atomic_bool traced_success{false};
+
     if (!FilterDraw()) {
+        if (!traced_filtered.exchange(true, std::memory_order_relaxed)) {
+            LOG_CRITICAL(Render_Vulkan, "BACHATA_DRAW_TRACE: first draw call filtered by FilterDraw()");
+        }
         return;
     }
 
     const auto& regs = liverpool->regs;
     const GraphicsPipeline* pipeline = pipeline_cache.GetGraphicsPipeline();
     if (!pipeline) {
+        if (!traced_no_pipeline.exchange(true, std::memory_order_relaxed)) {
+            LOG_CRITICAL(Render_Vulkan,
+                        "BACHATA_DRAW_TRACE: first draw call skipped, GetGraphicsPipeline() "
+                        "returned null");
+        }
         return;
     }
 
     PrepareRenderState(pipeline);
     if (!BindResources(pipeline)) {
+        if (!traced_bind_failed.exchange(true, std::memory_order_relaxed)) {
+            LOG_CRITICAL(Render_Vulkan,
+                        "BACHATA_DRAW_TRACE: first draw call skipped, BindResources() failed");
+        }
         return;
+    }
+    if (!traced_success.exchange(true, std::memory_order_relaxed)) {
+        LOG_CRITICAL(Render_Vulkan,
+                    "BACHATA_DRAW_TRACE: first real draw call reached cmdbuf submission, "
+                    "is_indexed={} num_indices={} num_instances={}",
+                    is_indexed, regs.num_indices, regs.num_instances.NumInstances());
     }
     const auto state = BeginRendering(pipeline);
 
