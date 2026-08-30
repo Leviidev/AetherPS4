@@ -1,20 +1,190 @@
 diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
 --- a/FEXCore/Source/Interface/Core/JIT/JIT.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
-@@ -1209,10 +1209,12 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
-         // shared reference again by the time this function returns, which the sequence below
-         // guarantees) -- WritePriorityMutex::Mutex doesn't track *which* call site (de)acquired
-         // it, only the net reader/writer counts, so this is safe purely at the mutex level.
--        auto& InvalidationMutex = CTX->GetCodeInvalidationMutex();
--        InvalidationMutex.unlock_shared();
--        CTX->ClearCodeCache(ThreadState, false);
--        InvalidationMutex.lock_shared();
-+        // Reusing the active allocation corrupts threads that are paused in an
-+        // HLE call: when they return, their native return address still points
-+        // into the old JIT block. Rotate to a fresh buffer so those return
-+        // paths remain executable until the normal retirement logic releases
-+        // them.
-+        CTX->ClearCodeCache(ThreadState);
- #else
-         CTX->ClearCodeCache(ThreadState);
+@@ -519,7 +519,15 @@
+     BranchEmit.b(BranchOffset);
+   }
+ 
+-  std::atomic_ref<uint32_t>(*reinterpret_cast<uint32_t*>(CallerAddress)).store(BranchInst, std::memory_order::relaxed);
++  // CallerAddress was derived from Record, which is itself captured at runtime from the LR of
++  // the `blr` inside the currently-*executing* jump thunk -- i.e. it's always the executable
++  // (RX) address on iOS's dual-mapped scheme, which may not be writable at all. Translate back
++  // to the writable (RW) alias before storing, then clear the icache at both (see JIT.cpp's
++  // CompileCode ClearICache calls for why both sides need it: the write dirties a cache line
++  // tagged by the RW VA, while the RX VA is the one actually fetched from).
++  void* WriteCallerAddress = FEXCore::Allocator::GetWritableAddress(reinterpret_cast<void*>(CallerAddress));
++  std::atomic_ref<uint32_t>(*reinterpret_cast<uint32_t*>(WriteCallerAddress)).store(BranchInst, std::memory_order::relaxed);
++  ARMEmitter::Emitter::ClearICache(WriteCallerAddress, 4);
+   ARMEmitter::Emitter::ClearICache(reinterpret_cast<void*>(CallerAddress), 4);
+ }
+ 
+@@ -533,7 +541,12 @@
+   // Restore branch +2 instructions to jump to the linker block
+   BranchEmit.b(0x2);
+ 
+-  std::atomic_ref<uint32_t>(*reinterpret_cast<uint32_t*>(JumpThunkStartAddress)).store(BranchInst, std::memory_order::relaxed);
++  // See DirectBlockDelinker above: JumpThunkStartAddress is RX-derived (from Record), needs
++  // the same RW translation before writing, and both sides need clearing afterward.
++  void* WriteJumpThunkStartAddress =
++    FEXCore::Allocator::GetWritableAddress(reinterpret_cast<void*>(JumpThunkStartAddress));
++  std::atomic_ref<uint32_t>(*reinterpret_cast<uint32_t*>(WriteJumpThunkStartAddress)).store(BranchInst, std::memory_order::relaxed);
++  ARMEmitter::Emitter::ClearICache(WriteJumpThunkStartAddress, 4);
+   ARMEmitter::Emitter::ClearICache(reinterpret_cast<void*>(JumpThunkStartAddress), 4);
+ 
+   // No need to reset HostCode here as the exit linker pointer is stored separately, and if the block is relinked it will be updated.
+@@ -610,20 +623,34 @@
+         GuestRip, Record, [](FEXCore::Context::ExitFunctionLinkData* Record) { DirectBlockDelinker(Record, false); }, lk);
+     }
+ 
+-    std::atomic_ref<uint32_t>(*reinterpret_cast<uint32_t*>(CallerAddress)).store(BranchInst, std::memory_order::relaxed);
++    // CallerAddress is RX-derived (from Record, captured off the currently-executing thunk's
++    // return address) -- translate to the writable alias before storing, same as
++    // DirectBlockDelinker/IndirectBlockDelinker above, and clear the icache at both sides.
++    void* WriteCallerAddress = FEXCore::Allocator::GetWritableAddress(reinterpret_cast<void*>(CallerAddress));
++    std::atomic_ref<uint32_t>(*reinterpret_cast<uint32_t*>(WriteCallerAddress)).store(BranchInst, std::memory_order::relaxed);
++    ARMEmitter::Emitter::ClearICache(WriteCallerAddress, 4);
+     ARMEmitter::Emitter::ClearICache(reinterpret_cast<void*>(CallerAddress), 4);
+   } else {
+     // This case is common between calls and jumps as the thunk callsite can be left untouched.
+-    std::atomic_ref<uint64_t>(Record->HostCode).store(HostCode, std::memory_order::seq_cst);
++    // Record itself lives inside the JIT buffer (the ExitFunctionLinkData struct emitted right
++    // in the code stream, see JIT.cpp's PendingJumpThunks loop) and is RX-derived same as
++    // JumpThunkStartAddress/CallerAddress -- Record->HostCode needs the same RW translation.
++    void* WriteRecord = FEXCore::Allocator::GetWritableAddress(Record);
++    auto* WriteHostCode = &reinterpret_cast<FEXCore::Context::ExitFunctionLinkData*>(WriteRecord)->HostCode;
++    std::atomic_ref<uint64_t>(*WriteHostCode).store(HostCode, std::memory_order::seq_cst);
+ #ifdef ARCHITECTURE_arm64
+     // Make memory write visible to other threads reading the same location
+-    asm volatile("dc cvau, %0; dsb ish" : : "r"(Record->HostCode) :);
++    asm volatile("dc cvau, %0; dsb ish" : : "r"(WriteHostCode) :);
++    asm volatile("dc cvau, %0; dsb ish" : : "r"(&Record->HostCode) :);
  #endif
+ 
+     uint32_t LdrInst = 0;
+     ARMEmitter::Emitter LdrEmit(reinterpret_cast<uint8_t*>(&LdrInst), 4);
+     LdrEmit.ldr(TMP1, reinterpret_cast<uint64_t>(&Record->HostCode) - JumpThunkStartAddress);
+-    std::atomic_ref<uint32_t>(*reinterpret_cast<uint32_t*>(JumpThunkStartAddress)).store(LdrInst, std::memory_order::relaxed);
++    void* WriteJumpThunkStartAddress =
++      FEXCore::Allocator::GetWritableAddress(reinterpret_cast<void*>(JumpThunkStartAddress));
++    std::atomic_ref<uint32_t>(*reinterpret_cast<uint32_t*>(WriteJumpThunkStartAddress)).store(LdrInst, std::memory_order::relaxed);
++    ARMEmitter::Emitter::ClearICache(WriteJumpThunkStartAddress, 4);
+     ARMEmitter::Emitter::ClearICache(reinterpret_cast<void*>(JumpThunkStartAddress), 4);
+ 
+     Thread->LookupCache->AddBlockLink(GuestRip, Record, IndirectBlockDelinker, lk);
+@@ -702,11 +729,30 @@
+   auto PrevCodeBuffer = CurrentCodeBuffer;
+   auto lk = PrevCodeBuffer->LookupCache->AcquireWriteLock();
+ 
++  // Delink direct branches other already-compiled code patched straight into blocks living in
++  // PrevCodeBuffer -- ChangeGuestToHostMapping below only clears this thread's own L1/L2 and
++  // swaps Shared to the new buffer, it never touches PrevCodeBuffer's own BlockLinks. Once
++  // PrevCodeBuffer's memory is eventually reclaimed/reused (this build's iOS JIT allocations
++  // are a small, StikDebug-count-limited shared pool -- see ClearCodeCache's NewCodeBuffer=false
++  // path, Core.cpp), any surviving direct patch into it becomes a landmine: a jump to memory
++  // that's since gone from "stale content" to "not part of any live allocation at all".
++  // Confirmed on-device: a crash with exactly that signature (LR inside the dispatcher's
++  // ExitFunctionLinker trampoline, PC entirely outside every current buffer) persisted even
++  // after the reuse-in-place path's own cross-thread cache sync was fully fixed and verified
++  // working -- this fresh-allocation path was the one remaining place still skipping delinking.
++  PrevCodeBuffer->LookupCache->ClearCache(lk);
++
+   auto CodeBuffer = GetEmptyCodeBuffer();
+   SetBuffer(CodeBuffer->Ptr, CodeBuffer->AllocatedSize);
+   EmitDetectionString();
+ 
+   ThreadState->LookupCache->ChangeGuestToHostMapping(*PrevCodeBuffer, *CurrentCodeBuffer->LookupCache, lk);
++  // Sibling guest threads' independent L1/L2 caches also need to be reached here, same as the
++  // reuse-in-place path -- this fresh allocation just as validly invalidates their stale
++  // entries as an in-place reuse does. See OnBufferReusedInPlace's own comment (Context.h).
++  if (CTX->OnBufferReusedInPlace) {
++    CTX->OnBufferReusedInPlace(ThreadState, lk);
++  }
+ }
+ 
+ Arm64JITCore::~Arm64JITCore() {}
+@@ -1128,7 +1174,48 @@
+       SetCursorOffset(CodeBuffers.LatestOffset);
+       Align16B();
+       if ((GetCursorOffset() + TempSize) > CurrentCodeBuffer->UsableSize()) {
++#if defined(__APPLE__) && TARGET_OS_IPHONE
++        // NewCodeBuffer=true (the default) requests a brand new dual-mapped allocation from
++        // StikDebug's external BreakpointJIT mechanism every time the cache fills, which fails
++        // on a session's 3rd+ such request (confirmed on-device, independent of the requested
++        // size -- see CPUBackend.cpp's iOS MAX_CODE_SIZE comment). NewCodeBuffer=false reuses
++        // the same already-granted buffer in place instead, avoiding that failure entirely.
++        // This was tried once before and reverted: GuestToHostMap::ClearCache
++        // (LookupCache.cpp) discarded its BlockLinks map without ever calling each entry's
++        // delinker, so already-patched direct branches in other, non-evicted code kept
++        // pointing at addresses inside the reused region -- once that physical memory got
++        // overwritten with new compiled code, re-taking one of those stale links landed on
++        // unrelated bytes, and the resulting fault's own recovery path could only fix the
++        // register for one instruction, not the stale cached target, so the same handful of
++        // addresses re-faulted forever (confirmed on-device: 7,000,000+ recoveries across
++        // only 8 distinct addresses, no crash, no progress). ClearCache now properly severs
++        // every link before discarding them, the same way Erase() already did for a single
++        // address, which is the actual fix -- re-enabling reuse-in-place here now that the
++        // real bug underneath it is fixed, rather than working around it by avoiding this
++        // path altogether.
++        //
++        // ClearCodeCache's NewCodeBuffer=false branch (Core.cpp) now takes CodeInvalidationMutex
++        // exclusively for the duration of the clear, to exclude any other thread that might
++        // currently be *executing* out of the buffer being reused (not just compiling into it --
++        // execution of already-JIT'd code never touches this mutex at all, so this is the only
++        // guard available). This call site is reached from deep inside CompileBlock (Core.cpp),
++        // which already holds that same mutex *shared* for its entire duration
++        // (GuardSignalDeferringSection<std::shared_lock>) -- this mutex doesn't support
++        // recursive or shared-to-exclusive-upgrade locking, so calling in here without first
++        // releasing that shared lock would deadlock against the exclusive lock ClearCodeCache
++        // now takes. Release it manually here and restore it immediately after, bypassing the
++        // RAII wrapper CompileBlock's local `lk` owns (its own eventual unlock_shared() in that
++        // caller's destructor stays correctly balanced as long as this thread holds exactly one
++        // shared reference again by the time this function returns, which the sequence below
++        // guarantees) -- WritePriorityMutex::Mutex doesn't track *which* call site (de)acquired
++        // it, only the net reader/writer counts, so this is safe purely at the mutex level.
++        auto& InvalidationMutex = CTX->GetCodeInvalidationMutex();
++        InvalidationMutex.unlock_shared();
++        CTX->ClearCodeCache(ThreadState, false);
++        InvalidationMutex.lock_shared();
++#else
+         CTX->ClearCodeCache(ThreadState);
++#endif
+       }
+ 
+       CodeBuffers.LatestOffset = GetCursorOffset();
+@@ -1139,6 +1226,12 @@
+     CodeData.BlockBegin += Delta;
+     for (auto& EntryPoint : CodeData.EntryPoints) {
+       EntryPoint.second += Delta;
++      // EntryPoints' values escape this function (see ContextImpl::CompileBlock in Core.cpp,
++      // which returns one directly as the uintptr_t the dispatcher branches to via
++      // "Ptr = CTX->CompileBlock(RIP); Ptr();", and they're inserted into the LookupCache other
++      // JIT'd code reads and branches to indirectly) -- unlike BlockBegin below, which is only
++      // ever used for symbol/debug bookkeeping, never branched to, so it stays a write address.
++      EntryPoint.second = reinterpret_cast<uint8_t*>(FEXCore::Allocator::GetExecutableAddress(EntryPoint.second));
+     }
+     CodeBegin += Delta;
+ 
+@@ -1155,7 +1248,23 @@
+ 
+   TempAllocator.DelayedDisownBuffer();
+ 
++  // CodeBegin is a write (RW) address (see the comment on EntryPoint.second above -- unlike that
++  // one, this pointer was never translated since it's normally "only used for symbol/debug
++  // bookkeeping"). The actual memcpy of freshly-compiled bytes above happened through this RW
++  // alias, so on iOS's dual-mapped scheme (RW and RX are different VAs backed by the same
++  // physical pages) two separate cache-maintenance concerns apply, and both addresses are needed:
++  //  1. The CPU's data cache may have dirtied a line tagged by the RW VA (the one actually
++  //     written through) that a clean/invalidate issued only at the RX VA won't necessarily
++  //     reach -- a classic VIPT synonym hazard for two virtual aliases of one physical page.
++  //     Clearing at CodeBegin (RW) first flushes that dirtied line to the point of unification.
++  //  2. The CPU's instruction cache may hold stale entries under the RX VA's own tag (e.g. from
++  //     a previous occupant of this buffer slot), which only a clear issued at the RX address
++  //     itself invalidates -- and RX is the alias actually fetched from when this code is later
++  //     branched to, so it must be current.
++  // Skipping either one reintroduces the same "branch into fresh code" instruction-fetch fault:
++  // RX-only leaves the RW-side dirty line unflushed; RW-only leaves the RX-side icache stale.
+   ClearICache(CodeBegin, CodeOnlySize);
++  ClearICache(FEXCore::Allocator::GetExecutableAddress(CodeBegin), CodeOnlySize);
+ 
+ #ifdef VIXL_DISASSEMBLER
+   if (Disassemble() & FEXCore::Config::Disassemble::STATS) {
