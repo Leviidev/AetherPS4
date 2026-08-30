@@ -36,6 +36,15 @@ struct SymbolRecord {
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
     std::shared_ptr<GuestCpu::HleCallAdapter> hle_adapter;
     bool hle_fallback{};
+    // Set only by AddUnsupportedFunction, cleared by AddFunction/AddFallbackFunction when a
+    // real registration later claims the same name. hle_fallback alone can't distinguish "a
+    // genuine LIB_FUNCTION_FALLBACK-registered host implementation" from "the ENOSYS stub
+    // AddUnsupportedFunction created for an earlier failed resolve of this exact symbol,
+    // cached back into this same table with hle_fallback=true so a second resolve attempt
+    // finds *something*" -- both look identical through that one flag, even though only the
+    // first is an actual implementation. Linker::Resolve checks this to log the two cases
+    // distinctly instead of reporting a cached ENOSYS stub as "resolved via fallback".
+    bool is_unsupported_stub{};
 #endif
 };
 

@@ -39,6 +39,7 @@ void SymbolsResolver::AddFunction(const SymbolResolver& s,
         if (record.hle_fallback) {
             record.hle_adapter = std::move(adapter);
             record.hle_fallback = false;
+            record.is_unsupported_stub = false;
             return;
         }
     }
@@ -62,6 +63,9 @@ void SymbolsResolver::AddFallbackFunction(
     }
     if (existing != m_symbol_index.end()) {
         m_symbols[existing->second].hle_adapter = std::move(adapter);
+        // A real fallback registration always wins over whatever an earlier failed resolve
+        // of this exact name may have cached here via AddUnsupportedFunction.
+        m_symbols[existing->second].is_unsupported_stub = false;
         return;
     }
     m_symbol_index.emplace(name, m_symbols.size());
@@ -85,6 +89,9 @@ SymbolsResolver::AddUnsupportedFunction(const SymbolResolver& s) {
                    m_symbols.back().hle_adapter != nullptr,
                "Unable to register unsupported HLE function {}", name);
     m_symbols.back().hle_fallback = true;
+    // Distinguishes this ENOSYS placeholder from a genuine LIB_FUNCTION_FALLBACK registration
+    // (both set hle_fallback=true) -- see SymbolRecord::is_unsupported_stub's own comment.
+    m_symbols.back().is_unsupported_stub = true;
     return m_symbols.back().hle_adapter;
 }
 
