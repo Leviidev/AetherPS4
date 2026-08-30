@@ -892,7 +892,17 @@ bool Linker::Resolve(const std::string& name, Loader::SymbolType sym_type, Modul
         return true;
     }
 
-    // Check if it an exported function from one of our loaded libraries
+    // Check if it an exported function from one of our loaded libraries. Uses its own local
+    // variable rather than reassigning `record`: `record` above may already hold a genuine
+    // LIB_FUNCTION_FALLBACK registration (read again after this loop, near the bottom of this
+    // function), and reassigning it here to whatever this loop's last matching-tagged module
+    // happens to return -- including nullptr, when that module's export tags match but it
+    // doesn't actually export this specific symbol -- would silently discard that fallback,
+    // even though nothing was actually found here to replace it with. Confirmed on-device via
+    // the same NID (__cxa_throw, unregistered anywhere as a fallback to begin with, but the
+    // same clobbering applies to ones that are) resolving successfully from one call site and
+    // hitting the unconditional-ENOSYS path from another, purely depending on which modules
+    // happened to be loaded yet at each call.
     for (const auto& mod : m_modules) {
         if (!std::ranges::contains(mod->GetExportLibs(), *library) ||
             !std::ranges::contains(mod->GetExportModules(), *module)) {
@@ -901,9 +911,8 @@ bool Linker::Resolve(const std::string& name, Loader::SymbolType sym_type, Modul
         if (mod->export_sym.GetSize() == 0) {
             continue;
         }
-        record = mod->export_sym.FindSymbol(sr);
-        if (record) {
-            *return_info = *record;
+        if (const auto* export_record = mod->export_sym.FindSymbol(sr)) {
+            *return_info = *export_record;
             return true;
         }
     }
