@@ -137,13 +137,20 @@ private final class BootProgressState: ObservableObject {
     }
 
     private func refresh() {
-        guard isVisible else { return }
         let text = readLogTail()
 
-        // A fatal guest signal leaves the native SDL window and UIKit overlay alive, so the
-        // player otherwise sees the last submitted (often black) frame forever and reasonably
-        // assumes the game is still loading. Surface that distinction and keep the badge on
-        // screen until the player dismisses it; a failure must never auto-hide as "Ready".
+        // Checked unconditionally, even once the badge has already declared Ready and hidden
+        // itself (isVisible == false, checked further down instead of guarding this whole
+        // function) -- a fatal guest crash can happen well after real frames started
+        // presenting. Confirmed on-device: Rocket League's RenderingThread crashing several
+        // minutes into a session, long past every "Ready" heuristic below, with PresentThread
+        // surviving independently and flipping the same last frame forever -- from the
+        // player's side that's indistinguishable from "no video", with nothing telling them
+        // why, unless this keeps watching. A fatal guest signal leaves the native SDL window
+        // and UIKit overlay alive, so the player otherwise sees the last submitted (often
+        // black) frame forever and reasonably assumes the game is still loading. Surface that
+        // distinction and bring the badge back on screen until the player dismisses it, no
+        // matter how long ago it hid itself as "Ready".
         let fatalMarkers = [
             "Unhandled access violation",
             "Unhandled illegal instruction",
@@ -152,10 +159,13 @@ private final class BootProgressState: ObservableObject {
         if fatalMarkers.contains(where: text.contains) {
             hasFailed = true
             stage = "Game stopped"
+            isVisible = true
             timer?.invalidate()
             timer = nil
             return
         }
+
+        guard isVisible else { return }
 
         var next = 0.06
         var nextStage = "Preparing"
@@ -205,8 +215,19 @@ private final class BootProgressState: ObservableObject {
         stage = nextStage
         if progress >= 1.0 && !completionScheduled {
             completionScheduled = true
+            // Not invalidated to nil: crash-watching (the fatalMarkers check above, which runs
+            // unconditionally on every tick regardless of isVisible) still needs a live timer
+            // to keep firing. Swapped for a much slower cadence instead of the boot-time 0.5s
+            // one -- fine-grained progress tracking is no longer needed once Ready, and tailing
+            // the log file every 0.5s indefinitely for a session that can run for hours is real,
+            // avoidable overhead (see the Console Logging setting's own comment on this file
+            // tailing being measurably costly at high frequency).
             timer?.invalidate()
-            timer = nil
+            let slowTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+                self?.refresh()
+            }
+            RunLoop.main.add(slowTimer, forMode: .common)
+            timer = slowTimer
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .milliseconds(900))
                 self?.isVisible = false
