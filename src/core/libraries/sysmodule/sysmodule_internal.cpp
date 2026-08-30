@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "common/assert.h"
+#include "common/boot_timer.h"
 #include "common/elf_info.h"
 #include "common/logging/log.h"
 #include "core/emulator_settings.h"
@@ -478,9 +479,20 @@ s32 preloadModulesForLibkernel() {
         }
 
         // Load the actual module. defer_relocate_all=true: see loadModuleInternal's own
-        // comment on the HLE-fallback branch for why -- this loop is exactly the O(n^2)
-        // case that was costing ~99 seconds of boot time on-device.
+        // comment on the HLE-fallback branch for why.
+        //
+        // Per-module timing: neither the RelocateAllImports() call-count fix above nor a
+        // follow-up O(1) symbol-lookup index (SymbolsResolver's own linear scan) moved this
+        // loop's ~96-99 second on-device cost at all -- confirmed on the actual fixed builds
+        // via the embedded git revision, so both were real fixes that just weren't the
+        // dominant cost here. This brackets each individual module's loadModuleInternal call
+        // so the next capture shows exactly which module (or whether it's spread evenly
+        // across all of them) is actually responsible, instead of guessing a third time.
+        const auto module_start_ms = Common::BootElapsedMs();
         s32 result = loadModuleInternal(module_index, 0, nullptr, nullptr, true);
+        LOG_CRITICAL(Lib_SysModule, "BACHATA_BOOT_TIMING: preload {} took {}ms (index={:#x})",
+                    g_modules_array[module_index].name, Common::BootElapsedMs() - module_start_ms,
+                    module_index);
         if (result != ORBIS_OK) {
             // On real hardware, module preloading must succeed or the game will abort.
             // To enable users to test homebrew easier, we'll log a critical error instead.

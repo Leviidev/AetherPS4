@@ -622,7 +622,11 @@ void Linker::Execute(const std::vector<std::string>& args) {
         }
 
         // Have libSceSysmodule preload our libraries.
+        LOG_CRITICAL(Core_Linker, "BACHATA_BOOT_TIMING: sysmodule preload starting at {}ms",
+                    Common::BootElapsedMs());
         Libraries::SysModule::sceSysmodulePreloadModuleForLibkernel();
+        LOG_CRITICAL(Core_Linker, "BACHATA_BOOT_TIMING: sysmodule preload done at {}ms",
+                    Common::BootElapsedMs());
 
         // Load and start custom modules from the user directory.
         std::string_view id = Common::ElfInfo::Instance().GameSerial();
@@ -641,6 +645,8 @@ void Linker::Execute(const std::vector<std::string>& args) {
                 }
             }
         }
+        LOG_CRITICAL(Core_Linker, "BACHATA_BOOT_TIMING: custom module loop done at {}ms",
+                    Common::BootElapsedMs());
 
         // Simulate libSceGnmDriver initialization, which maps a chunk of direct memory.
         // Some games fail without accurately emulating this behavior.
@@ -653,6 +659,8 @@ void Linker::Execute(const std::vector<std::string>& args) {
                 &addr, 0x10000, 0x13, 0, phys_addr, 0x10000, "SceGnmDriver");
         }
         ASSERT_MSG(result == 0, "Unable to emulate libSceGnmDriver initialization");
+        LOG_CRITICAL(Core_Linker, "BACHATA_BOOT_TIMING: GnmDriver memory setup done at {}ms",
+                    Common::BootElapsedMs());
 
         // Add all guest arguments, we will always have the executable path in argv[0]
         EntryParams& params = Libraries::Kernel::entry_params;
