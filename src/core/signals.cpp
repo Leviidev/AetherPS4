@@ -18,6 +18,8 @@
 #endif
 #include "emulator.h"
 
+#include <cstdio>
+#include <string_view>
 #include <unistd.h>
 
 #ifdef _WIN32
@@ -326,6 +328,27 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
             const auto lr = static_cast<uintptr_t>(arm_thread_state64_get_lr(apple_context->uc_mcontext->__ss));
             const auto pc = static_cast<uintptr_t>(arm_thread_state64_get_pc(apple_context->uc_mcontext->__ss));
             LOG_CRITICAL(Debug, "FEX fault registers: pc={:#x} lr={:#x}", pc, lr);
+            // The "FEX guest state at fault" block earlier in this handler (guest rip, guest
+            // instruction bytes, guest register dump) is a *stale* JIT/HLE checkpoint, not the
+            // live fault site -- confirmed wrong on a real crash: it decoded as a completely
+            // unrelated x86 instruction ("mov rsi, [rdi+0x20]") that couldn't be reconciled
+            // with this fault's own info->si_addr at all. code_address/pc above is the real
+            // ARM64 PC FEX's JIT was actually executing; x0-x28 (unlike pc/lr, not PAC-opaque,
+            // so plain ts.__x[] access is correct -- same as flatten_extended_userdata_pass.cpp's
+            // SrtWalkerSignalHandler) are the real host registers that instruction was operating
+            // on, needed to compute what it actually faulted on instead of guessing from the
+            // stale guest snapshot next time this happens.
+            const auto& ts = apple_context->uc_mcontext->__ss;
+            char host_regs[512] = {};
+            int host_regs_len = 0;
+            for (int i = 0; i < 29 && host_regs_len < static_cast<int>(sizeof(host_regs)) - 16;
+                 i++) {
+                host_regs_len += std::snprintf(host_regs + host_regs_len,
+                                               sizeof(host_regs) - host_regs_len, "x%d=%#llx ", i,
+                                               static_cast<unsigned long long>(ts.__x[i]));
+            }
+            LOG_CRITICAL(Debug, "FEX host ARM64 registers at fault: {}",
+                        std::string_view(host_regs, host_regs_len));
         }
 #endif
 #endif
