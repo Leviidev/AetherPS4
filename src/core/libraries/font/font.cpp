@@ -88,7 +88,7 @@ static void* CallFontAlloc(FontAllocFn fn, void* ctx, u32 size) {
     // Font allocators are always guest-provided callbacks; under FEX they must
     // be dispatched through the guest-callback bridge, never called directly.
     const std::array<u64, 2> args{reinterpret_cast<u64>(ctx), static_cast<u64>(size)};
-    return reinterpret_cast<void*>(Core::GuestCpu::RunGuestFunctionOrAbort(
+    return reinterpret_cast<void*>(AetherPS4::GuestCpu::RunGuestFunctionOrAbort(
         reinterpret_cast<const void*>(fn), args, "font alloc"));
 #else
     return fn(ctx, size);
@@ -98,7 +98,7 @@ static void* CallFontAlloc(FontAllocFn fn, void* ctx, u32 size) {
 static void CallFontFree(FontFreeFn fn, void* ctx, void* p) {
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
     const std::array<u64, 2> args{reinterpret_cast<u64>(ctx), reinterpret_cast<u64>(p)};
-    Core::GuestCpu::RunGuestFunctionOrAbort(
+    AetherPS4::GuestCpu::RunGuestFunctionOrAbort(
         reinterpret_cast<const void*>(fn), args, "font free");
 #else
     fn(ctx, p);
@@ -113,10 +113,10 @@ static void CallFontFree(FontFreeFn fn, void* ctx, void* p) {
 static s32 CallSysDriverInit(Libraries::Font::Internal::SysDriver::InitFn fn,
                              const void* memory, void* library) {
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-    if (Core::GuestCpu::IsGuestFunctionAddress(reinterpret_cast<const void*>(fn))) {
+    if (AetherPS4::GuestCpu::IsGuestFunctionAddress(reinterpret_cast<const void*>(fn))) {
         const std::array<u64, 2> args{reinterpret_cast<u64>(memory),
                                       reinterpret_cast<u64>(library)};
-        return static_cast<s32>(Core::GuestCpu::RunGuestFunctionOrAbort(
+        return static_cast<s32>(AetherPS4::GuestCpu::RunGuestFunctionOrAbort(
             reinterpret_cast<const void*>(fn), args, "font sys_driver init"));
     }
 #endif

@@ -89,7 +89,7 @@ void _thread_cleanupspecific() {
                  */
                 lk.unlock();
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-                Core::GuestCpu::RunGuestFunctionOrAbort(
+                AetherPS4::GuestCpu::RunGuestFunctionOrAbort(
                     reinterpret_cast<void*>(destructor), "pthread key destructor", data);
 #else
                 destructor(data);

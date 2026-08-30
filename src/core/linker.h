@@ -15,6 +15,13 @@
 #include "core/guest_cpu/guest_cpu.h"
 #endif
 
+#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
+namespace Core::GuestCpu {
+class HleGuestBridge;
+class HleVeneerAllocator;
+} // namespace Core::GuestCpu
+#endif
+
 namespace Core {
 
 struct DynamicModuleInfo;
@@ -22,15 +29,11 @@ class Linker;
 class MemoryManager;
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
 class FexGuestCpuBackend;
-namespace GuestCpu {
-class HleGuestBridge;
-class HleVeneerAllocator;
-}
 // Shared by Linker runtime and the FEX dynamic executable-range callback.
 // HLE veneers are host mmap pages not present in the guest VMM.
 struct FexExecutableQueryContext final {
     MemoryManager* memory{};
-    GuestCpu::HleVeneerAllocator* veneers{};
+    Core::GuestCpu::HleVeneerAllocator* veneers{};
 };
 #endif
 
@@ -173,7 +176,7 @@ public:
     void Execute(const std::vector<std::string>& args = {});
     void DebugDump();
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-    using GuestFunctionResult = std::variant<u64, GuestExecutionFailure>;
+    using GuestFunctionResult = std::variant<u64, Core::GuestExecutionFailure>;
     GuestFunctionResult RunGuestFunction(VAddr entry, std::span<const u64> arguments = {},
                                          VAddr stack_top = 0);
     GuestFunctionResult RunGuestMain(EntryParams* params);
@@ -181,7 +184,7 @@ public:
 
 private:
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-    std::optional<GuestExecutionFailure> InitializeFexRuntime();
+    std::optional<Core::GuestExecutionFailure> InitializeFexRuntime();
 #endif
     void* CallAppHeapMalloc(u64 size);
     void CallAppHeapFree(void* pointer);
@@ -199,9 +202,9 @@ private:
     // Must outlive m_fex_bridge; bridge holds a raw pointer into this for
     // dynamic executable-range queries (guest VMM + late HLE veneers).
     FexExecutableQueryContext m_fex_exec_query{};
-    std::unique_ptr<GuestCpu::HleVeneerAllocator> m_hle_veneers;
-    std::unique_ptr<GuestCpu::HleGuestBridge> m_fex_bridge;
-    std::unique_ptr<FexGuestCpuBackend> m_fex_backend;
+    std::unique_ptr<Core::GuestCpu::HleVeneerAllocator> m_hle_veneers;
+    std::unique_ptr<Core::GuestCpu::HleGuestBridge> m_fex_bridge;
+    std::unique_ptr<Core::FexGuestCpuBackend> m_fex_backend;
     std::mutex m_fex_runtime_mutex;
     VAddr m_fex_exit_veneer{};
 #endif

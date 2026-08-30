@@ -120,12 +120,12 @@ HleVeneerResult HleVeneerAllocator::Allocate(const HleCallAdapter& adapter) {
     return address;
 }
 
-std::vector<GuestExecutionRange> HleVeneerAllocator::GetExecutableRanges() const {
+std::vector<Core::GuestExecutionRange> HleVeneerAllocator::GetExecutableRanges() const {
     std::scoped_lock lock{allocator_mutex};
     return executable_ranges;
 }
 
-std::optional<GuestExecutionRange> HleVeneerAllocator::QueryExecutableRange(
+std::optional<Core::GuestExecutionRange> HleVeneerAllocator::QueryExecutableRange(
     std::uintptr_t address) const {
     if (address == 0) {
         return std::nullopt;

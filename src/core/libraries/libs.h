@@ -22,6 +22,16 @@
         /* FEX reaches HLE through an x86 syscall veneer, never an ARM host address. */           \
         sym->AddFunction(sr, Core::GuestCpu::MakeHleCallAdapter(function));                        \
     }
+#define LIB_FUNCTION_FALLBACK(nid, lib, libversion, mod, function)                                 \
+    {                                                                                              \
+        Core::Loader::SymbolResolver sr{};                                                         \
+        sr.name = nid;                                                                             \
+        sr.library = lib;                                                                          \
+        sr.library_version = libversion;                                                           \
+        sr.module = mod;                                                                           \
+        sr.type = Core::Loader::SymbolType::Function;                                              \
+        sym->AddFallbackFunction(sr, Core::GuestCpu::MakeHleCallAdapter(function));           \
+    }
 #else
 #define LIB_FUNCTION(nid, lib, libversion, mod, function)                                          \
     {                                                                                              \
@@ -34,6 +44,8 @@
         auto func = reinterpret_cast<u64>(HOST_CALL(function));                                    \
         sym->AddSymbol(sr, func);                                                                  \
     }
+#define LIB_FUNCTION_FALLBACK(nid, lib, libversion, mod, function)                                 \
+    LIB_FUNCTION(nid, lib, libversion, mod, function)
 #endif
 
 #define LIB_OBJ(nid, lib, libversion, mod, obj)                                                    \

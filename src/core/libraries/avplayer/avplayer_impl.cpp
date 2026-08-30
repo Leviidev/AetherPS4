@@ -18,7 +18,7 @@ const void* CallbackAddress(Callback callback) {
 
 template <typename Callback>
 bool IsGuestCallback(Callback callback) {
-    return Core::GuestCpu::IsGuestFunctionAddress(CallbackAddress(callback));
+    return AetherPS4::GuestCpu::IsGuestFunctionAddress(CallbackAddress(callback));
 }
 #endif
 
@@ -28,7 +28,7 @@ void* PS4_SYSV_ABI AvPlayer::Allocate(void* handle, u32 alignment, u32 size) {
     const auto ptr = self->m_init_data_original.memory_replacement.object_ptr;
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
     if (IsGuestCallback(allocate)) {
-        return reinterpret_cast<void*>(Core::GuestCpu::RunGuestFunctionOrAbort(
+        return reinterpret_cast<void*>(AetherPS4::GuestCpu::RunGuestFunctionOrAbort(
             CallbackAddress(allocate), "AvPlayer allocate", ptr, alignment, size));
     }
 #endif
@@ -41,7 +41,7 @@ void PS4_SYSV_ABI AvPlayer::Deallocate(void* handle, void* memory) {
     const auto ptr = self->m_init_data_original.memory_replacement.object_ptr;
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
     if (IsGuestCallback(deallocate)) {
-        Core::GuestCpu::RunGuestFunctionOrAbort(CallbackAddress(deallocate),
+        AetherPS4::GuestCpu::RunGuestFunctionOrAbort(CallbackAddress(deallocate),
                                                 "AvPlayer deallocate", ptr, memory);
         return;
     }
@@ -55,7 +55,7 @@ void* PS4_SYSV_ABI AvPlayer::AllocateTexture(void* handle, u32 alignment, u32 si
     const auto ptr = self->m_init_data_original.memory_replacement.object_ptr;
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
     if (IsGuestCallback(allocate)) {
-        return reinterpret_cast<void*>(Core::GuestCpu::RunGuestFunctionOrAbort(
+        return reinterpret_cast<void*>(AetherPS4::GuestCpu::RunGuestFunctionOrAbort(
             CallbackAddress(allocate), "AvPlayer allocate texture", ptr, alignment, size));
     }
 #endif
@@ -68,7 +68,7 @@ void PS4_SYSV_ABI AvPlayer::DeallocateTexture(void* handle, void* memory) {
     const auto ptr = self->m_init_data_original.memory_replacement.object_ptr;
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
     if (IsGuestCallback(deallocate)) {
-        Core::GuestCpu::RunGuestFunctionOrAbort(
+        AetherPS4::GuestCpu::RunGuestFunctionOrAbort(
             CallbackAddress(deallocate), "AvPlayer deallocate texture", ptr, memory);
         return;
     }

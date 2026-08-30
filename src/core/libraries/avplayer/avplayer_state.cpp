@@ -97,8 +97,8 @@ void AvPlayerState::DefaultEventCallback(void* opaque, AvPlayerEvents event_id, 
     }
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
     const auto callback_address = reinterpret_cast<const void*>(callback);
-    if (Core::GuestCpu::IsGuestFunctionAddress(callback_address)) {
-        Core::GuestCpu::RunGuestFunctionOrAbort(callback_address, "AvPlayer event", ptr, event_id,
+    if (AetherPS4::GuestCpu::IsGuestFunctionAddress(callback_address)) {
+        AetherPS4::GuestCpu::RunGuestFunctionOrAbort(callback_address, "AvPlayer event", ptr, event_id,
                                                 source_id, event_data);
         return;
     }

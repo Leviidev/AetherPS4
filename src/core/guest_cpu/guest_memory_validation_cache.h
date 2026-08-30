@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <limits>
 
-namespace Core::GuestCpu {
+namespace AetherPS4::GuestCpu {
 
 class GuestMemoryValidationCache final {
 public:
@@ -49,4 +49,4 @@ private:
     std::size_t next_entry{};
 };
 
-} // namespace Core::GuestCpu
+} // namespace AetherPS4::GuestCpu

@@ -95,8 +95,8 @@ void PS4_SYSV_ABI posix_pthread_exit(void* status) {
         PthreadCleanup* old = curthread->cleanup.front();
         curthread->cleanup.pop_front();
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-        if (Core::GuestCpu::IsGuestFunctionAddress(reinterpret_cast<const void*>(old->routine))) {
-            Core::GuestCpu::RunGuestFunctionOrAbort(
+        if (AetherPS4::GuestCpu::IsGuestFunctionAddress(reinterpret_cast<const void*>(old->routine))) {
+            AetherPS4::GuestCpu::RunGuestFunctionOrAbort(
                 reinterpret_cast<void*>(old->routine), "pthread cleanup", old->routine_arg);
         } else {
             old->routine(old->routine_arg);
@@ -110,8 +110,8 @@ void PS4_SYSV_ABI posix_pthread_exit(void* status) {
     }
     if (ThreadDtors) {
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-        if (Core::GuestCpu::IsGuestFunctionAddress(reinterpret_cast<const void*>(ThreadDtors))) {
-            Core::GuestCpu::RunGuestFunctionOrAbort(reinterpret_cast<void*>(ThreadDtors),
+        if (AetherPS4::GuestCpu::IsGuestFunctionAddress(reinterpret_cast<const void*>(ThreadDtors))) {
+            AetherPS4::GuestCpu::RunGuestFunctionOrAbort(reinterpret_cast<void*>(ThreadDtors),
                                                      "pthread thread dtors");
         } else {
             (ThreadDtors)();
@@ -256,13 +256,13 @@ static void* RunThread(void* arg) {
         (void*)(((size_t)curthread->attr.stackaddr_attr + curthread->attr.stacksize_attr) & (~15));
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
     void* ret{};
-    const bool is_guest_addr = Core::GuestCpu::IsGuestFunctionAddress(
+    const bool is_guest_addr = AetherPS4::GuestCpu::IsGuestFunctionAddress(
         reinterpret_cast<const void*>(curthread->start_routine));
     LOG_INFO(Kernel_Pthread, "BACHATA_RUNTHREAD: is_guest_addr={} tid={}", is_guest_addr,
              curthread->tid.load());
     if (is_guest_addr) {
         const std::array<u64, 1> start_arguments{reinterpret_cast<u64>(curthread->arg)};
-        const auto guest_result = Core::GuestCpu::RunGuestFunctionOrAbort(
+        const auto guest_result = AetherPS4::GuestCpu::RunGuestFunctionOrAbort(
             reinterpret_cast<void*>(curthread->start_routine), start_arguments,
             "pthread start", reinterpret_cast<VAddr>(stack));
         ret = reinterpret_cast<void*>(guest_result);
@@ -465,8 +465,8 @@ int PS4_SYSV_ABI posix_pthread_once(PthreadOnce* once_control,
     PthreadCleanup cup{once_cancel_handler, once_control, 0};
     g_curthread->cleanup.push_front(&cup);
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-    if (Core::GuestCpu::IsGuestFunctionAddress(reinterpret_cast<const void*>(init_routine))) {
-        Core::GuestCpu::RunGuestFunctionOrAbort(reinterpret_cast<void*>(init_routine),
+    if (AetherPS4::GuestCpu::IsGuestFunctionAddress(reinterpret_cast<const void*>(init_routine))) {
+        AetherPS4::GuestCpu::RunGuestFunctionOrAbort(reinterpret_cast<void*>(init_routine),
                                                  "pthread once");
     } else {
         init_routine();

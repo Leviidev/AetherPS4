@@ -88,8 +88,8 @@ void MaybeInvokeOpCallback(const void* op_attr, s32 op, s32 err, s64 result) {
              "[FIOS-HLE][OpCallback] invoke cb={} ctx={} op={} err={} result={}",
              attr->p_callback, attr->p_callback_context, op, err, result);
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-    if (Core::GuestCpu::IsGuestFunctionAddress(attr->p_callback)) {
-        Core::GuestCpu::RunGuestFunctionOrAbort(attr->p_callback, "sceFiosOpCallback",
+    if (AetherPS4::GuestCpu::IsGuestFunctionAddress(attr->p_callback)) {
+        AetherPS4::GuestCpu::RunGuestFunctionOrAbort(attr->p_callback, "sceFiosOpCallback",
                                                 attr->p_callback_context, op, err, result);
         return;
     }

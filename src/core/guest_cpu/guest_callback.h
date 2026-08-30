@@ -14,7 +14,7 @@
 #include "common/types.h"
 #include "core/linker.h"
 
-namespace Core::GuestCpu {
+namespace AetherPS4::GuestCpu {
 
 template <typename T>
 u64 EncodeGuestCallbackArgument(T value) {
@@ -31,19 +31,19 @@ u64 EncodeGuestCallbackArgument(T value) {
 }
 
 inline bool IsGuestFunctionAddress(const void* function) {
-    auto* linker = Common::Singleton<Linker>::Instance();
+    auto* linker = Common::Singleton<Core::Linker>::Instance();
     return function != nullptr && linker->FindByAddress(reinterpret_cast<VAddr>(function)) != nullptr;
 }
 
 inline u64 RunGuestFunctionOrAbort(const void* function, std::span<const u64> arguments,
                                    std::string_view label, VAddr stack_top = 0) {
-    auto* linker = Common::Singleton<Linker>::Instance();
+    auto* linker = Common::Singleton<Core::Linker>::Instance();
     LOG_INFO(Core_Linker, "BACHATA_GUEST_CALL: begin label={} function={:#x} stack_top={:#x}",
              label, reinterpret_cast<VAddr>(function), stack_top);
     const auto result = linker->RunGuestFunction(reinterpret_cast<VAddr>(function), arguments,
                                                   stack_top);
     LOG_INFO(Core_Linker, "BACHATA_GUEST_CALL: returned label={}", label);
-    if (const auto* failure = std::get_if<GuestExecutionFailure>(&result)) {
+    if (const auto* failure = std::get_if<Core::GuestExecutionFailure>(&result)) {
         LOG_CRITICAL(Core_Linker, "FEX guest callback {} failed at stage {}: {}", label,
                      static_cast<int>(failure->Stage), failure->Error);
         std::abort();
@@ -57,6 +57,6 @@ u64 RunGuestFunctionOrAbort(const void* function, std::string_view label, Args..
     return RunGuestFunctionOrAbort(function, arguments, label);
 }
 
-} // namespace Core::GuestCpu
+} // namespace AetherPS4::GuestCpu
 
 #endif

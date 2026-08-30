@@ -40,9 +40,9 @@ void PS4_SYSV_ABI posix_pthread_cleanup_pop(int execute) {
         curthread->cleanup.pop_front();
         if (execute) {
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-            if (Core::GuestCpu::IsGuestFunctionAddress(
+            if (AetherPS4::GuestCpu::IsGuestFunctionAddress(
                     reinterpret_cast<const void*>(old->routine))) {
-                Core::GuestCpu::RunGuestFunctionOrAbort(
+                AetherPS4::GuestCpu::RunGuestFunctionOrAbort(
                     reinterpret_cast<void*>(old->routine), "pthread cleanup pop",
                     old->routine_arg);
             } else {

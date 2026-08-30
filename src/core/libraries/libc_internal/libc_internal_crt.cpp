@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <array>
+#include <climits>
 #include <chrono>
 #include <cstdlib>
 #include <ctime>
@@ -69,7 +70,7 @@ void PS4_SYSV_ABI internal_qsort(void* base, u64 nmemb, u64 size,
     // into guest code for each pairwise test.
     auto compare_via_guest = [compar](const void* a, const void* b) -> int {
         const std::array<u64, 2> args{reinterpret_cast<u64>(a), reinterpret_cast<u64>(b)};
-        return static_cast<int>(Core::GuestCpu::RunGuestFunctionOrAbort(
+        return static_cast<int>(AetherPS4::GuestCpu::RunGuestFunctionOrAbort(
             reinterpret_cast<const void*>(compar), args, "qsort comparator"));
     };
     // std::qsort requires a C function pointer, not a capturing lambda -- stash the real
@@ -187,13 +188,43 @@ double PS4_SYSV_ABI internal_difftime(s64 time1, s64 time0) {
     return std::difftime(static_cast<std::time_t>(time1), static_cast<std::time_t>(time0));
 }
 
-void* PS4_SYSV_ABI internal_localeconv() {
-    // No locale support beyond "C" is implemented; games that call this to check
-    // decimal-point/thousands-separator formatting get standard "C" locale values
-    // (returning the host's own localeconv() result verbatim -- its struct layout
-    // matches what a "C" locale caller expects field-for-field for the fields PS4
-    // games actually read).
-    return std::localeconv();
+OrbisLconv* PS4_SYSV_ABI internal_localeconv() {
+    // Keep the fallback entirely in the "C" locale, but expose it using the guest ABI.
+    // In particular, never return std::localeconv() here: Darwin's lconv tail is six
+    // int_* flag bytes, while the PS4/Dinkumware tail is eight wide-string pointers.
+    static char decimal_point[] = ".";
+    static char empty[] = "";
+    static u32 wide_decimal_point[] = {'.', 0};
+    static u32 wide_empty[] = {0};
+    static OrbisLconv locale{
+        .decimal_point = decimal_point,
+        .thousands_sep = empty,
+        .grouping = empty,
+        .int_curr_symbol = empty,
+        .currency_symbol = empty,
+        .mon_decimal_point = empty,
+        .mon_thousands_sep = empty,
+        .mon_grouping = empty,
+        .positive_sign = empty,
+        .negative_sign = empty,
+        .int_frac_digits = CHAR_MAX,
+        .frac_digits = CHAR_MAX,
+        .p_cs_precedes = CHAR_MAX,
+        .p_sep_by_space = CHAR_MAX,
+        .n_cs_precedes = CHAR_MAX,
+        .n_sep_by_space = CHAR_MAX,
+        .p_sign_posn = CHAR_MAX,
+        .n_sign_posn = CHAR_MAX,
+        .wide_decimal_point = wide_decimal_point,
+        .wide_thousands_sep = wide_empty,
+        .wide_int_curr_symbol = wide_empty,
+        .wide_currency_symbol = wide_empty,
+        .wide_mon_decimal_point = wide_empty,
+        .wide_mon_thousands_sep = wide_empty,
+        .wide_positive_sign = wide_empty,
+        .wide_negative_sign = wide_empty,
+    };
+    return &locale;
 }
 
 void RegisterlibSceLibcInternalCrt(Core::Loader::SymbolsResolver* sym) {
@@ -226,7 +257,7 @@ void RegisterFexLibcCrtAliases(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("efhK-YSUYYQ", "libc", 1, "libc", internal_localtime);
     LIB_FUNCTION("n7AepwR0s34", "libc", 1, "libc", internal_mktime);
     LIB_FUNCTION("-VVn74ZyhEs", "libc", 1, "libc", internal_difftime);
-    LIB_FUNCTION("0hlfW1O4Aa4", "libc", 1, "libc", internal_localeconv);
+    LIB_FUNCTION_FALLBACK("0hlfW1O4Aa4", "libc", 1, "libc", internal_localeconv);
 }
 #endif
 

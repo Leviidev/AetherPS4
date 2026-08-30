@@ -46,6 +46,31 @@ void SymbolsResolver::AddFunction(const SymbolResolver& s,
     m_symbols.emplace_back(name, s.nidName, 0, std::move(adapter));
 }
 
+void SymbolsResolver::AddFallbackFunction(
+    const SymbolResolver& s, std::shared_ptr<GuestCpu::HleCallAdapter> adapter) {
+    if (adapter == nullptr) {
+        return;
+    }
+    const std::string name = GenerateName(s);
+    const auto existing = m_symbol_index.find(name);
+    if (existing != m_symbol_index.end() && !m_symbols[existing->second].hle_fallback) {
+        return;
+    }
+    adapter = GetHleCallRegistry().Register(std::move(adapter), name);
+    if (adapter == nullptr) {
+        return;
+    }
+    if (existing != m_symbol_index.end()) {
+        m_symbols[existing->second].hle_adapter = std::move(adapter);
+        return;
+    }
+    m_symbol_index.emplace(name, m_symbols.size());
+    m_symbols.emplace_back(name, s.nidName, 0, std::move(adapter));
+    // Prefer a function exported by a loaded guest module. This adapter is used only when no
+    // matching LLE export exists, which keeps allocator families on one heap.
+    m_symbols.back().hle_fallback = true;
+}
+
 const std::shared_ptr<GuestCpu::HleCallAdapter>&
 SymbolsResolver::AddUnsupportedFunction(const SymbolResolver& s) {
     const std::string name = GenerateName(s);

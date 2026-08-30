@@ -1436,13 +1436,17 @@ VAddr MemoryManager::SearchFree(VAddr virtual_addr, u64 size, u32 alignment) {
     auto min_search_address = impl.SystemManagedVirtualBase();
     auto max_search_address = impl.UserVirtualBase() + impl.UserVirtualSize();
 
-    // If the requested address is below the mapped range, start search from the lowest address
-    if (virtual_addr < min_search_address) {
+    // A non-fixed mapping address is only a hint. Compact/relocated address spaces (notably
+    // iOS) can receive a perfectly valid PS4 hint that lies outside the host reservation.
+    // Ignore an out-of-range hint and search the reservation from its beginning instead of
+    // asserting: the assert traps the guest thread while the presentation thread keeps the
+    // loading screen animated forever.
+    if (virtual_addr < min_search_address || virtual_addr >= max_search_address) {
+        LOG_WARNING(Kernel_Vmm,
+                    "Ignoring out-of-range non-fixed mapping hint {:#x}; searching from {:#x}",
+                    virtual_addr, min_search_address);
         virtual_addr = min_search_address;
     }
-
-    // If the requested address is beyond the maximum our code can handle, throw an assert
-    ASSERT_MSG(IsValidMapping(virtual_addr), "Input address {:#x} is out of bounds", virtual_addr);
 
     // Align up the virtual_addr first.
     virtual_addr = Common::AlignUp(virtual_addr, alignment);

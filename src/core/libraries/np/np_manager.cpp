@@ -829,8 +829,9 @@ static void InvokeNpStateGuestCallback(Fn func, std::string_view label, Args... 
         return;
     }
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-    if (Core::GuestCpu::IsGuestFunctionAddress(reinterpret_cast<const void*>(func))) {
-        Core::GuestCpu::RunGuestFunctionOrAbort(reinterpret_cast<const void*>(func), label, args...);
+    if (AetherPS4::GuestCpu::IsGuestFunctionAddress(reinterpret_cast<const void*>(func))) {
+        AetherPS4::GuestCpu::RunGuestFunctionOrAbort(reinterpret_cast<const void*>(func), label,
+                                                      args...);
         return;
     }
 #endif

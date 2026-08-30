@@ -129,6 +129,7 @@ struct OrbisPadAnalogStick {
 
 enum class OrbisPadButtonDataOffset : u32 {
     None = 0,
+    Share = 0x1,
     L3 = 0x2,
     R3 = 0x4,
     Options = 0x8,

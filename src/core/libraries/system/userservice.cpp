@@ -160,13 +160,13 @@ static void InvokeUserServiceEventCallback(const OrbisUserServiceEvent& event) {
     LOG_INFO(Lib_UserService, "Dispatch event callback type={} user={}", static_cast<u8>(event.event),
              event.userId);
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-    if (Core::GuestCpu::IsGuestFunctionAddress(reinterpret_cast<const void*>(callback))) {
+    if (AetherPS4::GuestCpu::IsGuestFunctionAddress(reinterpret_cast<const void*>(callback))) {
         OrbisUserServiceEvent* slot = GuestEventSlot();
         if (slot == nullptr) {
             return;
         }
         *slot = event;
-        Core::GuestCpu::RunGuestFunctionOrAbort(reinterpret_cast<const void*>(callback),
+        AetherPS4::GuestCpu::RunGuestFunctionOrAbort(reinterpret_cast<const void*>(callback),
                                                 "sceUserServiceEventCallback", slot);
         return;
     }

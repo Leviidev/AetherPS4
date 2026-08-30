@@ -172,10 +172,12 @@ void RegisterFexLibcCxaAliases(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("eT2UsmTewbU", "libc", 1, "libc", fex_libc_xbad_alloc);
     LIB_FUNCTION("tQIo+GIPklo", "libc", 1, "libc", fex_libc_xlength_error);
     LIB_FUNCTION("ozMAr28BwSY", "libc", 1, "libc", fex_libc_xout_of_range);
-    LIB_FUNCTION("fJnpuVVBbKk", "libc", 1, "libc", fex_libc_operator_new);
-    LIB_FUNCTION("hdm0YfMa7TQ", "libc", 1, "libc", fex_libc_operator_new_array);
-    LIB_FUNCTION("z+P+xCnWLBk", "libc", 1, "libc", fex_libc_operator_delete);
-    LIB_FUNCTION("MLWl90SFWNE", "libc", 1, "libc", fex_libc_operator_delete_array);
+    // C++ allocation must stay on the same heap as libc.prx's internal delete/free path.
+    // Host operator new is safe only as a fallback when no guest export exists.
+    LIB_FUNCTION_FALLBACK("fJnpuVVBbKk", "libc", 1, "libc", fex_libc_operator_new);
+    LIB_FUNCTION_FALLBACK("hdm0YfMa7TQ", "libc", 1, "libc", fex_libc_operator_new_array);
+    LIB_FUNCTION_FALLBACK("z+P+xCnWLBk", "libc", 1, "libc", fex_libc_operator_delete);
+    LIB_FUNCTION_FALLBACK("MLWl90SFWNE", "libc", 1, "libc", fex_libc_operator_delete_array);
     // FEX adapter looks up C++ runtime symbols under libSceLibcInternal.
     LIB_FUNCTION("3GPpjQdAMTw", "libSceLibcInternal", 1, "libSceLibcInternal",
                  fex_libc_cxa_guard_acquire);

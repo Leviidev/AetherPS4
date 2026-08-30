@@ -2690,9 +2690,9 @@ static std::optional<FontObjSidecar> TakeFontObjSidecar(const FontObj* obj) {
 // guest-callback bridge instead.
 static void* CallGuestAlloc(GuestAllocFn fn, void* ctx, u32 size) {
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-    if (Core::GuestCpu::IsGuestFunctionAddress(reinterpret_cast<const void*>(fn))) {
+    if (AetherPS4::GuestCpu::IsGuestFunctionAddress(reinterpret_cast<const void*>(fn))) {
         const std::array<u64, 2> args{reinterpret_cast<u64>(ctx), static_cast<u64>(size)};
-        return reinterpret_cast<void*>(Core::GuestCpu::RunGuestFunctionOrAbort(
+        return reinterpret_cast<void*>(AetherPS4::GuestCpu::RunGuestFunctionOrAbort(
             reinterpret_cast<const void*>(fn), args, "fontft alloc"));
     }
 #endif
@@ -2701,9 +2701,9 @@ static void* CallGuestAlloc(GuestAllocFn fn, void* ctx, u32 size) {
 
 static void CallGuestFree(GuestFreeFn fn, void* ctx, void* p) {
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-    if (Core::GuestCpu::IsGuestFunctionAddress(reinterpret_cast<const void*>(fn))) {
+    if (AetherPS4::GuestCpu::IsGuestFunctionAddress(reinterpret_cast<const void*>(fn))) {
         const std::array<u64, 2> args{reinterpret_cast<u64>(ctx), reinterpret_cast<u64>(p)};
-        Core::GuestCpu::RunGuestFunctionOrAbort(
+        AetherPS4::GuestCpu::RunGuestFunctionOrAbort(
             reinterpret_cast<const void*>(fn), args, "fontft free");
         return;
     }
@@ -2713,10 +2713,10 @@ static void CallGuestFree(GuestFreeFn fn, void* ctx, void* p) {
 
 static void* CallGuestRealloc(GuestReallocFn fn, void* ctx, void* p, u32 size) {
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-    if (Core::GuestCpu::IsGuestFunctionAddress(reinterpret_cast<const void*>(fn))) {
+    if (AetherPS4::GuestCpu::IsGuestFunctionAddress(reinterpret_cast<const void*>(fn))) {
         const std::array<u64, 3> args{reinterpret_cast<u64>(ctx), reinterpret_cast<u64>(p),
                                       static_cast<u64>(size)};
-        return reinterpret_cast<void*>(Core::GuestCpu::RunGuestFunctionOrAbort(
+        return reinterpret_cast<void*>(AetherPS4::GuestCpu::RunGuestFunctionOrAbort(
             reinterpret_cast<const void*>(fn), args, "fontft realloc"));
     }
 #endif
