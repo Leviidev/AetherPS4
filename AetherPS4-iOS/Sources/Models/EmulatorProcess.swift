@@ -152,19 +152,34 @@ final class EmulatorProcess {
             // this, shadps4_run_loop() returning here would be indistinguishable from the
             // player quitting -- the whole app would fall through to .exited below, and the
             // in-progress restart request would just be dropped.
+            //
+            // An earlier version tried relaunching in-process right here (calling
+            // continueLaunch() again with the new path) -- confirmed on-device to hang, not
+            // crash: PrepareWindow()/RunLoop() reuse the same Emulator/Linker/Memory
+            // singletons the first launch used, and that whole layer was only ever built to
+            // run one game per process lifetime, same assumption every other platform's
+            // fork()/exec() relies on. Actually getting a fresh process on iOS means the
+            // player has to be the one to close and reopen the app -- RestartRequiredOverlayWindow
+            // makes that unmissable and gives them a one-tap way to do it, instead of quietly
+            // reusing state that was never proven safe to reuse.
             var pathBuffer = [Int8](repeating: 0, count: 4096)
-            var restartPath: String?
+            var restartRequested = false
             pathBuffer.withUnsafeMutableBufferPointer { buffer in
                 guard let base = buffer.baseAddress,
                       shadps4_take_pending_restart(base, Int32(buffer.count)) != 0
                 else { return }
-                restartPath = String(cString: base)
+                restartRequested = true
             }
-            if let restartPath {
+            if restartRequested {
                 DispatchQueue.main.async {
                     guard let self else { return }
-                    self.appendLine(.stdout, "[AetherPS4] Restarting: \(restartPath)")
-                    self.continueLaunch(pkgPath: restartPath, gameName: self.runningGameName ?? "")
+                    let name = self.runningGameName ?? "The game"
+                    self.appendLine(.stdout, "[AetherPS4] \(name) requested a restart -- prompting to restart the app")
+                    LoadingOverlayWindow.teardown()
+                    TouchControlsOverlayWindow.teardown()
+                    self.state = .exited(status: 0)
+                    self.unlockOrientation()
+                    RestartRequiredOverlayWindow.show(gameName: name)
                 }
                 return
             }
