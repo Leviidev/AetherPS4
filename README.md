@@ -1,8 +1,23 @@
+<p align="center">
+  <img src="AetherPS4-iOS/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png" width="140" alt="AetherPS4 logo">
+</p>
+
 # AetherPS4
 
 Experimental PlayStation 4 emulation for iOS, built on [shadPS4](https://github.com/shadps4-emu/shadPS4)
 with an ARM64-ported [FEXCore](https://github.com/FEX-Emu/FEX) x86-64 → ARM64 JIT and a native
 SwiftUI front end. v1.0.0 targets external (MFi/Bluetooth) game controllers only.
+
+## Supported games
+
+Reflects games actually tried on-device so far, not a target list -- compatibility work is
+ongoing and most titles are untested.
+
+| Game | Status |
+| --- | --- |
+| Sonic Mania | Boots and runs |
+| Journey | Loads, but can't progress past its first chapter transition yet |
+| Minecraft: PlayStation®4 Edition | Currently being tested |
 
 ## File structure
 
