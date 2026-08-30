@@ -680,6 +680,14 @@ PFN_SrtWalker RegisterWalkerCode(const u8* ptr, size_t size) {
     return function;
 }
 
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+void WarmUpIosSrtCodePool() {
+    IosSrtCodePool::Instance();
+}
+#else
+void WarmUpIosSrtCodePool() {}
+#endif
+
 } // namespace Shader
 
 namespace Shader::Optimization {
