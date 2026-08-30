@@ -18,12 +18,14 @@ SymbolsResolver::SymbolsResolver() = default;
 SymbolsResolver::~SymbolsResolver() = default;
 
 void SymbolsResolver::AddSymbol(const SymbolResolver& s, u64 virtual_addr) {
-    m_symbols.emplace_back(GenerateName(s), s.nidName, virtual_addr);
+    std::string name = GenerateName(s);
+    m_symbol_index.try_emplace(name, m_symbols.size());
+    m_symbols.emplace_back(std::move(name), s.nidName, virtual_addr);
 }
 
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
 void SymbolsResolver::AddFunction(const SymbolResolver& s,
-                                  std::shared_ptr<AetherPS4::GuestCpu::HleCallAdapter> adapter) {
+                                  std::shared_ptr<GuestCpu::HleCallAdapter> adapter) {
     if (adapter == nullptr) {
         return;
     }
@@ -32,25 +34,28 @@ void SymbolsResolver::AddFunction(const SymbolResolver& s,
     if (adapter == nullptr) {
         return;
     }
-    for (auto& record : m_symbols) {
-        if (record.name == name && record.hle_fallback) {
+    if (const auto it = m_symbol_index.find(name); it != m_symbol_index.end()) {
+        auto& record = m_symbols[it->second];
+        if (record.hle_fallback) {
             record.hle_adapter = std::move(adapter);
             record.hle_fallback = false;
             return;
         }
     }
+    m_symbol_index.try_emplace(name, m_symbols.size());
     m_symbols.emplace_back(name, s.nidName, 0, std::move(adapter));
 }
 
-const std::shared_ptr<AetherPS4::GuestCpu::HleCallAdapter>&
+const std::shared_ptr<GuestCpu::HleCallAdapter>&
 SymbolsResolver::AddUnsupportedFunction(const SymbolResolver& s) {
     const std::string name = GenerateName(s);
-    for (const auto& record : m_symbols) {
-        if (record.name == name && record.hle_adapter != nullptr) {
+    if (const auto it = m_symbol_index.find(name); it != m_symbol_index.end()) {
+        const auto& record = m_symbols[it->second];
+        if (record.hle_adapter != nullptr) {
             return record.hle_adapter;
         }
     }
-    AddFunction(s, AetherPS4::GuestCpu::MakeUnsupportedHleCallAdapter());
+    AddFunction(s, GuestCpu::MakeUnsupportedHleCallAdapter());
     ASSERT_MSG(!m_symbols.empty() && m_symbols.back().name == name &&
                    m_symbols.back().hle_adapter != nullptr,
                "Unable to register unsupported HLE function {}", name);
@@ -58,16 +63,16 @@ SymbolsResolver::AddUnsupportedFunction(const SymbolResolver& s) {
     return m_symbols.back().hle_adapter;
 }
 
-std::shared_ptr<AetherPS4::GuestCpu::HleCallAdapter> SymbolsResolver::FindFunction(u64 operation) const {
+std::shared_ptr<GuestCpu::HleCallAdapter> SymbolsResolver::FindFunction(u64 operation) const {
     if (hle_registry == nullptr) {
         return {};
     }
     return hle_registry->Find(operation);
 }
 
-AetherPS4::GuestCpu::HleCallRegistry& SymbolsResolver::GetHleCallRegistry() {
+GuestCpu::HleCallRegistry& SymbolsResolver::GetHleCallRegistry() {
     if (hle_registry == nullptr) {
-        hle_registry = std::make_unique<AetherPS4::GuestCpu::HleCallRegistry>();
+        hle_registry = std::make_unique<GuestCpu::HleCallRegistry>();
     }
     return *hle_registry;
 }
@@ -80,10 +85,8 @@ std::string SymbolsResolver::GenerateName(const SymbolResolver& s) {
 
 const SymbolRecord* SymbolsResolver::FindSymbol(const SymbolResolver& s) const {
     const std::string name = GenerateName(s);
-    for (u32 i = 0; i < m_symbols.size(); i++) {
-        if (m_symbols[i].name == name) {
-            return &m_symbols[i];
-        }
+    if (const auto it = m_symbol_index.find(name); it != m_symbol_index.end()) {
+        return &m_symbols[it->second];
     }
 
     // LOG_INFO(Core_Linker, "Unresolved! {}", name);

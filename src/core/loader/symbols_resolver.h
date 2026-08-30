@@ -7,15 +7,16 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include "common/assert.h"
 #include "common/types.h"
 
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-namespace AetherPS4::GuestCpu {
+namespace Core::GuestCpu {
 class HleCallAdapter;
 class HleCallRegistry;
-} // namespace AetherPS4::GuestCpu
+} // namespace Core::GuestCpu
 #endif
 
 namespace Core::Loader {
@@ -33,7 +34,7 @@ struct SymbolRecord {
     std::string nid_name;
     u64 virtual_address;
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-    std::shared_ptr<AetherPS4::GuestCpu::HleCallAdapter> hle_adapter;
+    std::shared_ptr<GuestCpu::HleCallAdapter> hle_adapter;
     bool hle_fallback{};
 #endif
 };
@@ -54,10 +55,10 @@ public:
 
     void AddSymbol(const SymbolResolver& s, u64 virtual_addr);
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-    void AddFunction(const SymbolResolver& s, std::shared_ptr<AetherPS4::GuestCpu::HleCallAdapter> adapter);
-    const std::shared_ptr<AetherPS4::GuestCpu::HleCallAdapter>& AddUnsupportedFunction(const SymbolResolver& s);
-    std::shared_ptr<AetherPS4::GuestCpu::HleCallAdapter> FindFunction(u64 operation) const;
-    AetherPS4::GuestCpu::HleCallRegistry& GetHleCallRegistry();
+    void AddFunction(const SymbolResolver& s, std::shared_ptr<GuestCpu::HleCallAdapter> adapter);
+    const std::shared_ptr<GuestCpu::HleCallAdapter>& AddUnsupportedFunction(const SymbolResolver& s);
+    std::shared_ptr<GuestCpu::HleCallAdapter> FindFunction(u64 operation) const;
+    GuestCpu::HleCallRegistry& GetHleCallRegistry();
 #endif
     const SymbolRecord* FindSymbol(const SymbolResolver& s) const;
 
@@ -92,8 +93,19 @@ public:
 
 private:
     std::vector<SymbolRecord> m_symbols;
+    // name (GenerateName's "nid#lib#version#module#type" key) -> index into m_symbols. Every
+    // insertion into m_symbols must go through an index update alongside it (see AddSymbol/
+    // AddFunction/AddUnsupportedFunction) -- this exists purely so FindSymbol (and the
+    // internal existing-record checks in AddFunction/AddUnsupportedFunction) don't have to
+    // linearly scan the whole vector, confirmed on-device as the real cause of a ~99 second
+    // module-loading stall: thousands of relocations each doing an O(n) scan (with a fresh
+    // fmt::format allocation per comparison) against a symbol table that itself grows into
+    // the thousands during InitHLELibs. try_emplace (never overwrites an existing key) keeps
+    // this pointing at the *first* entry for a given name, matching the original linear
+    // scan's own first-match-wins behavior.
+    std::unordered_map<std::string, size_t> m_symbol_index;
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-    std::unique_ptr<AetherPS4::GuestCpu::HleCallRegistry> hle_registry;
+    std::unique_ptr<GuestCpu::HleCallRegistry> hle_registry;
 #endif
 };
 
