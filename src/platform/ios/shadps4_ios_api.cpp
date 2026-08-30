@@ -27,6 +27,7 @@
 #include "core/user_settings.h"
 #include "emulator.h"
 #include "input/controller.h"
+#include "shader_recompiler/ir/passes/srt.h"
 
 namespace {
 
@@ -126,6 +127,11 @@ extern "C" int shadps4_prepare_window(const char* eboot_path) {
     auto* emulator = Common::Singleton<Core::Emulator>::Instance();
     emulator->executableName = "AetherPS4";
     emulator->PrepareWindow(*resolved);
+    // As early as possible, before any guest code runs at all -- see WarmUpIosSrtCodePool's
+    // own comment (srt.h) for why lazy, on-first-shader-use initialization was too late: by
+    // then StikDebug had already stopped responding to JIT-mapping requests on-device, every
+    // time this was actually tested.
+    Shader::WarmUpIosSrtCodePool();
     return 0;
 }
 
