@@ -916,13 +916,25 @@ bool Linker::Resolve(const std::string& name, Loader::SymbolType sym_type, Modul
     } else if (sym_type == Loader::SymbolType::Function) {
         return_info->name = aeronid ? aeronid->name : "Unknown function";
         return_info->virtual_address = 0;
+        // These two branches used to log identically ("unresolved HLE ... uses temporary
+        // ENOSYS fallback") even though only one of them is actually unresolved: the first
+        // routes to a real, working host implementation (registered via LIB_FUNCTION_FALLBACK,
+        // e.g. internal_sceLibcMspaceCreate's own allocator) via record->hle_adapter, which the
+        // caller (ProcessDynamicTable, see its own hle_adapter check right after Resolve()
+        // returns) uses regardless of this function's bool return -- only the second branch
+        // (record == nullptr) is a genuine no-implementation-at-all stub via
+        // AddUnsupportedFunction that unconditionally returns ENOSYS to the guest. The
+        // identical wording made it impossible to tell which one a given import actually hit
+        // from the log alone.
         if (record != nullptr && record->hle_fallback) {
             return_info->hle_adapter = record->hle_adapter;
+            LOG_WARNING(Core_Linker, "FEX: {} resolved via registered host fallback (not a "
+                       "guest export, still a real implementation)", return_info->name);
         } else {
             return_info->hle_adapter = m_hle_symbols.AddUnsupportedFunction(sr);
+            LOG_WARNING(Core_Linker, "FEX: {} has NO implementation at all, guest call returns "
+                       "ENOSYS unconditionally", return_info->name);
         }
-        LOG_WARNING(Core_Linker, "FEX: unresolved HLE {} uses temporary ENOSYS fallback",
-                    return_info->name);
         return false;
 #endif
     } else if (aeronid) {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "fex_guest_engine.h"
+#include "common/boot_timer.h"
 
 // Ucontext layout only — do not include pthread.h here. pthread → semaphore →
 // assert → log → spdlog, which the FEXCore-only guest harness does not provide.
@@ -1610,6 +1611,20 @@ bool HandleGuestSignal(int signal, siginfo_t* info, void* rawContext) noexcept {
                   reinterpret_cast<void*>(pc), reinterpret_cast<void*>(writable_pc),
                   static_cast<int>(*adjustment), instr_before, instr_after,
                   reinterpret_cast<void*>(pc + *adjustment));
+    // Separate, rate-limited checkpoint so a wall-clock rate is visible directly in the log
+    // without cross-referencing timestamps from other subsystems -- Rocket League was
+    // observed reaching thousands of these unaligned-fix events over 80+ seconds with no
+    // SubmitGfx/draw call ever following, and it wasn't clear from the existing log alone
+    // whether that time is spent making steady (if slow) forward progress or stalling
+    // somewhere partway through. Both BootElapsedMs (an atomic load) and SignalSafeLog are
+    // async-signal-safe; the counter itself doesn't need to be, since only this one signal
+    // handler ever touches it and signals of the same type don't nest on the same thread.
+    static std::atomic<uint32_t> unaligned_fix_count{0};
+    const uint32_t count = unaligned_fix_count.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (count % 250 == 0) {
+      SignalSafeLog("BACHATA_UNALIGNED_PROGRESS: count=%d elapsed_ms=%d\n",
+                    static_cast<int>(count), static_cast<int>(Common::BootElapsedMs()));
+    }
   }
   // HandleUnalignedAccess just backpatched the faulting instruction (up to one instruction
   // before/after it too, for the half-barrier case) and invalidated the icache for that --
