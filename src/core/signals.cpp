@@ -180,6 +180,21 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
         }
         Common::ReportCrash(raw_context, sig, info);
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
+        // Captured as early as possible on the genuinely-fatal path, before any of the other
+        // (much slower, VirtualQuery-heavy) diagnostic logging below: confirmed on-device with
+        // Rocket League that reading these code bytes from their old position, at the very end
+        // of this handler, gave a disassembly that flatly contradicted the register dump taken
+        // moments earlier (registers built a valid guest address into x18 immediately before
+        // the store, yet the fault's own register snapshot showed x18=0 at that exact PC) --
+        // the most likely explanation is another thread's JIT compilation overwrote this same
+        // host code address in between, since nothing else here would explain instructions
+        // that plainly do the opposite of what fired. Moving this read to right after
+        // ReportCrash (this handler's only other work before it) minimizes that window.
+        char host_code[256] = {};
+        if (::AetherPS4::Fex::BachataDumpHostCodeWords(code_address, host_code, sizeof(host_code))) {
+            LOG_CRITICAL(Debug, "FEX host ARM64 words around fault pc={:#x}: {}",
+                        reinterpret_cast<uintptr_t>(code_address), host_code);
+        }
         uint64_t guest_rip = 0;
         uint64_t guest_rax = 0;
         if (::AetherPS4::Fex::BachataQueryGuestRipSyscall(&guest_rip, &guest_rax)) {
@@ -297,15 +312,6 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
         if (::AetherPS4::Fex::BachataDescribeHostFaultAddress(info->si_addr, fault_desc,
                                                                 sizeof(fault_desc))) {
             LOG_CRITICAL(Debug, "FEX host fault address classification: {}", fault_desc);
-        }
-        // The earlier guest-instruction-bytes dump (at guest_rip) turned out to be a stale
-        // JIT/HLE checkpoint, not the live fault site -- this dumps the actual ARM64 words at
-        // code_address (the real host PC the signal landed on) instead. Fixed 4-byte-wide
-        // instructions, unlike x86's variable length, so this is exact and hand-decodable.
-        char host_code[256] = {};
-        if (::AetherPS4::Fex::BachataDumpHostCodeWords(code_address, host_code, sizeof(host_code))) {
-            LOG_CRITICAL(Debug, "FEX host ARM64 words around fault pc={:#x}: {}",
-                         reinterpret_cast<uintptr_t>(code_address), host_code);
         }
         // Field-by-field comparison of the dispatcher's own known-good addresses against
         // what this thread's live per-thread pointer table actually holds for the same

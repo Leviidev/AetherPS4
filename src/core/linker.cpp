@@ -679,7 +679,18 @@ void Linker::Execute(const std::vector<std::string>& args) {
 }
 
 s32 Linker::LoadModule(const std::filesystem::path& elf_name, bool is_dynamic) {
+    // Splits lock-wait time from the actual exists()/load work below: sysmodule_internal.cpp's
+    // own timing pinned an entire ~98-135 second boot stall to exactly this call for
+    // libSceFios2 specifically (every other module, including the very next one, libc, took
+    // under 40ms through this identical path) -- if the file-existence check itself were slow,
+    // GetHostPath's own repeated exists() calls immediately beforehand (measured separately,
+    // and confirmed fast) would have shown it too. This leaves lock contention as the most
+    // likely remaining explanation, and this checkpoint confirms or rules that out directly
+    // instead of guessing again.
+    const auto lock_wait_start_ms = Common::BootElapsedMs();
     std::scoped_lock lk{mutex};
+    LOG_CRITICAL(Core_Linker, "BACHATA_BOOT_TIMING: LoadModule({}) acquired mutex after {}ms",
+                elf_name.string(), Common::BootElapsedMs() - lock_wait_start_ms);
 
     if (!std::filesystem::exists(elf_name)) {
         LOG_ERROR(Core_Linker, "Provided file {} does not exist", elf_name.string());
