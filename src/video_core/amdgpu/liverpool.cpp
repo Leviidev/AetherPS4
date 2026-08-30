@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <mutex>
 
@@ -461,6 +462,10 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 break;
             }
             case PM4ItOpcode::DrawIndex2: {
+                static std::atomic_bool traced_draw_index2{false};
+                if (!traced_draw_index2.exchange(true, std::memory_order_relaxed)) {
+                    LOG_CRITICAL(Render, "BACHATA_PM4_DRAW_TRACE: first DrawIndex2 packet seen");
+                }
                 const auto* draw_index = reinterpret_cast<const PM4CmdDrawIndex2*>(header);
                 regs.max_index_size = draw_index->max_size;
                 regs.index_base_address.base_addr_lo = draw_index->index_base_lo;
@@ -483,6 +488,10 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 break;
             }
             case PM4ItOpcode::DrawIndexOffset2: {
+                static std::atomic_bool traced_draw_index_offset2{false};
+                if (!traced_draw_index_offset2.exchange(true, std::memory_order_relaxed)) {
+                    LOG_CRITICAL(Render, "BACHATA_PM4_DRAW_TRACE: first DrawIndexOffset2 packet seen");
+                }
                 const auto* draw_index_off =
                     reinterpret_cast<const PM4CmdDrawIndexOffset2*>(header);
                 regs.max_index_size = draw_index_off->max_size;
@@ -505,6 +514,10 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 break;
             }
             case PM4ItOpcode::DrawIndexAuto: {
+                static std::atomic_bool traced_draw_index_auto{false};
+                if (!traced_draw_index_auto.exchange(true, std::memory_order_relaxed)) {
+                    LOG_CRITICAL(Render, "BACHATA_PM4_DRAW_TRACE: first DrawIndexAuto packet seen");
+                }
                 const auto* draw_index = reinterpret_cast<const PM4CmdDrawIndexAuto*>(header);
                 regs.num_indices = draw_index->index_count;
                 regs.draw_initiator = draw_index->draw_initiator;
@@ -525,6 +538,10 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 break;
             }
             case PM4ItOpcode::DrawIndirect: {
+                static std::atomic_bool traced_draw_indirect{false};
+                if (!traced_draw_indirect.exchange(true, std::memory_order_relaxed)) {
+                    LOG_CRITICAL(Render, "BACHATA_PM4_DRAW_TRACE: first DrawIndirect packet seen");
+                }
                 const auto* draw_indirect = reinterpret_cast<const PM4CmdDrawIndirect*>(header);
                 const auto offset = draw_indirect->data_offset;
                 const auto stride = sizeof(DrawIndirectArgs);
@@ -545,6 +562,10 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 break;
             }
             case PM4ItOpcode::DrawIndirectMulti: {
+                static std::atomic_bool traced_draw_indirect_multi{false};
+                if (!traced_draw_indirect_multi.exchange(true, std::memory_order_relaxed)) {
+                    LOG_CRITICAL(Render, "BACHATA_PM4_DRAW_TRACE: first DrawIndirectMulti packet seen");
+                }
                 const auto* draw_indirect =
                     reinterpret_cast<const PM4CmdDrawIndirectMulti*>(header);
                 const auto offset = draw_indirect->data_offset;
@@ -567,6 +588,10 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 break;
             }
             case PM4ItOpcode::DrawIndexIndirect: {
+                static std::atomic_bool traced_draw_index_indirect{false};
+                if (!traced_draw_index_indirect.exchange(true, std::memory_order_relaxed)) {
+                    LOG_CRITICAL(Render, "BACHATA_PM4_DRAW_TRACE: first DrawIndexIndirect packet seen");
+                }
                 const auto* draw_index_indirect =
                     reinterpret_cast<const PM4CmdDrawIndexIndirect*>(header);
                 const auto offset = draw_index_indirect->data_offset;
@@ -588,6 +613,10 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 break;
             }
             case PM4ItOpcode::DrawIndexIndirectMulti: {
+                static std::atomic_bool traced_draw_index_indirect_multi{false};
+                if (!traced_draw_index_indirect_multi.exchange(true, std::memory_order_relaxed)) {
+                    LOG_CRITICAL(Render, "BACHATA_PM4_DRAW_TRACE: first DrawIndexIndirectMulti packet seen");
+                }
                 const auto* draw_index_indirect =
                     reinterpret_cast<const PM4CmdDrawIndexIndirectMulti*>(header);
                 const auto offset = draw_index_indirect->data_offset;
@@ -612,6 +641,11 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 break;
             }
             case PM4ItOpcode::DrawIndexIndirectCountMulti: {
+                static std::atomic_bool traced_draw_index_indirect_count_multi{false};
+                if (!traced_draw_index_indirect_count_multi.exchange(true, std::memory_order_relaxed)) {
+                    LOG_CRITICAL(Render,
+                                 "BACHATA_PM4_DRAW_TRACE: first DrawIndexIndirectCountMulti packet seen");
+                }
                 const auto* draw_index_indirect =
                     reinterpret_cast<const PM4CmdDrawIndexIndirectCountMulti*>(header);
                 const auto offset = draw_index_indirect->data_offset;
@@ -1351,6 +1385,18 @@ Liverpool::CmdBuffer Liverpool::CopyCmdBuffers(std::span<const u32> dcb, std::sp
 
 void Liverpool::SubmitGfx(std::span<const u32> dcb, std::span<const u32> ccb) {
     auto& queue = mapped_queues[GfxQueueId];
+
+    static std::atomic_bool traced_first_submit{false};
+    static std::atomic<u64> submit_count{0};
+    const auto this_submit = submit_count.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (!traced_first_submit.exchange(true, std::memory_order_relaxed)) {
+        LOG_CRITICAL(Render, "BACHATA_GFX_SUBMIT_TRACE: first SubmitGfx call, dcb_size={} ccb_size={}",
+                     dcb.size_bytes(), ccb.size_bytes());
+    }
+    if (this_submit % 100 == 0) {
+        LOG_CRITICAL(Render, "BACHATA_GFX_SUBMIT_TRACE: SubmitGfx call #{}, dcb_size={} ccb_size={}",
+                     this_submit, dcb.size_bytes(), ccb.size_bytes());
+    }
 
     if (EmulatorSettings.IsCopyGpuBuffers()) {
         std::tie(dcb, ccb) = CopyCmdBuffers(dcb, ccb);

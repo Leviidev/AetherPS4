@@ -272,18 +272,43 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
 
     scheduler.PopPendingOperations();
 
+    static std::atomic_bool traced_indirect_filtered{false};
+    static std::atomic_bool traced_indirect_no_pipeline{false};
+    static std::atomic_bool traced_indirect_bind_failed{false};
+    static std::atomic_bool traced_indirect_success{false};
+
     if (!FilterDraw()) {
+        if (!traced_indirect_filtered.exchange(true, std::memory_order_relaxed)) {
+            LOG_CRITICAL(Render_Vulkan,
+                        "BACHATA_DRAW_TRACE: first indirect draw call filtered by FilterDraw()");
+        }
         return;
     }
 
     const GraphicsPipeline* pipeline = pipeline_cache.GetGraphicsPipeline();
     if (!pipeline) {
+        if (!traced_indirect_no_pipeline.exchange(true, std::memory_order_relaxed)) {
+            LOG_CRITICAL(Render_Vulkan,
+                        "BACHATA_DRAW_TRACE: first indirect draw call skipped, "
+                        "GetGraphicsPipeline() returned null");
+        }
         return;
     }
 
     PrepareRenderState(pipeline);
     if (!BindResources(pipeline)) {
+        if (!traced_indirect_bind_failed.exchange(true, std::memory_order_relaxed)) {
+            LOG_CRITICAL(Render_Vulkan,
+                        "BACHATA_DRAW_TRACE: first indirect draw call skipped, "
+                        "BindResources() failed");
+        }
         return;
+    }
+    if (!traced_indirect_success.exchange(true, std::memory_order_relaxed)) {
+        LOG_CRITICAL(Render_Vulkan,
+                    "BACHATA_DRAW_TRACE: first real indirect draw call reached cmdbuf submission, "
+                    "is_indexed={} max_count={}",
+                    is_indexed, max_count);
     }
     const auto state = BeginRendering(pipeline);
 
