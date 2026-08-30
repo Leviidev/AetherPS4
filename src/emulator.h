@@ -71,9 +71,22 @@ public:
 
     /**
      * This will kill the current process and launch a new process with the same configuration
-     * (using CLI args) but replacing the eboot image and guest arguments
+     * (using CLI args) but replacing the eboot image and guest arguments. On iOS, where a
+     * sandboxed app cannot fork()/exec() a new process at all (confirmed on-device: fork()
+     * always fails there -- see Restart()'s own comment), this instead requests a clean
+     * in-process stop, the same one Stop() uses, and records the new eboot path/args for the
+     * host app to pick up via TakePendingRestart() once RunLoop() returns, rather than
+     * quick_exit()-ing the whole app the way every other platform does here.
      */
     void Restart(std::filesystem::path eboot_path, const std::vector<std::string>& guest_args = {});
+
+    /**
+     * iOS only: returns the eboot path Restart() recorded, if any, clearing it -- meant to be
+     * called once after RunLoop() returns, to distinguish "the guest asked to restart with a
+     * different game" from a normal exit. Returns std::nullopt on every other platform, and on
+     * iOS too when RunLoop() returned for any other reason.
+     */
+    std::optional<std::filesystem::path> TakePendingRestart(std::vector<std::string>& out_args);
 
     const char* executableName;
     bool waitForDebuggerBeforeRun{false};
@@ -97,6 +110,11 @@ private:
     std::string pending_game_id;
     std::filesystem::path pending_eboot_path;
     std::vector<std::string> pending_args;
+
+    // Set by Restart() on iOS instead of fork()/exec()-ing a new process (see Restart()'s own
+    // comment); read and cleared by TakePendingRestart().
+    std::optional<std::filesystem::path> pending_restart_path;
+    std::vector<std::string> pending_restart_args;
 };
 
 } // namespace Core

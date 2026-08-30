@@ -3,6 +3,8 @@
 
 #include "platform/ios/shadps4_ios_api.h"
 
+#include <algorithm>
+#include <cstring>
 #include <filesystem>
 #include <mutex>
 #include <string>
@@ -145,6 +147,23 @@ extern "C" int shadps4_run_loop(void) {
     // quick_exit()-ing the host process.
     emulator->RunLoop();
     return 0;
+}
+
+extern "C" int shadps4_take_pending_restart(char* path_buf, int path_buf_size) {
+    if (!g_init_ok || path_buf == nullptr || path_buf_size <= 0) {
+        return 0;
+    }
+    auto* emulator = Common::Singleton<Core::Emulator>::Instance();
+    std::vector<std::string> discarded_args;
+    auto path = emulator->TakePendingRestart(discarded_args);
+    if (!path.has_value()) {
+        return 0;
+    }
+    const auto utf8 = Common::FS::PathToUTF8String(*path);
+    const auto copy_length = std::min(utf8.size(), static_cast<std::size_t>(path_buf_size) - 1);
+    std::memcpy(path_buf, utf8.data(), copy_length);
+    path_buf[copy_length] = '\0';
+    return 1;
 }
 
 extern "C" int shadps4_run(const char* eboot_path) {

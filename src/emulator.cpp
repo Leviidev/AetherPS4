@@ -1,14 +1,20 @@
 // SPDX-FileCopyrightText: Copyright 2025-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <set>
 #include <sstream>
+#include <thread>
 #include <fmt/core.h>
 #include <fmt/xchar.h>
 #include <hwinfo/hwinfo.h>
+
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
 
 #include <SDL3/SDL_events.h>
 
@@ -615,6 +621,24 @@ bool Emulator::IsPaused() const {
 
 void Emulator::Restart(std::filesystem::path eboot_path,
                        const std::vector<std::string>& guest_args) {
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    // A sandboxed iOS app cannot fork()/exec() a new process at all -- confirmed on-device
+    // (Journey calling sceSystemServiceLoadExec, presumably for a chapter transition): fork()
+    // always returns -1 there, and every platform's fallback for that failure is
+    // std::quick_exit(), which on iOS means the entire app disappears with no warning,
+    // indistinguishable from a crash to whoever's playing. There's no separate process to
+    // exec into anyway on iOS -- there's only ever this one. Record the new eboot path/args
+    // for the host app to pick up via TakePendingRestart() once RunLoop() returns, and request
+    // the same clean stop Stop() uses (safe from any thread, including this guest syscall's
+    // own) instead of ever reaching the fork() call below.
+    LOG_INFO(Common, "Restarting in-process (iOS): {}", Common::FS::PathToUTF8String(eboot_path));
+    pending_restart_path = std::move(eboot_path);
+    pending_restart_args = guest_args;
+    Stop();
+    for (;;) {
+        std::this_thread::sleep_for(std::chrono::hours(24));
+    }
+#else
     std::vector<std::string> args;
 
     auto mnt = Common::Singleton<Core::FileSys::MntPoints>::Instance();
@@ -714,6 +738,18 @@ void Emulator::Restart(std::filesystem::path eboot_path,
 #endif
 
     std::quick_exit(0);
+#endif // defined(__APPLE__) && TARGET_OS_IPHONE
+}
+
+std::optional<std::filesystem::path> Emulator::TakePendingRestart(std::vector<std::string>& out_args) {
+    if (!pending_restart_path.has_value()) {
+        return std::nullopt;
+    }
+    auto path = std::move(*pending_restart_path);
+    pending_restart_path.reset();
+    out_args = std::move(pending_restart_args);
+    pending_restart_args.clear();
+    return path;
 }
 
 void Emulator::UpdatePlayTime(const std::string& serial) {
