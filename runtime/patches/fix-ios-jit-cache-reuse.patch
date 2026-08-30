@@ -1,7 +1,8 @@
 diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
+index b872b6ff..54176912 100644
 --- a/FEXCore/Source/Interface/Core/JIT/JIT.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
-@@ -519,7 +519,15 @@
+@@ -519,7 +519,15 @@ static void DirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record,
      BranchEmit.b(BranchOffset);
    }
  
@@ -18,7 +19,7 @@ diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interfac
    ARMEmitter::Emitter::ClearICache(reinterpret_cast<void*>(CallerAddress), 4);
  }
  
-@@ -533,7 +541,12 @@
+@@ -533,7 +541,12 @@ static void IndirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record
    // Restore branch +2 instructions to jump to the linker block
    BranchEmit.b(0x2);
  
@@ -32,7 +33,7 @@ diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interfac
    ARMEmitter::Emitter::ClearICache(reinterpret_cast<void*>(JumpThunkStartAddress), 4);
  
    // No need to reset HostCode here as the exit linker pointer is stored separately, and if the block is relinked it will be updated.
-@@ -610,20 +623,34 @@
+@@ -610,20 +623,34 @@ uint64_t Arm64JITCore::ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEX
          GuestRip, Record, [](FEXCore::Context::ExitFunctionLinkData* Record) { DirectBlockDelinker(Record, false); }, lk);
      }
  
@@ -71,7 +72,7 @@ diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interfac
      ARMEmitter::Emitter::ClearICache(reinterpret_cast<void*>(JumpThunkStartAddress), 4);
  
      Thread->LookupCache->AddBlockLink(GuestRip, Record, IndirectBlockDelinker, lk);
-@@ -702,11 +729,30 @@
+@@ -702,11 +729,30 @@ void Arm64JITCore::ClearCache() {
    auto PrevCodeBuffer = CurrentCodeBuffer;
    auto lk = PrevCodeBuffer->LookupCache->AcquireWriteLock();
  
@@ -102,7 +103,20 @@ diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interfac
  }
  
  Arm64JITCore::~Arm64JITCore() {}
-@@ -1128,7 +1174,48 @@
+@@ -1110,6 +1156,12 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+   {
+     auto CodeBufferLock = std::unique_lock {CodeBuffers.CodeBufferWriteMutex};
+ 
++    // Set below, on the iOS reuse-in-place path only, when BeginBufferInvalidationSafepoint was
++    // actually called for this compile -- see the matching EndBufferInvalidationSafepoint call
++    // near this function's memcpy below, and BeginBufferInvalidationSafepoint's own comment
++    // (Context.h) for why the pause needs to stay held that far past the metadata clear.
++    bool HeldReuseSafepoint = false;
++
+     // Query size of generated code
+     const auto TempSize = GetCursorOffset();
+ 
+@@ -1128,7 +1180,63 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
        SetCursorOffset(CodeBuffers.LatestOffset);
        Align16B();
        if ((GetCursorOffset() + TempSize) > CurrentCodeBuffer->UsableSize()) {
@@ -141,6 +155,21 @@ diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interfac
 +        // shared reference again by the time this function returns, which the sequence below
 +        // guarantees) -- WritePriorityMutex::Mutex doesn't track *which* call site (de)acquired
 +        // it, only the net reader/writer counts, so this is safe purely at the mutex level.
++        //
++        // The pause itself (BeginBufferInvalidationSafepoint/EndBufferInvalidationSafepoint) is
++        // owned here, not inside ClearCodeCache, because clearing the LookupCache metadata alone
++        // doesn't make the buffer safe to resume into -- the bytes a paused-then-resumed thread
++        // was already executing stay physically unchanged until this function's memcpy below
++        // actually overwrites them. Releasing the pause right after the metadata clear (as
++        // ClearCodeCache used to do on its own) leaves a window where a just-resumed thread can
++        // race that memcpy into the exact memory it's still running through -- confirmed on-device
++        // as two different guest threads instruction-fetch-faulting at addresses only 0x80 apart,
++        // both landing in memory the LookupCache had already forgotten. Held open from here
++        // through the memcpy closes that window; see the matching End call below.
++        if (CTX->BeginBufferInvalidationSafepoint) {
++          CTX->BeginBufferInvalidationSafepoint(ThreadState);
++          HeldReuseSafepoint = true;
++        }
 +        auto& InvalidationMutex = CTX->GetCodeInvalidationMutex();
 +        InvalidationMutex.unlock_shared();
 +        CTX->ClearCodeCache(ThreadState, false);
@@ -151,7 +180,7 @@ diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interfac
        }
  
        CodeBuffers.LatestOffset = GetCursorOffset();
-@@ -1139,6 +1226,12 @@
+@@ -1139,6 +1247,12 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
      CodeData.BlockBegin += Delta;
      for (auto& EntryPoint : CodeData.EntryPoints) {
        EntryPoint.second += Delta;
@@ -164,7 +193,17 @@ diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interfac
      }
      CodeBegin += Delta;
  
-@@ -1155,7 +1248,23 @@
+@@ -1151,11 +1265,33 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+     SetCursorOffset(CodeBuffers.LatestOffset + TempSize);
+ 
+     CodeBuffers.LatestOffset = GetCursorOffset();
++
++    // Memory this compile reused is fully repopulated now -- safe for any thread paused above to
++    // resume into. See the matching BeginBufferInvalidationSafepoint call and its comment, above.
++    if (HeldReuseSafepoint) {
++      CTX->EndBufferInvalidationSafepoint(ThreadState);
++    }
+   }
  
    TempAllocator.DelayedDisownBuffer();
  
@@ -188,3 +227,248 @@ diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interfac
  
  #ifdef VIXL_DISASSEMBLER
    if (Disassemble() & FEXCore::Config::Disassemble::STATS) {
+diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
+index b9aa7407..1409dd4c 100644
+--- a/FEXCore/Source/Interface/Core/Core.cpp
++++ b/FEXCore/Source/Interface/Core/Core.cpp
+@@ -496,9 +496,57 @@ void ContextImpl::ClearCodeCache(FEXCore::Core::InternalThreadState* Thread, boo
+     // Allocate new CodeBuffer + L3 LookupCache and clear L1+L2 caches
+     Thread->CPUBackend->ClearCache();
+   } else {
+-    // Clear L1+L2 cache of this thread, and clear L3 cache across any threads using it
++    // Clear L1+L2 cache of this thread, and clear L3 cache across any threads using it.
++    //
++    // NewCodeBuffer=false physically reuses the same already-allocated buffer memory instead
++    // of moving to a fresh allocation -- unlike the NewCodeBuffer=true path above, where other
++    // threads' already-compiled code and in-flight execution are simply left alone in the old,
++    // still-valid buffer. Reusing memory that another thread could be *executing* out of right
++    // now (not just compiling into -- a thread running already-JIT'd code never touches
++    // CodeInvalidationMutex at all) needs the same exclusion this codebase's existing code-
++    // invalidation entry points (InvalidateCodeBuffersCodeRange, InvalidateThreadCachedCodeRange)
++    // already rely on CodeInvalidationMutex for, so take it here too, unique/exclusive, for the
++    // duration of the actual clear. The caller (Arm64JITCore::CompileCode, on the iOS-only path
++    // that reaches this branch) is responsible for having already released its own shared lock
++    // on this same mutex before calling in here and re-acquiring it after returning -- this
++    // mutex doesn't support recursive/upgrade locking, so holding the shared lock across this
++    // call would deadlock against the exclusive lock taken here.
++    LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: begin, Thread={:#x}", reinterpret_cast<uintptr_t>(Thread));
++    std::unique_lock inval_lock {CodeInvalidationMutex};
++    LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: got CodeInvalidationMutex exclusive");
++    // By this point no other thread can be mid-compile (that would require CodeInvalidationMutex
++    // shared, which we now hold exclusively) -- but a thread executing already-JIT'd code never
++    // touches this mutex at all, so it's still safe for one to be mid-execution of a direct
++    // branch into memory we're about to invalidate.
++    //
++    // NOTE: the actual pause (BeginBufferInvalidationSafepoint) is no longer taken here -- it now
++    // has to be held by the *caller* (JIT.cpp's CompileCode, on the iOS reuse-in-place path),
++    // spanning not just this metadata clear but the subsequent memcpy that overwrites the
++    // buffer's bytes with newly compiled code. A thread paused mid-block (not at a link site) and
++    // then resumed keeps executing forward through whatever bytes are physically there -- which
++    // are still the *original*, unchanged bytes immediately after this clear, since nothing has
++    // overwritten them yet at this point. It's only unsafe once those bytes actually change, which
++    // doesn't happen until that later memcpy. Ending the safepoint here, before that memcpy, was
++    // confirmed on-device to still let a just-resumed thread race a concurrent compile's memcpy
++    // into the exact bytes it was already executing -- two different guest threads faulting on
++    // instruction-fetch at addresses only 0x80 apart, both landing in memory the LookupCache had
++    // already forgotten about (a fresh block's bytes it never got to look up), is exactly the
++    // signature of that race. This function must therefore only be reached from within a
++    // safepoint the caller is already holding open across the whole clear+repopulate sequence --
++    // see CompileCode's own comment for the matching Begin/End pair.
+     auto lk = Thread->LookupCache->AcquireWriteLock();
++    LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: got own LookupCache write lock, clearing");
+     Thread->LookupCache->ClearCache(lk);
++    LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: own cache cleared, invoking OnBufferReusedInPlace={}",
++                      OnBufferReusedInPlace ? "set" : "unset");
++    // Still inside the exclusive lock's window here, so any other thread that might attempt
++    // to compile (and so update its own L1/L2 from this now-current L3 state) stays blocked
++    // until this returns -- see OnBufferReusedInPlace's own comment (Context.h) for why other
++    // threads' independent L1/L2 caches need to be reached at all.
++    if (OnBufferReusedInPlace) {
++      OnBufferReusedInPlace(Thread, lk);
++    }
++    LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: end, releasing CodeInvalidationMutex");
+   }
+   Allocator::VirtualDontNeed(Thread->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE);
+ }
+diff --git a/FEXCore/Source/Interface/Context/Context.h b/FEXCore/Source/Interface/Context/Context.h
+index e374d857..83fb2de4 100644
+--- a/FEXCore/Source/Interface/Context/Context.h
++++ b/FEXCore/Source/Interface/Context/Context.h
+@@ -21,6 +21,7 @@
+ #include <atomic>
+ #include <cstddef>
+ #include <cstdint>
++#include <functional>
+ #include <mutex>
+ #include <optional>
+ #include <shared_mutex>
+@@ -223,9 +224,74 @@ public:
+     return CodeInvalidationMutex;
+   }
+ 
++  // ClearCodeCache's NewCodeBuffer=false path (physically reusing an already-granted JIT
++  // buffer in place, an iOS-only workaround for StikDebug's external BreakpointJIT mechanism
++  // failing on a session's 3rd+ fresh-allocation request) clears the calling thread's own L1/L2
++  // lookup caches and the shared L3 cache/block-links, but has no visibility into any *other*
++  // guest thread's independent L1/L2 cache -- those are owned per-thread by application-level
++  // code above this file (AetherPS4::Fex::GuestEngine, which tracks every live
++  // InternalThreadState), not by anything FEXCore's own core keeps a list of. A stale L1/L2 hit
++  // on another thread bypasses CodeInvalidationMutex and CompileBlock entirely (fast-path
++  // lookups only ever consult L1/L2, per this file's "backends only check L1 and L2, not L3"
++  // invariant) and branches straight into now-reused, differently-contented memory -- confirmed
++  // on-device as a distinct fault signature from every other issue fixed today ("not tracked --
++  // not inside any currently-live JIT allocation" -- i.e. genuinely wrong content at a
++  // still-valid-looking address, not an alias mixup). Set by GuestEngine at setup so
++  // ClearCodeCache can invoke it (passing the calling thread so its already-cleared cache isn't
++  // redundantly touched) instead of leaving other threads' caches to only self-correct on their
++  // own next CompileBlock call, which may never come if a thread is mostly just executing
++  // already-cached code.
++  //
++  // The lk parameter is the SAME write-lock token ClearCodeCache already holds (from
++  // Thread->LookupCache->AcquireWriteLock() just above the call site) -- pass it straight
++  // through rather than having the callback acquire anything new. On iOS every guest thread's
++  // LookupCache::Shared points at the one process-wide L3 cache tied to the single, StikDebug-
++  // count-limited JIT buffer (see JIT.cpp's ThreadState->LookupCache->Shared assignment), so
++  // "another thread's write lock" and "the lock we're already holding" are literally the same
++  // mutex, not independent per-thread locks. An earlier version of this callback tried to
++  // (re-)acquire that same lock per other-thread, which can only ever self-conflict: blocking
++  // acquisition deadlocked outright, and a try-lock fallback failed 100% of the time, every
++  // thread, every call, with zero real contention involved -- confirmed on-device.
++  std::function<void(FEXCore::Core::InternalThreadState* CallingThread, const FEXCore::LookupCacheWriteLockToken& lk)>
++    OnBufferReusedInPlace;
++
++  // Safepoint hooks around JIT buffer invalidation. Confirmed on-device: OnBufferReusedInPlace
++  // above (and the delinking GuestToHostMap::ClearCache already does) closes the "another
++  // thread's stale L1/L2 entry" and "another thread's stale direct branch" gaps, but neither
++  // stops a thread that's already MID-EXECUTION of an already-resolved direct branch, right as
++  // the memory it jumps into gets cleared/reused out from under it -- "a thread running
++  // already-JIT'd code never touches CodeInvalidationMutex at all", so holding it exclusively
++  // during a reuse does not, on its own, block a concurrent executor the way it blocks a
++  // concurrent compiler. Seen on-device as two different guest threads both faulting into the
++  // same stale dispatcher region within microseconds of each other, right as a third thread's
++  // buffer-reuse was in flight, once Rocket League reached genuine multi-threaded rendering.
++  //
++  // BeginBufferInvalidationSafepoint should pause every other live guest thread (via an async
++  // signal to each, unrelated to anything guest-visible) and only return once they're
++  // confirmed paused (or a bounded wait times out) -- called right before ANY code memory a
++  // stale branch could be executing through gets touched. EndBufferInvalidationSafepoint
++  // releases them, called once that memory is safe to run through again. Set by GuestEngine at
++  // setup, same as OnBufferReusedInPlace, since it's the one place a full thread list (with
++  // native OS thread handles) exists at all.
++  //
++  // "Safe to run through again" is stricter than it first looks: a thread paused mid-block
++  // (not at a link site) keeps executing forward through whatever bytes are physically at its
++  // resume PC once released, and those bytes are still the *original* ones right up until
++  // something actually overwrites them -- ClearCodeCache's NewCodeBuffer=false path (Core.cpp)
++  // only clears metadata (LookupCache/BlockLinks), it never itself touches the buffer's bytes.
++  // The caller that goes on to physically repopulate that buffer (JIT.cpp's CompileCode, via its
++  // post-clear memcpy) is therefore the one that must hold this pause open -- calling Begin
++  // before ClearCodeCache(..., false) and End only after that memcpy finishes, not just around
++  // the clear itself. Ending it too early was confirmed on-device to still let a just-resumed
++  // thread race that memcpy into the exact bytes it was already executing.
++  std::function<void(FEXCore::Core::InternalThreadState* CallingThread)> BeginBufferInvalidationSafepoint;
++  std::function<void(FEXCore::Core::InternalThreadState* CallingThread)> EndBufferInvalidationSafepoint;
++
+   void ConfigureAOTGen(FEXCore::Core::InternalThreadState* Thread, fextl::set<uint64_t>* ExternalBranches, uint64_t SectionMaxAddress) override;
+ 
+   bool IsAddressInCodeBuffer(FEXCore::Core::InternalThreadState* Thread, uintptr_t Address) const override;
++  bool DumpDispatcherStateForDiagnostics(FEXCore::Core::InternalThreadState* Thread, char* OutBuf,
++                                         size_t OutBufSize) const override;
+ 
+   // returns false if a handler was already registered
+   std::optional<CustomIRResult>
+diff --git a/FEXCore/Source/Interface/Core/LookupCache.cpp b/FEXCore/Source/Interface/Core/LookupCache.cpp
+index 0b230306..06c2ff51 100644
+--- a/FEXCore/Source/Interface/Core/LookupCache.cpp
++++ b/FEXCore/Source/Interface/Core/LookupCache.cpp
+@@ -102,6 +102,27 @@ void LookupCache::ClearCache(const LookupCacheWriteLockToken& lk) {
+ }
+ 
+ void GuestToHostMap::ClearCache(const LookupCacheWriteLockToken&) {
++  // Sever every recorded direct-branch link before discarding them. Erase(Address, ...) already
++  // does this correctly for a single address (walk BlockLinks, call each delinker with its
++  // HostLink), but until now this full-cache clear just replaced BlockLinks with a fresh empty
++  // map, silently dropping every entry without ever calling its delinker. On every platform that
++  // only ever grows into fresh memory on eviction (NewCodeBuffer=true, the normal case
++  // everywhere) that gap was invisible: the stale patched branches point at addresses inside the
++  // now-abandoned old buffer, which nothing valid ever branches back into again anyway. It
++  // stopped being invisible on iOS, where JIT buffer reuse-in-place (NewCodeBuffer=false) was
++  // tried as a workaround for a separate StikDebug allocation-count limitation: reusing the same
++  // memory for new compiled code, with old delinkers never having been called, left other
++  // still-referenced code's already-patched direct branches pointing at addresses that now held
++  // completely unrelated new code. HandleGuestSignal's SIGBUS-recovery paths could keep
++  // "fixing" the resulting faults' host/writable-vs-executable address one instruction at a
++  // time, but never the actual stale target underneath -- confirmed on-device as an unbounded
++  // fault loop (7,000,000+ recoveries cycling through only 8 distinct addresses, no crash, no
++  // progress). Actually severing every link here, the same way Erase() already does for one
++  // address, is the real fix for that, independent of whichever eviction mode ends up used.
++  for (auto& [Tag, Delinker] : *BlockLinks) {
++    Delinker(Tag.HostLink);
++  }
++
+   // Allocate a new pointer from the BlockLinks pma again.
+   BlockLinks = BlockLinks_pma->new_object<BlockLinksMapType>();
+   // All code is gone, clear the block list
+diff --git a/FEXCore/Source/Interface/Core/LookupCache.h b/FEXCore/Source/Interface/Core/LookupCache.h
+index bf958d80..68cef7d1 100644
+--- a/FEXCore/Source/Interface/Core/LookupCache.h
++++ b/FEXCore/Source/Interface/Core/LookupCache.h
+@@ -25,12 +25,21 @@ protected:
+ };
+ 
+ struct LookupCacheWriteLockToken : public LookupCacheBaseLockToken {
++  // Whether this token actually holds the lock -- only meaningful for a token constructed via
++  // the try_to_lock overload below (see GuestToHostMap::TryAcquireWriteLock's own comment for
++  // why that path exists). A token from the plain (blocking) constructor always owns the lock.
++  [[nodiscard]] bool Owned() const {
++    return Lock.owns_lock();
++  }
++
+ private:
+   // Only constructible by GuestToHostMap
+   friend struct GuestToHostMap;
+   LookupCacheWriteLockToken(FEXCore::Utils::WritePriorityMutex::Mutex& Mutex)
+     : Lock {Mutex} {}
+-  std::lock_guard<FEXCore::Utils::WritePriorityMutex::Mutex> Lock;
++  LookupCacheWriteLockToken(FEXCore::Utils::WritePriorityMutex::Mutex& Mutex, std::try_to_lock_t)
++    : Lock {Mutex, std::try_to_lock} {}
++  std::unique_lock<FEXCore::Utils::WritePriorityMutex::Mutex> Lock;
+ };
+ 
+ struct LookupCacheReadLockToken : public LookupCacheBaseLockToken {
+@@ -50,6 +59,22 @@ struct GuestToHostMap {
+     return LookupCacheWriteLockToken {Lock};
+   }
+ 
++  // Non-blocking variant: check LookupCacheWriteLockToken::Owned() on the result before using
++  // it. Exists for cross-thread cache invalidation (a thread reusing the shared JIT buffer in
++  // place, clearing sibling threads' caches -- see OnBufferReusedInPlace's own comment,
++  // Context.h) where blocking here risks a real deadlock: the calling thread already holds
++  // CodeInvalidationMutex exclusively at that point, and if the target thread is itself
++  // waiting on that same mutex (e.g. mid-compile, about to take it shared) while holding this
++  // very lock, the blocking AcquireWriteLock() above would wait forever on a lock its own
++  // holder can never release. Confirmed on-device: exactly this scenario hung Minecraft's
++  // boot indefinitely with zero further progress. Skipping a thread here just leaves its L1/L2
++  // stale for one more compile cycle -- the same (already-handled) class of fault as a
++  // still-tracked-but-stale address, not a hang.
++  [[nodiscard]]
++  LookupCacheWriteLockToken TryAcquireWriteLock() {
++    return LookupCacheWriteLockToken {Lock, std::try_to_lock};
++  }
++
+   [[nodiscard]]
+   LookupCacheReadLockToken AcquireReadLock() {
+     return LookupCacheReadLockToken {Lock};
+@@ -379,6 +404,12 @@ public:
+     return Shared->AcquireWriteLock();
+   }
+ 
++  // See GuestToHostMap::TryAcquireWriteLock's own comment for why this non-blocking variant
++  // exists. Check LookupCacheWriteLockToken::Owned() on the result before using it.
++  auto TryAcquireWriteLock() {
++    return Shared->TryAcquireWriteLock();
++  }
++
+ private:
+   void CacheBlockMapping(uint64_t Address, const GuestToHostMap::BlockEntry& Entry, bool L1Only, const LookupCacheBaseLockToken& lk) {
+     for (const auto& CodePage : Entry.CodePages) {
