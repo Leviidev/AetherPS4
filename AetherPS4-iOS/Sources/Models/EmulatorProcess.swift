@@ -142,6 +142,33 @@ final class EmulatorProcess {
         // thread pattern used elsewhere in this codebase.
         Thread.detachNewThread { [weak self] in
             let result = shadps4_run_loop()
+
+            // A game calling sceSystemServiceLoadExec (e.g. a chapter/level transition --
+            // confirmed on-device with Journey) asks the engine to restart with a different
+            // eboot. Every other shadPS4 platform handles that by fork()/exec()-ing a whole
+            // new process; iOS can't do that at all (a sandboxed app cannot fork()), so
+            // Emulator::Restart() instead stops this session the normal way and records the
+            // new path for exactly this check (see shadps4_ios_api.h's own comment). Without
+            // this, shadps4_run_loop() returning here would be indistinguishable from the
+            // player quitting -- the whole app would fall through to .exited below, and the
+            // in-progress restart request would just be dropped.
+            var pathBuffer = [Int8](repeating: 0, count: 4096)
+            var restartPath: String?
+            pathBuffer.withUnsafeMutableBufferPointer { buffer in
+                guard let base = buffer.baseAddress,
+                      shadps4_take_pending_restart(base, Int32(buffer.count)) != 0
+                else { return }
+                restartPath = String(cString: base)
+            }
+            if let restartPath {
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.appendLine(.stdout, "[AetherPS4] Restarting: \(restartPath)")
+                    self.continueLaunch(pkgPath: restartPath, gameName: self.runningGameName ?? "")
+                }
+                return
+            }
+
             DispatchQueue.main.async {
                 guard let self else { return }
                 LoadingOverlayWindow.teardown()

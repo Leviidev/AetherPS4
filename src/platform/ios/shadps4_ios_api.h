@@ -70,6 +70,19 @@ int shadps4_prepare_window(const char* eboot_path);
 // game session. Returns 0 on a normal exit.
 int shadps4_run_loop(void);
 
+// Call once, right after shadps4_run_loop() returns, to distinguish a game requesting an
+// in-process restart (sceSystemServiceLoadExec -- e.g. a chapter/level transition) from a
+// normal exit. iOS can't fork()/exec() a new process the way every other platform's
+// Emulator::Restart() does (see its own comment); instead the new eboot path/args are handed
+// back here for the host to relaunch with, the same way it launched the first game, rather
+// than the whole app quick_exit()-ing the way an unhandled fork() failure otherwise would.
+//
+// Returns 1 and fills path_buf (NUL-terminated, truncated to path_buf_size if needed) if a
+// restart was requested; returns 0 (path_buf untouched) otherwise -- a normal exit, or the
+// path didn't fit and path_buf_size was 0. Guest args, if any, are not currently surfaced
+// here (no host caller needs them yet); they're discarded.
+int shadps4_take_pending_restart(char* path_buf, int path_buf_size);
+
 // Requests that a currently-running shadps4_run() call (on the main thread) return.
 // Safe to call from any other thread, e.g. from a UI "stop" button's handler while
 // shadps4_run() blocks the main thread.
