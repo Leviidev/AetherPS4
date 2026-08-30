@@ -55,6 +55,36 @@ constexpr auto CUSTOM_MODULES_DIR = "custom_modules";
 constexpr auto LOG_FILE = "shad_log.txt";
 
 /**
+ * Ensures that a directory and all of its missing parents exist.
+ *
+ * This is intentionally the only helper used by the startup path table. A
+ * single-level create_directory() call is not sufficient on a fresh iOS
+ * sandbox, where Library/Application Support may not exist yet.
+ */
+[[nodiscard]] inline bool EnsureDirectoryTree(const std::filesystem::path& path) noexcept {
+    namespace fs = std::filesystem;
+
+    if (path.empty()) {
+        return false;
+    }
+
+    std::error_code ec;
+    if (fs::is_directory(path, ec)) {
+        return true;
+    }
+
+    ec.clear();
+    if (fs::create_directories(path, ec)) {
+        return true;
+    }
+
+    // Another thread or process may have created the final component between
+    // the two calls. Treat that race as success, but never throw from startup.
+    ec.clear();
+    return fs::is_directory(path, ec);
+}
+
+/**
  * Validates a given path.
  *
  * A given path is valid if it meets these conditions:
