@@ -26,6 +26,10 @@ void* PS4_SYSV_ABI internal_memcpy(void* dest, const void* src, size_t n) {
     return std::memcpy(dest, src, n);
 }
 
+void* PS4_SYSV_ABI internal_memmove(void* dest, const void* src, size_t n) {
+    return std::memmove(dest, src, n);
+}
+
 s32 PS4_SYSV_ABI internal_memcpy_s(void* dest, size_t destsz, const void* src, size_t count) {
 #ifdef _WIN64
     return memcpy_s(dest, destsz, src, count);
@@ -215,6 +219,12 @@ void RegisterFexLibcMemoryAliases(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("Q3VBxCXhUHs", "libc", 1, "libc", internal_memcpy);
     LIB_FUNCTION("8zTFvBIAIN8", "libc", 1, "libc", internal_memset);
     LIB_FUNCTION("DfivPArhucg", "libc", 1, "libc", internal_memcmp);
+    // Confirmed unimplemented (unlike memcpy/memset/memcmp right above, which already had
+    // host registrations) via Rocket League's log: +P6FRGH4LfA#libc#1#libc#Function hitting
+    // AddUnsupportedFunction's ENOSYS stub. Registered under both tags up front this time
+    // (see the malloc/free/realloc/memalign fix in RegisterlibSceLibcInternalMemory below for
+    // why relying on just one tag isn't safe).
+    LIB_FUNCTION("+P6FRGH4LfA", "libc", 1, "libc", internal_memmove);
     // These return pointers from the host allocator. If a loaded libc.prx later frees one
     // internally through its guest SceLibcHeap, it reports heap corruption and traps. Prefer
     // the complete guest allocator family whenever it is available; retain these adapters for
@@ -257,6 +267,7 @@ void RegisterlibSceLibcInternalMemory(Core::Loader::SymbolsResolver* sym) {
 
     LIB_FUNCTION("NFLs+dRJGNg", "libSceLibcInternal", 1, "libSceLibcInternal", internal_memcpy_s);
     LIB_FUNCTION("Q3VBxCXhUHs", "libSceLibcInternal", 1, "libSceLibcInternal", internal_memcpy);
+    LIB_FUNCTION("+P6FRGH4LfA", "libSceLibcInternal", 1, "libSceLibcInternal", internal_memmove);
     LIB_FUNCTION("8zTFvBIAIN8", "libSceLibcInternal", 1, "libSceLibcInternal", internal_memset);
     LIB_FUNCTION("DfivPArhucg", "libSceLibcInternal", 1, "libSceLibcInternal", internal_memcmp);
     // malloc/free/realloc/memalign were only ever registered under the "libc" library tag

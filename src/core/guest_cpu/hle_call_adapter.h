@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
+#include "common/logging/log.h"
 #include "common/types.h"
 #include "guest_cpu.h"
 
@@ -374,6 +375,20 @@ private:
 class UnsupportedHleCallAdapter final : public HleCallAdapter {
 public:
     HleCallResult Invoke(HleCallFrame&) const override {
+        // Resolve-time logging (Linker::Resolve) only shows that a symbol has no
+        // implementation, once, when the guest module that imports it loads -- it says
+        // nothing about whether the guest ever actually *calls* through that veneer at
+        // runtime. Rocket League's log confirmed the C++ exception family (__cxa_throw and
+        // friends) has no implementation, but not whether the game's own code -- as opposed to
+        // e.g. libSceFios2.prx's own init code, which runs and finishes before guest entry --
+        // ever exercises them. Capped (not gated to first-per-symbol) so a genuinely hot,
+        // repeatedly-hit unsupported call doesn't flood the log once the cap is reached, while
+        // still showing which distinct names were hit early on.
+        static std::atomic<u32> logged_count{0};
+        if (logged_count.fetch_add(1, std::memory_order_relaxed) < 200) {
+            LOG_CRITICAL(Core_Linker, "BACHATA_UNSUPPORTED_CALL: guest invoked unimplemented {}",
+                        Name());
+        }
         return HleCallFailure{ENOSYS, Name()};
     }
 };
