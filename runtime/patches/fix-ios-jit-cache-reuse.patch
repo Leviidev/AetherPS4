@@ -1,0 +1,20 @@
+diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
+--- a/FEXCore/Source/Interface/Core/JIT/JIT.cpp
++++ b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
+@@ -1209,10 +1209,12 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+         // shared reference again by the time this function returns, which the sequence below
+         // guarantees) -- WritePriorityMutex::Mutex doesn't track *which* call site (de)acquired
+         // it, only the net reader/writer counts, so this is safe purely at the mutex level.
+-        auto& InvalidationMutex = CTX->GetCodeInvalidationMutex();
+-        InvalidationMutex.unlock_shared();
+-        CTX->ClearCodeCache(ThreadState, false);
+-        InvalidationMutex.lock_shared();
++        // Reusing the active allocation corrupts threads that are paused in an
++        // HLE call: when they return, their native return address still points
++        // into the old JIT block. Rotate to a fresh buffer so those return
++        // paths remain executable until the normal retirement logic releases
++        // them.
++        CTX->ClearCodeCache(ThreadState);
+ #else
+         CTX->ClearCodeCache(ThreadState);
+ #endif
