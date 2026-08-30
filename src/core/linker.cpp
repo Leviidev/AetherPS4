@@ -4,6 +4,7 @@
 #include "common/alignment.h"
 #include "common/arch.h"
 #include "common/assert.h"
+#include "common/boot_timer.h"
 #include "common/elf_info.h"
 #include "common/logging/formatter.h"
 #include "common/logging/log.h"
@@ -607,6 +608,8 @@ void Linker::Execute(const std::vector<std::string>& args) {
 
     main_thread.Run([this, module, &args](std::stop_token) {
         Common::SetCurrentThreadName("Game:Main");
+        LOG_CRITICAL(Core_Linker, "BACHATA_BOOT_TIMING: Game:Main thread started at {}ms",
+                    Common::BootElapsedMs());
         std::set_terminate(Common::Log::Terminate);
 
 #ifndef _WIN32 // Clear any existing signal mask for game threads.
@@ -661,6 +664,8 @@ void Linker::Execute(const std::vector<std::string>& args) {
 
         // Run the game's entry function
         params.entry_addr = module->GetEntryAddress();
+        LOG_CRITICAL(Core_Linker, "BACHATA_BOOT_TIMING: guest entry reached at {}ms",
+                    Common::BootElapsedMs());
         RunMainEntry(&params);
     });
 }

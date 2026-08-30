@@ -1,405 +1,1686 @@
 # SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-set(BUILD_SHARED_LIBS OFF)
-set(BUILD_TESTING OFF)
-set_directory_properties(PROPERTIES
-    EXCLUDE_FROM_ALL ON
-    SYSTEM ON
-)
+# Version 3.24 needed for FetchContent OVERRIDE_FIND_PACKAGE
+cmake_minimum_required(VERSION 3.24)
 
-# Set CMP0069 policy to "NEW" in order to ensure consistent behavior when building external targets with LTO enabled
-set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED True)
 
-if (MSVC)
-    # Silence "deprecation" warnings
-    add_definitions(-D_CRT_SECURE_NO_WARNINGS -D_CRT_NONSTDC_NO_DEPRECATE -D_SCL_SECURE_NO_WARNINGS)
+if(APPLE)
+    # OBJCXX (not just OBJC): needed for src/common/logging/objc_exception_describe.mm.
+    # Xcode's generator (used for the iOS target) compiles .mm files by extension
+    # regardless of this, which is why that build never surfaced the gap -- but the
+    # Ninja/Makefiles generator (used for the macOS target) enforces it strictly and
+    # fails to even regenerate build.ninja without it.
+    list(APPEND ADDITIONAL_LANGUAGES OBJC OBJCXX)
+    # Minimum OS version for KosmicKrisp
+    set(CMAKE_OSX_DEPLOYMENT_TARGET 26.0 CACHE STRING "")
 endif()
 
-# Boost
-if (NOT TARGET Boost::headers)
-    add_subdirectory(ext-boost)
+if (NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# spdlog
-set(SPDLOG_NO_EXCEPTIONS ON)
-set(SPDLOG_DISABLE_GLOBAL_LOGGER ON)
-if (TARGET fmt::fmt)
-    set(SPDLOG_FMT_EXTERNAL ON)
-endif()
-add_subdirectory(spdlog EXCLUDE_FROM_ALL SYSTEM)
-target_compile_definitions(spdlog PUBLIC SPDLOG_FUNCTION=__func__)
+project(shadPS4 CXX C ASM ${ADDITIONAL_LANGUAGES})
 
-# fmtlib
-if (NOT TARGET fmt::fmt)
-    add_subdirectory(fmt)
-endif()
+include(FetchContent)
 
-# FFmpeg
-if (NOT TARGET FFmpeg::ffmpeg)
-    add_subdirectory(ffmpeg-core)
-    add_library(FFmpeg::ffmpeg ALIAS ffmpeg)
-endif()
+# Forcing PIE makes sure that the base address is high enough so that it doesn't clash with the PS4 memory.
+if(UNIX AND NOT APPLE)
+    set(CMAKE_POSITION_INDEPENDENT_CODE TRUE)
 
-# LibAtrac9
-file(GLOB LIBATRAC9_SOURCES LibAtrac9/C/src/*.c)
-add_library(LibAtrac9 STATIC ${LIBATRAC9_SOURCES})
-target_include_directories(LibAtrac9 INTERFACE LibAtrac9/C/src)
-
-# zlib
-if (NOT TARGET ZLIB::ZLIB)
-    set(ZLIB_ENABLE_TESTS OFF)
-    set(WITH_GTEST OFF)
-    set(WITH_NEW_STRATEGIES ON)
-    set(ZLIB_COMPAT ON CACHE BOOL "" FORCE)
-    include(FetchContent)
-    FetchContent_Declare(
-        ZLIB
-        SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/zlib-ng"
-        OVERRIDE_FIND_PACKAGE
-    )
-    FetchContent_MakeAvailable(ZLIB)
-    add_library(ZLIB::ZLIB ALIAS zlib)
-    # libpng expects this variable to exist after its find_package(ZLIB)
-    set(ZLIB_INCLUDE_DIRS "${FETCHCONTENT_BASE_DIR}/zlib-build")
-endif()
-
-# FreeType
-if (NOT TARGET Freetype::Freetype)
-    # Keep optional deps off to reduce build surface; zlib stays enabled for compressed fonts.
-    set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
-    set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
-    set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
-    set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
-    add_subdirectory(freetype)
-    add_library(Freetype::Freetype ALIAS freetype)
-endif()
-
-# SDL3
-if (NOT TARGET SDL3::SDL3)
-    set(SDL_TEST_LIBRARY OFF)
-    set(SDL_PIPEWIRE OFF)
-    set(SDL_AVX512F OFF)
-    add_subdirectory(sdl3)
-endif()
-
-# vulkan-headers
-if (NOT TARGET Vulkan::Headers)
-    set(VULKAN_HEADERS_ENABLE_MODULE OFF)
-    add_subdirectory(vulkan-headers)
-    set(VulkanHeaders_VERSION "1.4.330")
-endif()
-
-# VMA
-if (NOT TARGET GPUOpen::VulkanMemoryAllocator)
-    add_subdirectory(vma)
-endif()
-
-# RenderDoc
-if (NOT TARGET RenderDoc::API)
-    add_library(renderdoc INTERFACE)
-    target_include_directories(renderdoc INTERFACE ./renderdoc)
-    add_library(RenderDoc::API ALIAS renderdoc)
-endif()
-
-# glslang
-if (NOT TARGET glslang::glslang)
-    set(SKIP_GLSLANG_INSTALL ON CACHE BOOL "")
-    set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "")
-    set(ENABLE_SPVREMAPPER OFF CACHE BOOL "")
-    set(ENABLE_CTEST OFF CACHE BOOL "")
-    set(ENABLE_HLSL OFF CACHE BOOL "")
-    set(BUILD_EXTERNAL OFF CACHE BOOL "")
-    set(ENABLE_OPT OFF CACHE BOOL "")
-    add_subdirectory(glslang)
-    file(COPY glslang/SPIRV DESTINATION glslang/glslang FILES_MATCHING PATTERN "*.h")
-    target_include_directories(glslang INTERFACE "${CMAKE_CURRENT_BINARY_DIR}/glslang")
-endif()
-
-# Robin-map
-if (NOT TARGET tsl::robin_map)
-    add_subdirectory(robin-map)
-endif()
-
-# Xbyak
-if (NOT TARGET xbyak::xbyak)
-    add_subdirectory(xbyak)
-endif()
-
-# MagicEnum
-if (NOT TARGET magic_enum::magic_enum)
-    add_subdirectory(magic_enum)
-endif()
-
-# Toml11
-if (NOT TARGET toml11::toml11)
-    add_subdirectory(toml11)
-
-    if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-      if (CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
-        get_target_property(_toml11_compile_options toml11 INTERFACE_COMPILE_OPTIONS)
-        list(REMOVE_ITEM _toml11_compile_options "/Zc:preprocessor")
-        set_target_properties(toml11 PROPERTIES INTERFACE_COMPILE_OPTIONS ${_toml11_compile_options})
-      endif()
+    # check PIE support at link time
+    include(CheckPIESupported)
+    check_pie_supported(OUTPUT_VARIABLE pie_check LANGUAGES C CXX)
+    if(NOT CMAKE_C_LINK_PIE_SUPPORTED OR NOT CMAKE_CXX_LINK_PIE_SUPPORTED)
+        message(WARNING "PIE is not supported at link time: ${pie_check}")
     endif()
 endif()
 
-# xxHash
-if (NOT TARGET xxHash::xxhash)
-    add_library(xxhash xxhash/xxhash.h xxhash/xxhash.c)
-    target_include_directories(xxhash PUBLIC xxhash)
-    add_library(xxHash::xxhash ALIAS xxhash)
+include(CMakeDependentOption)
+cmake_dependent_option(ENABLE_SYSTEM_VULKAN "Enable the system Vulkan driver" OFF APPLE OFF)
+
+option(ENABLE_DISCORD_RPC "Enable the Discord RPC integration" ON)
+option(ENABLE_UPDATER "Enables the options to updater" ON)
+option(ENABLE_TESTS "Build unit tests (requires GTest)" OFF)
+option(ENABLE_BACHATA_RUNTIME "Build x86-64 Android-container runtime mode" OFF)
+option(ENABLE_SYSTEM_LIBRARIES "Enable building against system libraries" OFF)
+option(ENABLE_FEX_GUEST_CPU "Build the native ARM64 FEXCore guest CPU backend" OFF)
+option(ENABLE_SHADPS4_IOS_LIB "Build shadps4_ios, the embeddable C-API library used by the standalone AetherPS4 app (builds for the host macOS architecture; arm64-apple-ios cross-compilation is a later phase)" OFF)
+set(FEXCORE_GUEST_CPU_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/runtime/sources/fex" CACHE PATH
+    "Checked-out FEX source directory for the FEXCore guest CPU backend")
+set(FEXCORE_GUEST_CPU_BUILD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/runtime/build/fexcore-smoke-build" CACHE PATH
+    "AArch64 FEXCore build directory for the FEXCore guest CPU backend")
+
+if (ENABLE_BACHATA_RUNTIME)
+    set(ENABLE_DISCORD_RPC OFF)
+    set(ENABLE_UPDATER OFF)
 endif()
 
-# Zydis
-if (NOT TARGET Zydis::Zydis)
-    option(ZYDIS_BUILD_TOOLS "" OFF)
-    option(ZYDIS_BUILD_EXAMPLES "" OFF)
-    add_subdirectory(zydis)
-endif()
-
-# sirit
-add_subdirectory(sirit)
-if (WIN32)
-    target_compile_options(sirit PRIVATE $<$<CXX_COMPILER_ID:Clang>:-Wno-error=unused-command-line-argument>)
-endif()
-
-# half
-if (NOT TARGET half::half)
-    add_library(half INTERFACE)
-    target_include_directories(half INTERFACE half/include)
-    add_library(half::half ALIAS half)
-endif()
-
-# libpng
-if (NOT TARGET PNG::PNG)
-    set(PNG_SHARED OFF CACHE BOOL "" FORCE)
-    set(PNG_STATIC ON CACHE BOOL "" FORCE)
-    set(PNG_TESTS OFF CACHE BOOL "" FORCE)
-    set(PNG_TOOLS OFF CACHE BOOL "" FORCE)
-    set(SKIP_INSTALL_ALL OFF CACHE BOOL "" FORCE)
-    add_subdirectory(libpng)
-    add_library(PNG::PNG ALIAS png_static)
-endif()
-
-# Dear ImGui
-add_library(Dear_ImGui
-        dear_imgui/imgui.cpp
-        dear_imgui/imgui_demo.cpp
-        dear_imgui/imgui_draw.cpp
-        dear_imgui/imgui_internal.h
-        dear_imgui/imgui_tables.cpp
-        dear_imgui/imgui_widgets.cpp
-)
-target_include_directories(Dear_ImGui INTERFACE dear_imgui/)
-
-# Tracy
-if (CMAKE_BUILD_TYPE STREQUAL "Release")
-    option(TRACY_ENABLE "" OFF)
+# First, determine whether to use CMAKE_OSX_ARCHITECTURES or CMAKE_SYSTEM_PROCESSOR.
+if (APPLE AND CMAKE_OSX_ARCHITECTURES)
+    set(BASE_ARCHITECTURE "${CMAKE_OSX_ARCHITECTURES}")
+elseif (CMAKE_SYSTEM_PROCESSOR)
+    set(BASE_ARCHITECTURE "${CMAKE_SYSTEM_PROCESSOR}")
 else()
-    option(TRACY_ENABLE "" ON)
-endif()
-option(TRACY_NO_CRASH_HANDLER "" ON) # Otherwise texture cache exceptions will be treaten as a crash
-option(TRACY_ON_DEMAND "" ON)
-option(TRACY_NO_FRAME_IMAGE "" ON)
-option(TRACY_FIBERS "" OFF) # For AmdGpu frontend profiling, disabled due to instability
-option(TRACY_NO_SYSTEM_TRACING "" ON)
-option(TRACY_NO_CALLSTACK "" ON)
-option(TRACY_NO_CODE_TRANSFER "" ON)
-option(TRACY_NO_SAMPLING "" ON)
-option(TRACY_ONLY_LOCALHOST "" ON)
-option(TRACY_NO_CONTEXT_SWITCH "" ON)
-add_subdirectory(tracy)
-
-# pugixml
-if (NOT TARGET pugixml::pugixml)
-    option(PUGIXML_NO_EXCEPTIONS "" ON)
-    add_subdirectory(pugixml)
+    set(BASE_ARCHITECTURE "${CMAKE_HOST_SYSTEM_PROCESSOR}")
 endif()
 
-# libusb
-if (NOT TARGET libusb::usb)
-    if (${CMAKE_SYSTEM_NAME} STREQUAL "FreeBSD")
-        # YOU MUST USE NATIVE LIBUSB
-        # using anything else will crash instantly, also freebsd will NOT like it
-        # no you cant vendor this libusb, its builtin on freebsd
-        find_package(libusb)
-    elseif (NOT ${CMAKE_SYSTEM_NAME} STREQUAL "iOS")
-        # libusb's Darwin backend needs IOKit/IOCFBundle.h, unavailable on iOS.
-        # USB toy portals aren't a meaningful iOS feature anyway (no physical USB accessory port).
-        add_subdirectory(libusb)
-        add_library(libusb::usb ALIAS usb-1.0)
+# Next, match common architecture strings down to a known common value.
+if (BASE_ARCHITECTURE MATCHES "(x86)|(X86)|(amd64)|(AMD64)")
+    set(ARCHITECTURE "x86_64")
+elseif (BASE_ARCHITECTURE MATCHES "(aarch64)|(AARCH64)|(arm64)|(ARM64)")
+    set(ARCHITECTURE "arm64")
+else()
+    message(FATAL_ERROR "Unsupported CPU architecture: ${BASE_ARCHITECTURE}")
+endif()
+
+if (ARCHITECTURE STREQUAL "x86_64")
+    # Target x86-64-v3 CPU architecture as this is a good balance between supporting performance critical
+    # instructions like AVX2 and maintaining support for older CPUs.
+    add_compile_options(-march=x86-64-v3)
+endif()
+
+if (ENABLE_FEX_GUEST_CPU)
+    if (NOT ARCHITECTURE STREQUAL "arm64")
+        message(FATAL_ERROR "ENABLE_FEX_GUEST_CPU requires an ARM64 shadPS4 host")
+    endif()
+    set(FEXCORE_GUEST_CPU_LIBRARIES
+        "${FEXCORE_GUEST_CPU_BUILD_DIR}/FEXCore/Source/libFEXCore.a"
+        "${FEXCORE_GUEST_CPU_BUILD_DIR}/Source/Common/libCommon.a"
+        "${FEXCORE_GUEST_CPU_BUILD_DIR}/Source/Tools/CommonTools/libCommonTools.a"
+        "${FEXCORE_GUEST_CPU_BUILD_DIR}/FEXCore/Source/libJemallocLibs.a"
+        "${FEXCORE_GUEST_CPU_BUILD_DIR}/Source/Common/cpp-optparse/libcpp-optparse.a"
+        "${FEXCORE_GUEST_CPU_BUILD_DIR}/External/tiny-json/libtiny-json.a"
+        "${FEXCORE_GUEST_CPU_BUILD_DIR}/FEXCore/Source/libFEXCore_Base.a"
+        "${FEXCORE_GUEST_CPU_BUILD_DIR}/External/fmt/libfmt.a"
+        "${FEXCORE_GUEST_CPU_BUILD_DIR}/External/xxhash/cmake_unofficial/libxxhash.a"
+        "${FEXCORE_GUEST_CPU_BUILD_DIR}/External/cephes/libcephes_128bit.a"
+        "${FEXCORE_GUEST_CPU_BUILD_DIR}/External/SoftFloat-3e/libsoftfloat_3e.a"
+        "${FEXCORE_GUEST_CPU_BUILD_DIR}/External/rpmalloc/librpmalloc.a"
+    )
+    foreach(fex_library IN LISTS FEXCORE_GUEST_CPU_LIBRARIES)
+        if (NOT EXISTS "${fex_library}")
+            message(FATAL_ERROR "FEXCore guest CPU library is missing: ${fex_library}. Run runtime/scripts/build-fexcore-smoke-aarch64.sh first.")
+        endif()
+    endforeach()
+endif()
+
+cmake_host_system_information(RESULT PROC_INFO QUERY PROCESSOR_DESCRIPTION)
+
+message(STATUS "${PROC_INFO}")
+
+if (APPLE AND ARCHITECTURE STREQUAL "x86_64" AND CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "arm64")
+    # Exclude ARM homebrew path to avoid conflicts when cross compiling.
+    list(APPEND CMAKE_IGNORE_PREFIX_PATH "/opt/homebrew")
+
+    # Need to reconfigure pkg-config to use the right architecture library paths.
+    # It's not ideal to override these but otherwise the build breaks just by having pkg-config installed.
+    set(ENV{PKG_CONFIG_DIR} "")
+    set(ENV{PKG_CONFIG_LIBDIR} "${CMAKE_SYSROOT}/usr/lib/pkgconfig:${CMAKE_SYSROOT}/usr/share/pkgconfig:${CMAKE_SYSROOT}/usr/local/lib/pkgconfig:${CMAKE_SYSROOT}/usr/local/share/pkgconfig")
+    set(ENV{PKG_CONFIG_SYSROOT_DIR} ${CMAKE_SYSROOT})
+endif()
+
+# This function should be passed a list of all files in a target. It will automatically generate file groups
+# following the directory hierarchy, so that the layout of the files in IDEs matches the one in the filesystem.
+function(create_target_directory_groups target_name)
+
+    # Place any files that aren't in the source list in a separate group so that they don't get in the way.
+    source_group("Other Files" REGULAR_EXPRESSION ".")
+
+    get_target_property(target_sources "${target_name}" SOURCES)
+
+    foreach(file_name IN LISTS target_sources)
+        get_filename_component(dir_name "${file_name}" PATH)
+        # Group names use '\' as a separator even though the entire rest of CMake uses '/'...
+        string(REPLACE "/" "\\" group_name "${dir_name}")
+        source_group("${group_name}" FILES "${file_name}")
+    endforeach()
+endfunction()
+
+# Setup a custom clang-format target (if clang-format can be found) that will run
+# against all the src files. This should be used before making a pull request.
+if (CLANG_FORMAT)
+    set(SRCS ${PROJECT_SOURCE_DIR}/src)
+    set(CCOMMENT "Running clang format against all the .h and .cpp files in src/")
+    if (WIN32)
+        add_custom_target(clang-format
+            COMMAND powershell.exe -Command "Get-ChildItem '${SRCS}/*' -Include *.cpp,*.h,*.mm -Recurse | Foreach {&'${CLANG_FORMAT}' -i $_.fullname}"
+            COMMENT ${CCOMMENT})
+    else()
+        add_custom_target(clang-format
+            COMMAND find ${SRCS} -iname *.h -o -iname *.cpp -o -iname *.mm | xargs ${CLANG_FORMAT} -i
+            COMMENT ${CCOMMENT})
+    endif()
+    unset(SRCS)
+    unset(CCOMMENT)
+endif()
+
+# generate git revision information
+include("${CMAKE_CURRENT_SOURCE_DIR}/externals/cmake-modules/GetGitRevisionDescription.cmake")
+get_git_head_revision(GIT_REF_SPEC GIT_REV)
+git_describe(GIT_DESC --always --long --dirty)
+git_branch_name(GIT_BRANCH)
+string(TIMESTAMP BUILD_DATE "%Y-%m-%d %H:%M:%S")
+
+message("start git things")
+
+# Try to get the upstream remote and branch
+message("check for remote and branch")
+execute_process(
+  COMMAND git rev-parse --abbrev-ref --symbolic-full-name @{u}
+  OUTPUT_VARIABLE GIT_REMOTE_NAME
+  RESULT_VARIABLE GIT_REMOTE_RESULT
+  ERROR_QUIET
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+# If there's no upstream set or the command failed, check remote.pushDefault
+if (GIT_REMOTE_RESULT OR GIT_REMOTE_NAME STREQUAL "")
+  message(STATUS "check default push")
+  execute_process(
+    COMMAND git config --get remote.pushDefault
+    OUTPUT_VARIABLE GIT_REMOTE_NAME
+    RESULT_VARIABLE GIT_REMOTE_RESULT
+    ERROR_QUIET
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+  message(STATUS "got remote: ${GIT_REMOTE_NAME}")
+endif()
+
+# If running in GitHub Actions and the above fails
+if (GIT_REMOTE_RESULT OR GIT_REMOTE_NAME STREQUAL "")
+  message(STATUS "check github")
+  set(GIT_REMOTE_NAME "origin")
+
+  # Retrieve environment variables
+  if (DEFINED ENV{GITHUB_HEAD_REF} AND NOT "$ENV{GITHUB_HEAD_REF}" STREQUAL "")
+    message(STATUS "github head ref: $ENV{GITHUB_HEAD_REF}")
+    set(GITHUB_HEAD_REF "$ENV{GITHUB_HEAD_REF}")
+  else()
+    set(GITHUB_HEAD_REF "")
+  endif()
+
+  if (DEFINED ENV{GITHUB_REF} AND NOT "$ENV{GITHUB_REF}" STREQUAL "")
+    message(STATUS "github ref: $ENV{GITHUB_REF}")
+    string(REGEX REPLACE "^refs/[^/]*/" "" GITHUB_BRANCH "$ENV{GITHUB_REF}")
+    string(REGEX MATCH "refs/pull/([0-9]+)/merge" MATCHED_REF "$ENV{GITHUB_REF}")
+    if (MATCHED_REF)
+      set(PR_NUMBER "${CMAKE_MATCH_1}")
+      set(GITHUB_BRANCH "")
+      message(STATUS "PR number: ${PR_NUMBER}")
+    else()
+      set(PR_NUMBER "")
+    endif()
+  else()
+    set(GITHUB_BRANCH "")
+    set(PR_NUMBER "")
+  endif()
+
+  if (NOT "${PR_NUMBER}" STREQUAL "" AND NOT "${GITHUB_HEAD_REF}" STREQUAL "")
+    set(GIT_BRANCH "pr-${PR_NUMBER}-${GITHUB_HEAD_REF}")
+  elseif (NOT "${PR_NUMBER}" STREQUAL "" AND NOT "${GITHUB_BRANCH}" STREQUAL "")
+    set(GIT_BRANCH "pr-${PR_NUMBER}-${GITHUB_BRANCH}")
+  elseif (NOT "${PR_NUMBER}" STREQUAL "")
+    set(GIT_BRANCH "pr-${PR_NUMBER}")
+  elseif ("${PR_NUMBER}" STREQUAL "" AND NOT "${GITHUB_HEAD_REF}" STREQUAL "")
+    set(GIT_BRANCH "${GITHUB_HEAD_REF}")
+  elseif ("${PR_NUMBER}" STREQUAL "" AND NOT "${GITHUB_BRANCH}" STREQUAL "")
+    set(GIT_BRANCH "${GITHUB_BRANCH}")
+  elseif ("${PR_NUMBER}" STREQUAL "" AND NOT "${GITHUB_REF}" STREQUAL "")
+    set(GIT_BRANCH "${GITHUB_REF}")
+  elseif("${GIT_BRANCH}" STREQUAL "")
+    message(STATUS "couldn't find branch")
+    set(GIT_BRANCH "detached-head")
+  endif()
+else()
+  # Extract remote name if the output contains a remote/branch format
+  string(FIND "${GIT_REMOTE_NAME}" "/" INDEX)
+  if (INDEX GREATER -1)
+    string(SUBSTRING "${GIT_REMOTE_NAME}" 0 "${INDEX}" GIT_REMOTE_NAME)
+  elseif("${GIT_REMOTE_NAME}" STREQUAL "")
+    message(STATUS "reset to origin")
+    set(GIT_REMOTE_NAME "origin")
+  endif()
+endif()
+
+# Get remote link
+message(STATUS "getting remote link")
+execute_process(
+  COMMAND git config --get remote.${GIT_REMOTE_NAME}.url
+  OUTPUT_VARIABLE GIT_REMOTE_URL
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+# Set Version
+set(EMULATOR_VERSION_MAJOR "0")
+set(EMULATOR_VERSION_MINOR "16")
+set(EMULATOR_VERSION_PATCH "1")
+
+set_source_files_properties(src/dist/shadps4.rc PROPERTIES COMPILE_DEFINITIONS "EMULATOR_VERSION_MAJOR=${EMULATOR_VERSION_MAJOR};EMULATOR_VERSION_MINOR=${EMULATOR_VERSION_MINOR};EMULATOR_VERSION_PATCH=${EMULATOR_VERSION_PATCH}")
+
+set(APP_VERSION_NUM "${EMULATOR_VERSION_MAJOR}.${EMULATOR_VERSION_MINOR}.${EMULATOR_VERSION_PATCH}")
+set(APP_VERSION "${APP_VERSION_NUM} WIP")
+set(APP_IS_RELEASE false)
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/src/common/scm_rev.cpp.in" "${CMAKE_CURRENT_BINARY_DIR}/src/common/scm_rev.cpp" @ONLY)
+
+message("-- end git things, remote: ${GIT_REMOTE_NAME}, branch: ${GIT_BRANCH}, link: ${GIT_REMOTE_URL}")
+
+string(TOLOWER "${GIT_REMOTE_URL}" GIT_REMOTE_URL_LOWER)
+if(NOT (GIT_REMOTE_URL_LOWER MATCHES "shadps4-emu/shadps4" AND (GIT_BRANCH STREQUAL "main" OR "$ENV{GITHUB_REF}" MATCHES "refs/tags/")))
+    message(STATUS "not main, disabling auto update")
+    set(ENABLE_UPDATER OFF)
+endif()
+
+if (ENABLE_SYSTEM_LIBRARIES)
+    list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+    find_package(Boost 1.84.0 CONFIG)
+    find_package(CLI11 2.6.1 CONFIG)
+    find_package(FFmpeg 5.1.2 MODULE)
+    find_package(fmt 12.0.0 CONFIG)
+    find_package(Freetype 2.14.1 MODULE)
+    find_package(glslang 15 CONFIG)
+    find_package(half 1.12.0 MODULE)
+    find_package(magic_enum 0.9.7 CONFIG)
+    find_package(miniupnpc 2.3.3 MODULE)
+    find_package(miniz 3.1 CONFIG)
+    find_package(nlohmann_json 3.12 CONFIG)
+    find_package(PNG 1.6 MODULE)
+    find_package(OpenAL CONFIG)
+    find_package(LibreSSL 4.3.1 MODULE)
+    find_package(RenderDoc 1.6.0 MODULE)
+    find_package(SDL3 3.1.2 CONFIG)
+    find_package(stb MODULE)
+    find_package(toml11 4.2.0 CONFIG)
+    find_package(tsl-robin-map 1.3.0 CONFIG)
+    find_package(VulkanHeaders 1.4.330 CONFIG)
+    find_package(VulkanMemoryAllocator 3.1.0 CONFIG)
+    find_package(xbyak 7.07 CONFIG)
+    find_package(xxHash 0.8.2 MODULE)
+    find_package(ZLIB 1.3 MODULE)
+    find_package(Zydis 5.0.0 MODULE)
+    find_package(pugixml 1.14 CONFIG)
+    if (APPLE)
+        find_package(date 3.0.1 CONFIG)
+        find_package(epoll-shim 3.14 CONFIG)
+    endif()
+    list(POP_BACK CMAKE_MODULE_PATH)
+endif()
+
+add_subdirectory(externals)
+include_directories(src)
+
+set(AJM_LIB src/core/libraries/ajm/ajm.cpp
+            src/core/libraries/ajm/ajm.h
+            src/core/libraries/ajm/ajm_aac.cpp
+            src/core/libraries/ajm/ajm_aac.h
+            src/core/libraries/ajm/ajm_at9.cpp
+            src/core/libraries/ajm/ajm_at9.h
+            src/core/libraries/ajm/ajm_batch.cpp
+            src/core/libraries/ajm/ajm_batch.h
+            src/core/libraries/ajm/ajm_context.cpp
+            src/core/libraries/ajm/ajm_context.h
+            src/core/libraries/ajm/ajm_error.h
+            src/core/libraries/ajm/ajm_instance_statistics.cpp
+            src/core/libraries/ajm/ajm_instance_statistics.h
+            src/core/libraries/ajm/ajm_instance.cpp
+            src/core/libraries/ajm/ajm_instance.h
+            src/core/libraries/ajm/ajm_mp3.cpp
+            src/core/libraries/ajm/ajm_mp3.h
+)
+
+set(AUDIO_LIB src/core/libraries/audio/audioin.cpp
+              src/core/libraries/audio/audioin.h
+              src/core/libraries/audio/audioin_backend.h
+              src/core/libraries/audio/audioin_error.h
+              src/core/libraries/audio/sdl_audio_in.cpp
+              src/core/libraries/voice/voice.cpp
+              src/core/libraries/voice/voice.h
+              src/core/libraries/audio/audioout.cpp
+              src/core/libraries/audio/audioout.h
+              src/core/libraries/audio/audioout_backend.h
+              src/core/libraries/audio/audioout_error.h
+              src/core/libraries/audio/sdl_audio_out.cpp
+              src/core/libraries/audio/openal_audio_out.cpp
+              src/core/libraries/audio/bachata_audio_out.cpp
+              src/core/libraries/audio/openal_manager.h
+              src/core/libraries/ngs2/ngs2.cpp
+              src/core/libraries/ngs2/ngs2.h
+              src/core/libraries/audio3d/audio3d.cpp
+              src/core/libraries/audio3d/audio3d_openal.cpp
+              src/core/libraries/audio3d/audio3d_openal.h
+              src/core/libraries/audio3d/audio3d.h
+              src/core/libraries/audio3d/audio3d_error.h
+)
+
+set(GNM_LIB src/core/libraries/gnmdriver/gnmdriver.cpp
+            src/core/libraries/gnmdriver/gnmdriver.h
+            src/core/libraries/gnmdriver/gnmdriver_init.h
+            src/core/libraries/gnmdriver/gnm_error.h
+)
+
+set(KERNEL_LIB src/core/libraries/kernel/coredump/coredump.cpp
+               src/core/libraries/kernel/coredump/coredump.h
+               src/core/libraries/kernel/coredump/coredump_error.h
+               src/core/libraries/kernel/sync/mutex.cpp
+               src/core/libraries/kernel/sync/mutex.h
+               src/core/libraries/kernel/sync/semaphore.h
+               src/core/libraries/kernel/threads/condvar.cpp
+               src/core/libraries/kernel/threads/event_flag.cpp
+               src/core/libraries/kernel/threads/exception.cpp
+               src/core/libraries/kernel/threads/exception.h
+               src/core/libraries/kernel/threads/mutex.cpp
+               src/core/libraries/kernel/threads/pthread_attr.cpp
+               src/core/libraries/kernel/threads/pthread_clean.cpp
+               src/core/libraries/kernel/threads/pthread.cpp
+               src/core/libraries/kernel/threads/pthread_spec.cpp
+               src/core/libraries/kernel/threads/rwlock.cpp
+               src/core/libraries/kernel/threads/semaphore.cpp
+               src/core/libraries/kernel/threads/sleepq.cpp
+               src/core/libraries/kernel/threads/sleepq.h
+               src/core/libraries/kernel/threads/stack.cpp
+               src/core/libraries/kernel/threads/tcb.cpp
+               src/core/libraries/kernel/threads/pthread.h
+               src/core/libraries/kernel/threads/thread_state.cpp
+               src/core/libraries/kernel/threads/thread_state.h
+               src/core/libraries/kernel/process.cpp
+               src/core/libraries/kernel/process.h
+               src/core/libraries/kernel/debug.cpp
+               src/core/libraries/kernel/debug.h
+               src/core/libraries/kernel/equeue.cpp
+               src/core/libraries/kernel/equeue.h
+               src/core/libraries/kernel/file_system.cpp
+               src/core/libraries/kernel/file_system.h
+               src/core/libraries/kernel/kernel.cpp
+               src/core/libraries/kernel/kernel.h
+               src/core/libraries/kernel/memory.cpp
+               src/core/libraries/kernel/memory.h
+               src/core/libraries/kernel/threads.cpp
+               src/core/libraries/kernel/threads.h
+               src/core/libraries/kernel/time.cpp
+               src/core/libraries/kernel/time.h
+               src/core/libraries/kernel/orbis_error.h
+               src/core/libraries/kernel/posix_error.h
+               src/core/libraries/kernel/aio.cpp
+               src/core/libraries/kernel/aio.h
+)
+
+if (ARCHITECTURE STREQUAL "x86_64")
+    list(APPEND KERNEL_LIB src/core/libraries/kernel/threads/stack.S)
+    set_source_files_properties(src/core/libraries/kernel/threads/stack.s PROPERTIES COMPILE_OPTIONS -Wno-unused-command-line-argument)
+endif()
+
+set(NETWORK_LIBS src/core/libraries/network/http.cpp
+                 src/core/libraries/network/http.h
+                 src/core/libraries/network/http_error.h
+                 src/core/libraries/network/http2.cpp
+                 src/core/libraries/network/http2.h
+                 src/core/libraries/network/net.cpp
+                 src/core/libraries/network/netctl.cpp
+                 src/core/libraries/network/netctl.h
+                 src/core/libraries/network/net_ctl_obj.cpp
+                 src/core/libraries/network/net_ctl_obj.h
+                 src/core/libraries/network/net_ctl_codes.h
+                 src/core/libraries/network/net_util.cpp
+                 src/core/libraries/network/net_util.h
+                 src/core/libraries/network/net_epoll.cpp
+                 src/core/libraries/network/net_epoll.h
+                 src/core/libraries/network/net_resolver.cpp
+                 src/core/libraries/network/net_resolver.h
+                 src/core/libraries/network/net_upnp.cpp
+                 src/core/libraries/network/net_upnp.h
+                 src/core/libraries/network/net_error.h
+                 src/core/libraries/network/net.h
+                 src/core/libraries/network/ssl.cpp
+                 src/core/libraries/network/ssl.h
+                 src/core/libraries/network/ssl2.cpp
+                 src/core/libraries/network/ssl2.h
+                 src/core/libraries/network/sys_net.cpp
+                 src/core/libraries/network/sys_net.h
+                 src/core/libraries/network/posix_sockets.cpp
+                 src/core/libraries/network/p2p_sockets.cpp
+                 src/core/libraries/network/unix_sockets.cpp
+                 src/core/libraries/network/sockets.h
+)
+
+set(AVPLAYER_LIB src/core/libraries/avplayer/avplayer_common.cpp
+                 src/core/libraries/avplayer/avplayer_common.h
+                 src/core/libraries/avplayer/avplayer_file_streamer.cpp
+                 src/core/libraries/avplayer/avplayer_file_streamer.h
+                 src/core/libraries/avplayer/avplayer_impl.cpp
+                 src/core/libraries/avplayer/avplayer_impl.h
+                 src/core/libraries/avplayer/avplayer_source.cpp
+                 src/core/libraries/avplayer/avplayer_source.h
+                 src/core/libraries/avplayer/avplayer_state.cpp
+                 src/core/libraries/avplayer/avplayer_state.h
+                 src/core/libraries/avplayer/avplayer.cpp
+                 src/core/libraries/avplayer/avplayer.h
+                 src/core/libraries/avplayer/avplayer_error.h
+)
+
+set(SYSTEM_LIBS src/core/libraries/system/commondialog.cpp
+                src/core/libraries/system/commondialog.h
+                src/core/libraries/system/msgdialog.cpp
+                src/core/libraries/system/msgdialog.h
+                src/core/libraries/system/msgdialog_ui.cpp
+                src/core/libraries/system/posix.cpp
+                src/core/libraries/system/posix.h
+                src/core/libraries/save_data/save_backup.cpp
+                src/core/libraries/save_data/save_backup.h
+                src/core/libraries/save_data/save_instance.cpp
+                src/core/libraries/save_data/save_instance.h
+                src/core/libraries/save_data/save_memory.cpp
+                src/core/libraries/save_data/save_memory.h
+                src/core/libraries/save_data/savedata.cpp
+                src/core/libraries/save_data/savedata.h
+                src/core/libraries/save_data/savedata_error.h
+                src/core/libraries/save_data/dialog/savedatadialog.cpp
+                src/core/libraries/save_data/dialog/savedatadialog.h
+                src/core/libraries/save_data/dialog/savedatadialog_ui.cpp
+                src/core/libraries/save_data/dialog/savedatadialog_ui.h
+                src/core/libraries/sysmodule/sysmodule.cpp
+                src/core/libraries/sysmodule/sysmodule.h
+                src/core/libraries/sysmodule/sysmodule_internal.cpp
+                src/core/libraries/sysmodule/sysmodule_internal.h
+                src/core/libraries/sysmodule/sysmodule_error.h
+                src/core/libraries/sysmodule/sysmodule_table.h
+                src/core/libraries/system/systemservice.cpp
+                src/core/libraries/system/systemservice.h
+                src/core/libraries/system/systemservice_error.h
+                src/core/libraries/system/userservice.cpp
+                src/core/libraries/system/userservice.h
+                src/core/libraries/system/userservice_error.h
+                src/core/libraries/app_content/app_content.cpp
+                src/core/libraries/app_content/app_content.h
+                src/core/libraries/app_content/app_content_error.h
+                src/core/libraries/rtc/rtc.cpp
+                src/core/libraries/rtc/rtc.h
+                src/core/libraries/rtc/rtc_error.h
+                src/core/libraries/rudp/rudp.cpp
+                src/core/libraries/rudp/rudp.h
+                src/core/libraries/disc_map/disc_map.cpp
+                src/core/libraries/disc_map/disc_map.h
+                src/core/libraries/disc_map/disc_map_codes.h
+                src/core/libraries/ngs2/ngs2.cpp
+                src/core/libraries/ngs2/ngs2.h
+                src/core/libraries/ngs2/ngs2_error.h
+                src/core/libraries/ngs2/ngs2_impl.cpp
+                src/core/libraries/ngs2/ngs2_impl.h
+                src/core/libraries/ngs2/ngs2_custom.cpp
+                src/core/libraries/ngs2/ngs2_custom.h
+                src/core/libraries/ngs2/ngs2_reverb.cpp
+                src/core/libraries/ngs2/ngs2_reverb.h
+                src/core/libraries/ngs2/ngs2_geom.cpp
+                src/core/libraries/ngs2/ngs2_geom.h
+                src/core/libraries/ngs2/ngs2_pan.cpp
+                src/core/libraries/ngs2/ngs2_pan.h
+                src/core/libraries/ngs2/ngs2_report.cpp
+                src/core/libraries/ngs2/ngs2_report.h
+                src/core/libraries/ngs2/ngs2_eq.cpp
+                src/core/libraries/ngs2/ngs2_eq.h
+                src/core/libraries/ngs2/ngs2_mastering.cpp
+                src/core/libraries/ngs2/ngs2_mastering.h
+                src/core/libraries/ngs2/ngs2_sampler.cpp
+                src/core/libraries/ngs2/ngs2_sampler.h
+                src/core/libraries/ngs2/ngs2_submixer.cpp
+                src/core/libraries/ngs2/ngs2_submixer.h
+                src/core/libraries/ajm/ajm_error.h
+                src/core/libraries/audio3d/audio3d.cpp
+                src/core/libraries/audio3d/audio3d.h
+                src/core/libraries/audio3d/audio3d_error.h
+                src/core/libraries/game_live_streaming/gamelivestreaming.cpp
+                src/core/libraries/game_live_streaming/gamelivestreaming.h
+                src/core/libraries/remote_play/remoteplay.cpp
+                src/core/libraries/remote_play/remoteplay.h
+                src/core/libraries/share_play/shareplay.cpp
+                src/core/libraries/share_play/shareplay.h
+                src/core/libraries/razor_cpu/razor_cpu.cpp
+                src/core/libraries/razor_cpu/razor_cpu.h
+                src/core/libraries/mouse/mouse.cpp
+                src/core/libraries/mouse/mouse.h
+                src/core/libraries/mouse/mouse_error.h
+                src/core/libraries/mouse/sdl_mouse.cpp
+                src/core/libraries/mouse/sdl_mouse.h
+                src/core/libraries/web_browser_dialog/webbrowserdialog.cpp
+                src/core/libraries/web_browser_dialog/webbrowserdialog.h
+                src/core/libraries/font/font.cpp
+                src/core/libraries/font/font.h
+                src/core/libraries/fios2/fios2.cpp
+                src/core/libraries/fios2/fios2.h
+                src/core/libraries/font/font_internal.cpp
+                src/core/libraries/font/font_internal.h
+                src/core/libraries/font/fontft.cpp
+                src/core/libraries/font/fontft.h
+                src/core/libraries/font/fontft_internal.cpp
+                src/core/libraries/font/fontft_internal.h
+                src/core/libraries/font/font_error.h
+                src/core/libraries/content_export/content_export.cpp
+                src/core/libraries/content_export/content_export.h
+                src/core/libraries/content_export/content_export_error.h
+                src/core/libraries/video_recording/video_recording.cpp
+                src/core/libraries/video_recording/video_recording.h
+                src/core/libraries/video_recording/video_recording_error.h
+)
+
+set(VIDEOOUT_LIB src/core/libraries/videoout/buffer.h
+                 src/core/libraries/videoout/driver.cpp
+                 src/core/libraries/videoout/driver.h
+                 src/core/libraries/videoout/video_out.cpp
+                 src/core/libraries/videoout/video_out.h
+                 src/core/libraries/videoout/videoout_error.h
+)
+
+set(HLE_LIBC_INTERNAL_LIB src/core/libraries/libc_internal/libc_internal.cpp
+                 src/core/libraries/libc_internal/libc_internal.h
+                 src/core/libraries/libc_internal/libc_internal_io.cpp
+                 src/core/libraries/libc_internal/libc_internal_io.h
+                 src/core/libraries/libc_internal/libc_internal_cxa.cpp
+                 src/core/libraries/libc_internal/libc_internal_cxa.h
+                 src/core/libraries/libc_internal/libc_internal_memory.cpp
+                 src/core/libraries/libc_internal/libc_internal_memory.h
+                 src/core/libraries/libc_internal/mspace.cpp
+                 src/core/libraries/libc_internal/mspace.h
+                 src/core/libraries/libc_internal/libc_internal_str.cpp
+                 src/core/libraries/libc_internal/libc_internal_str.h
+                 src/core/libraries/libc_internal/libc_internal_math.cpp
+                 src/core/libraries/libc_internal/libc_internal_math.h
+                 src/core/libraries/libc_internal/libc_internal_threads.cpp
+                 src/core/libraries/libc_internal/libc_internal_threads.h
+                 src/core/libraries/libc_internal/libc_internal_crt.cpp
+                 src/core/libraries/libc_internal/libc_internal_crt.h
+                 src/core/libraries/libc_internal/printf.h
+)
+
+set(IME_LIB src/core/libraries/ime/error_dialog.cpp
+            src/core/libraries/ime/error_dialog.h
+            src/core/libraries/ime/ime_common.h
+            src/core/libraries/ime/ime_kb_layout.cpp
+            src/core/libraries/ime/ime_kb_layout.h
+            src/core/libraries/ime/ime_dialog_ui.cpp
+            src/core/libraries/ime/ime_dialog_ui.h
+            src/core/libraries/ime/ime_dialog.cpp
+            src/core/libraries/ime/ime_dialog.h
+            src/core/libraries/ime/ime_ui.cpp
+            src/core/libraries/ime/ime_ui.h
+            src/core/libraries/ime/ime_ui_shared.cpp
+            src/core/libraries/ime/ime_ui_shared.h
+            src/core/libraries/ime/ime.cpp
+            src/core/libraries/ime/ime.h
+            src/core/libraries/ime/ime_error.h
+)
+
+set(PAD_LIB src/core/libraries/pad/pad.cpp
+            src/core/libraries/pad/pad.h
+            src/core/libraries/pad/pad_errors.h
+)
+
+set(SYSTEM_GESTURE_LIB
+            src/core/libraries/system_gesture/system_gesture.cpp
+            src/core/libraries/system_gesture/system_gesture.h
+)
+
+set(PNG_LIB src/core/libraries/libpng/pngdec.cpp
+            src/core/libraries/libpng/pngdec.h
+            src/core/libraries/libpng/pngdec_error.h
+            src/core/libraries/libpng/pngenc.cpp
+            src/core/libraries/libpng/pngenc.h
+            src/core/libraries/libpng/pngenc_error.h
+)
+
+set(JPEG_LIB src/core/libraries/jpeg/jpeg_error.h
+             src/core/libraries/jpeg/jpegenc.cpp
+             src/core/libraries/jpeg/jpegenc.h
+)
+
+set(PLAYGO_LIB src/core/libraries/playgo/playgo.cpp
+               src/core/libraries/playgo/playgo.h
+               src/core/libraries/playgo/playgo_dialog.cpp
+               src/core/libraries/playgo/playgo_dialog.h
+               src/core/libraries/playgo/playgo_types.h
+)
+
+set(RANDOM_LIB src/core/libraries/random/random.cpp
+               src/core/libraries/random/random.h
+               src/core/libraries/random/random_error.h
+)
+
+# libSceUsbd (real-hardware and emulated USB toy-portal support -- Skylanders/Infinity/
+# Dimensions) is built on real libusb types throughout usb_backend.h, and libusb itself
+# has no iOS build story (its Darwin backend needs IOKit/IOCFBundle.h, unavailable on
+# iOS). USB toy portals aren't a meaningful iOS feature anyway (no physical USB
+# accessory port), so this is dropped entirely for iOS rather than ported -- see the
+# matching SHADPS4_DISABLE_USBD guard around its registration call in libs.cpp.
+if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(USBD_LIB src/core/libraries/usbd/usbd.cpp
+                 src/core/libraries/usbd/usbd.h
+                 src/core/libraries/usbd/usb_backend.h
+                 src/core/libraries/usbd/emulated/dimensions.cpp
+                 src/core/libraries/usbd/emulated/dimensions.h
+                 src/core/libraries/usbd/emulated/infinity.cpp
+                 src/core/libraries/usbd/emulated/infinity.h
+                 src/core/libraries/usbd/emulated/skylander.cpp
+                 src/core/libraries/usbd/emulated/skylander.h
+    )
+endif()
+
+set(FIBER_LIB src/core/libraries/fiber/fiber_context.s
+              src/core/libraries/fiber/fiber.cpp
+              src/core/libraries/fiber/fiber.h
+              src/core/libraries/fiber/fiber_error.h
+)
+
+set_source_files_properties(src/core/libraries/fiber/fiber_context.s PROPERTIES COMPILE_OPTIONS -Wno-unused-command-line-argument)
+
+set(VDEC_LIB src/core/libraries/videodec/videodec2_impl.cpp
+             src/core/libraries/videodec/videodec2_impl.h
+             src/core/libraries/videodec/videodec2.cpp
+             src/core/libraries/videodec/videodec2.h
+             src/core/libraries/videodec/videodec2_avc.h
+             src/core/libraries/videodec/videodec.cpp
+             src/core/libraries/videodec/videodec.h
+             src/core/libraries/videodec/videodec_error.h
+             src/core/libraries/videodec/videodec_impl.cpp
+             src/core/libraries/videodec/videodec_impl.h
+)
+
+set(NP_LIBS src/core/libraries/np/np_error.h
+            src/core/libraries/np/np_common.cpp
+            src/core/libraries/np/np_common.h
+            src/core/libraries/np/np_commerce.cpp
+            src/core/libraries/np/np_commerce.h
+            src/core/libraries/np/np_manager.cpp
+            src/core/libraries/np/np_manager.h
+            src/core/libraries/np/np_matching2.cpp
+            src/core/libraries/np/np_matching2.h
+            src/core/libraries/np/np_signaling/np_signaling.cpp
+            src/core/libraries/np/np_signaling/np_signaling.h
+            src/core/libraries/np/np_signaling/np_signaling_state.cpp
+            src/core/libraries/np/np_signaling/np_signaling_state.h
+            src/core/libraries/np/np_signaling/np_signaling_helpers.cpp
+            src/core/libraries/np/np_signaling/np_signaling_helpers.h
+            src/core/libraries/np/np_signaling/np_signaling_stubs.cpp
+            src/core/libraries/np/np_signaling/np_signaling_stubs.h
+            src/core/libraries/np/np_trophy.cpp
+            src/core/libraries/np/np_trophy.h
+            src/core/libraries/np/np_tus.cpp
+            src/core/libraries/np/np_tus.h
+            src/core/libraries/np/trophy_ui.cpp
+            src/core/libraries/np/trophy_ui.h
+            src/core/libraries/np/np_web_api2.cpp
+            src/core/libraries/np/np_web_api2.h
+            src/core/libraries/np/np_party.cpp
+            src/core/libraries/np/np_party.h
+            src/core/libraries/np/np_auth.cpp
+            src/core/libraries/np/np_auth.h
+            src/core/libraries/np/np_profile_dialog/np_profile_dialog.cpp
+            src/core/libraries/np/np_profile_dialog/np_profile_dialog.h
+            src/core/libraries/np/np_profile_dialog/np_profile_dialog_ui.cpp
+            src/core/libraries/np/np_profile_dialog/np_profile_dialog_ui.h
+            src/core/libraries/np/np_sns_facebook_dialog.cpp
+            src/core/libraries/np/np_sns_facebook_dialog.h
+            src/core/libraries/np/np_partner.cpp
+            src/core/libraries/np/np_partner.h
+            src/core/libraries/np/np_misc_dialogs.cpp
+            src/core/libraries/np/np_misc_dialogs.h
+            src/core/libraries/np/np_misc_apis.cpp
+            src/core/libraries/np/np_misc_apis.h
+            src/core/libraries/np/object_manager.h
+            src/core/libraries/np/np_handler.cpp
+            src/core/libraries/np/np_handler.h
+            src/core/libraries/np/np_score/np_score.cpp
+            src/core/libraries/np/np_score/np_score.h
+            src/core/libraries/np/np_score/np_score_ctx.h
+            src/core/libraries/np/np_web_api/np_web_api.cpp
+            src/core/libraries/np/np_web_api/np_web_api.h
+            src/core/libraries/np/np_web_api/np_web_api_internal.cpp
+            src/core/libraries/np/np_web_api/np_web_api_internal.h
+)
+
+set(ZLIB_LIB src/core/libraries/zlib/zlib.cpp
+             src/core/libraries/zlib/zlib_sce.h
+             src/core/libraries/zlib/zlib_error.h
+)
+
+set(VR_LIBS  src/core/libraries/hmd/hmd.cpp
+             src/core/libraries/hmd/hmd_reprojection.cpp
+             src/core/libraries/hmd/hmd_distortion.cpp
+             src/core/libraries/hmd/hmd.h
+             src/core/libraries/hmd/hmd_setup_dialog.cpp
+             src/core/libraries/hmd/hmd_setup_dialog.h
+             src/core/libraries/vr_tracker/vr_tracker.cpp
+             src/core/libraries/vr_tracker/vr_tracker.h
+)
+
+set(MISC_LIBS  src/core/libraries/screenshot/screenshot.cpp
+               src/core/libraries/screenshot/screenshot.h
+               src/core/libraries/move/move.cpp
+               src/core/libraries/move/move.h
+               src/core/libraries/move/move_error.h
+               src/core/libraries/ulobjmgr/ulobjmgr.cpp
+               src/core/libraries/ulobjmgr/ulobjmgr.h
+               src/core/libraries/signin_dialog/signindialog.cpp
+               src/core/libraries/signin_dialog/signindialog.h
+)
+
+set(CAMERA_LIBS  src/core/libraries/camera/camera.cpp
+                 src/core/libraries/camera/camera.h
+                 src/core/libraries/camera/camera_error.h
+)
+
+set(COMPANION_LIBS  src/core/libraries/companion/companion_httpd.cpp
+                    src/core/libraries/companion/companion_httpd.h
+                    src/core/libraries/companion/companion_util.cpp
+                    src/core/libraries/companion/companion_util.h
+                    src/core/libraries/companion/companion_error.h
+)
+set(DEV_TOOLS src/core/devtools/layer.cpp
+              src/core/devtools/layer.h
+              src/core/devtools/layer_extra.cpp
+              src/core/devtools/options.cpp
+              src/core/devtools/options.h
+              src/core/devtools/gcn/gcn_context_regs.cpp
+              src/core/devtools/gcn/gcn_op_names.cpp
+              src/core/devtools/gcn/gcn_shader_regs.cpp
+              src/core/devtools/widget/cmd_list.cpp
+              src/core/devtools/widget/cmd_list.h
+              src/core/devtools/widget/common.h
+              src/core/devtools/widget/frame_dump.cpp
+              src/core/devtools/widget/frame_dump.h
+              src/core/devtools/widget/frame_graph.cpp
+              src/core/devtools/widget/frame_graph.h
+              src/core/devtools/widget/imgui_memory_editor.h
+              src/core/devtools/widget/memory_map.cpp
+              src/core/devtools/widget/memory_map.h
+              src/core/devtools/widget/module_list.cpp
+              src/core/devtools/widget/module_list.h
+              src/core/devtools/widget/reg_popup.cpp
+              src/core/devtools/widget/reg_popup.h
+              src/core/devtools/widget/reg_view.cpp
+              src/core/devtools/widget/reg_view.h
+              src/core/devtools/widget/shader_list.cpp
+              src/core/devtools/widget/shader_list.h
+              src/core/devtools/widget/text_editor.cpp
+              src/core/devtools/widget/text_editor.h
+)
+
+set(COMMON src/common/logging/classes.h
+           src/common/logging/formatter.h
+           src/common/logging/log.cpp
+           src/common/logging/log.h
+           src/common/logging/log_file_sink.h
+           src/common/aes.h
+           src/common/alignment.h
+           src/common/arch.h
+           src/common/assert.cpp
+           src/common/assert.h
+           src/common/bit_array.h
+           src/common/bit_field.h
+           src/common/bounded_threadsafe_queue.h
+           src/common/concepts.h
+           src/common/cstring.h
+           src/common/debug.h
+           src/common/decoder.cpp
+           src/common/decoder.h
+           src/common/elf_info.h
+           src/common/endian.h
+           src/common/enum.h
+           src/common/incremental_id.h
+           src/common/io_file.cpp
+           src/common/io_file.h
+           src/common/lru_cache.h
+           src/common/boot_timer.cpp
+           src/common/boot_timer.h
+           src/common/error.cpp
+           src/common/error.h
+           src/common/fixed_value.h
+           src/common/func_traits.h
+           src/common/native_clock.cpp
+           src/common/native_clock.h
+           src/common/path_util.cpp
+           src/common/path_util.h
+           src/common/object_pool.h
+           src/common/polyfill_thread.h
+           src/common/range_lock.h
+           src/common/rdtsc.cpp
+           src/common/rdtsc.h
+           src/common/recursive_lock.cpp
+           src/common/recursive_lock.h
+           src/common/scope_exit.h
+           src/common/serdes.h
+           src/common/sha1.h
+           src/common/shared_first_mutex.h
+           src/common/signal_context.h
+           src/common/signal_context.cpp
+           src/common/crash_reporter.h
+           src/common/crash_reporter.cpp
+           src/common/singleton.h
+           src/common/slab_heap.h
+           src/common/slot_vector.h
+           src/common/spin_lock.cpp
+           src/common/spin_lock.h
+           src/common/stb.cpp
+           src/common/stb.h
+           src/common/string_literal.h
+           src/common/string_util.cpp
+           src/common/string_util.h
+           src/common/thread.cpp
+           src/common/thread.h
+           src/common/types.h
+           src/common/uint128.h
+           src/common/unique_function.h
+           src/common/va_ctx.h
+           src/common/ntapi.h
+           src/common/ntapi.cpp
+           src/common/number_utils.h
+           src/common/number_utils.cpp
+           src/common/memory_patcher.h
+           src/common/memory_patcher.cpp
+           ${CMAKE_CURRENT_BINARY_DIR}/src/common/scm_rev.cpp
+           src/common/scm_rev.h
+           src/common/key_manager.cpp
+           src/common/key_manager.h
+           src/common/sigsys_trap.cpp
+           src/common/sigsys_trap.h
+)
+
+if (ENABLE_DISCORD_RPC)
+    list(APPEND COMMON src/common/discord_rpc_handler.cpp src/common/discord_rpc_handler.h)
+endif()
+
+if (APPLE)
+    # Isolated Objective-C++ helper so log.cpp's Terminate() can actually identify and log an
+    # uncaught NSException instead of losing it to a plain `catch (...)` -- see log.cpp's own
+    # comment (in Terminate()) for why this can't just live in log.cpp itself.
+    list(APPEND COMMON src/common/logging/objc_exception_describe.h
+                        src/common/logging/objc_exception_describe.mm)
+endif()
+
+set(CORE src/core/aerolib/stubs.cpp
+         src/core/aerolib/stubs.h
+         src/core/aerolib/aerolib.cpp
+         src/core/aerolib/aerolib.h
+         src/core/address_space.cpp
+         src/core/address_space.h
+         src/core/file_sys/devices/base_device.cpp
+         src/core/file_sys/devices/base_device.h
+         src/core/file_sys/devices/ioccom.h
+         src/core/file_sys/devices/logger.cpp
+         src/core/file_sys/devices/logger.h
+         src/core/file_sys/devices/nop_device.h
+         src/core/file_sys/devices/console_device.cpp
+         src/core/file_sys/devices/console_device.h
+         src/core/file_sys/devices/deci_tty6_device.cpp
+         src/core/file_sys/devices/deci_tty6_device.h
+         src/core/file_sys/devices/random_device.cpp
+         src/core/file_sys/devices/random_device.h
+         src/core/file_sys/devices/rng_device.cpp
+         src/core/file_sys/devices/rng_device.h
+         src/core/file_sys/devices/urandom_device.cpp
+         src/core/file_sys/devices/urandom_device.h
+         src/core/file_sys/devices/srandom_device.cpp
+         src/core/file_sys/devices/srandom_device.h
+         src/core/file_sys/directories/base_directory.cpp
+         src/core/file_sys/directories/base_directory.h
+         src/core/file_sys/directories/normal_directory.cpp
+         src/core/file_sys/directories/normal_directory.h
+         src/core/file_sys/directories/pfs_directory.cpp
+         src/core/file_sys/directories/pfs_directory.h
+         src/core/file_format/pfs.h
+         src/core/file_format/psf.cpp
+         src/core/file_format/psf.h
+         src/core/file_format/playgo_chunk.cpp
+         src/core/file_format/playgo_chunk.h
+         src/core/file_format/trp.cpp
+         src/core/file_format/trp.h
+         src/core/file_format/npbind.cpp
+         src/core/file_format/npbind.h
+         src/core/file_sys/fs.cpp
+         src/core/file_sys/fs.h
+         src/core/ipc/ipc.cpp
+         src/core/ipc/ipc.h
+         src/core/loader/dwarf.cpp
+         src/core/loader/dwarf.h
+         src/core/loader/elf.cpp
+         src/core/loader/elf.h
+         src/core/loader/symbols_resolver.h
+         src/core/loader/symbols_resolver.cpp
+         src/core/libraries/libs.h
+         src/core/libraries/libs.cpp
+         ${AJM_LIB}
+         ${AVPLAYER_LIB}
+         ${AUDIO_LIB}
+         ${GNM_LIB}
+         ${KERNEL_LIB}
+         ${NETWORK_LIBS}
+         ${SYSTEM_LIBS}
+         ${HLE_LIBC_INTERNAL_LIB}
+         ${PAD_LIB}
+         ${SYSTEM_GESTURE_LIB}
+         ${VIDEOOUT_LIB}
+         ${NP_LIBS}
+         ${PNG_LIB}
+         ${JPEG_LIB}
+         ${PLAYGO_LIB}
+         ${RANDOM_LIB}
+         ${USBD_LIB}
+         ${ZLIB_LIB}
+         ${MISC_LIBS}
+         ${IME_LIB}
+         ${VDEC_LIB}
+         ${VR_LIBS}
+         ${CAMERA_LIBS}
+          ${COMPANION_LIBS}
+          ${DEV_TOOLS}
+          src/core/debug_state.cpp
+          src/core/debug_state.h
+          src/core/debugger.cpp
+          src/core/debugger.h
+          src/core/guest_cpu/guest_cpu.cpp
+          src/core/guest_cpu/guest_cpu.h
+          src/core/linker.cpp
+         src/core/linker.h
+         src/core/memory.cpp
+         src/core/memory.h
+         src/core/module.cpp
+         src/core/module.h
+         src/core/platform.h
+         src/core/signals.cpp
+         src/core/signals.h
+         src/core/thread.cpp
+         src/core/thread.h
+         src/core/tls.cpp
+         src/core/tls.h
+         src/core/emulator_state.cpp
+         src/core/emulator_state.h
+         src/core/emulator_settings.cpp
+         src/core/emulator_settings.h
+         src/core/user_manager.cpp
+         src/core/user_manager.h
+         src/core/user_settings.cpp
+         src/core/user_settings.h
+)
+
+if (ARCHITECTURE STREQUAL "x86_64")
+    set(CORE ${CORE}
+             src/core/cpu_patches.cpp
+             src/core/cpu_patches.h
+             ${FIBER_LIB})
+endif()
+
+if (ENABLE_FEX_GUEST_CPU)
+    list(APPEND CORE
+        src/core/fex/fex_guest_engine.cpp
+        src/core/fex/fex_guest_engine.h
+        src/core/guest_cpu/fex_guest_cpu.cpp
+        src/core/guest_cpu/fex_guest_cpu.h
+        src/core/guest_cpu/fex_hle_bridge.cpp
+        src/core/guest_cpu/fex_hle_bridge.h
+        src/core/guest_cpu/guest_callback.h
+        src/core/guest_cpu/hle_call_adapter.cpp
+        src/core/guest_cpu/hle_call_adapter.h
+    )
+endif()
+
+set(SHADER_RECOMPILER src/shader_recompiler/profile.h
+                      src/shader_recompiler/recompiler.cpp
+                      src/shader_recompiler/recompiler.h
+                      src/shader_recompiler/resource.h
+                      src/shader_recompiler/info.h
+                      src/shader_recompiler/params.h
+                      src/shader_recompiler/runtime_info.h
+                      src/shader_recompiler/specialization.h
+                      src/shader_recompiler/backend/bindings.h
+                      src/shader_recompiler/backend/spirv/emit_spirv.cpp
+                      src/shader_recompiler/backend/spirv/emit_spirv.h
+                      src/shader_recompiler/backend/spirv/emit_spirv_atomic.cpp
+                      src/shader_recompiler/backend/spirv/emit_spirv_barriers.cpp
+                      src/shader_recompiler/backend/spirv/emit_spirv_bitwise_conversion.cpp
+                      src/shader_recompiler/backend/spirv/emit_spirv_composite.cpp
+                      src/shader_recompiler/backend/spirv/emit_spirv_context_get_set.cpp
+                      src/shader_recompiler/backend/spirv/emit_spirv_convert.cpp
+                      src/shader_recompiler/backend/spirv/emit_spirv_floating_point.cpp
+                      src/shader_recompiler/backend/spirv/emit_spirv_image.cpp
+                      src/shader_recompiler/backend/spirv/emit_spirv_instructions.h
+                      src/shader_recompiler/backend/spirv/emit_spirv_integer.cpp
+                      src/shader_recompiler/backend/spirv/emit_spirv_logical.cpp
+                      src/shader_recompiler/backend/spirv/emit_spirv_quad_rect.cpp
+                      src/shader_recompiler/backend/spirv/emit_spirv_quad_rect.h
+                      src/shader_recompiler/backend/spirv/emit_spirv_select.cpp
+                      src/shader_recompiler/backend/spirv/emit_spirv_shared_memory.cpp
+                      src/shader_recompiler/backend/spirv/emit_spirv_special.cpp
+                      src/shader_recompiler/backend/spirv/emit_spirv_undefined.cpp
+                      src/shader_recompiler/backend/spirv/emit_spirv_warp.cpp
+                      src/shader_recompiler/backend/spirv/spirv_emit_context.cpp
+                      src/shader_recompiler/backend/spirv/spirv_emit_context.h
+                      src/shader_recompiler/frontend/translate/data_share.cpp
+                      src/shader_recompiler/frontend/translate/export.cpp
+                      src/shader_recompiler/frontend/translate/scalar_alu.cpp
+                      src/shader_recompiler/frontend/translate/scalar_flow.cpp
+                      src/shader_recompiler/frontend/translate/scalar_memory.cpp
+                      src/shader_recompiler/frontend/translate/translate.cpp
+                      src/shader_recompiler/frontend/translate/translate.h
+                      src/shader_recompiler/frontend/translate/vector_alu.cpp
+                      src/shader_recompiler/frontend/translate/vector_interpolation.cpp
+                      src/shader_recompiler/frontend/translate/vector_memory.cpp
+                      src/shader_recompiler/frontend/control_flow_graph.cpp
+                      src/shader_recompiler/frontend/control_flow_graph.h
+                      src/shader_recompiler/frontend/copy_shader.cpp
+                      src/shader_recompiler/frontend/copy_shader.h
+                      src/shader_recompiler/frontend/decode.cpp
+                      src/shader_recompiler/frontend/decode.h
+                      src/shader_recompiler/frontend/fetch_shader.cpp
+                      src/shader_recompiler/frontend/fetch_shader.h
+                      src/shader_recompiler/frontend/format.cpp
+                      src/shader_recompiler/frontend/instruction.cpp
+                      src/shader_recompiler/frontend/instruction.h
+                      src/shader_recompiler/frontend/opcodes.h
+                      src/shader_recompiler/frontend/structured_control_flow.cpp
+                      src/shader_recompiler/frontend/structured_control_flow.h
+                      src/shader_recompiler/ir/passes/constant_propagation_pass.cpp
+                      src/shader_recompiler/ir/passes/dead_code_elimination_pass.cpp
+                      src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp
+                      src/shader_recompiler/ir/passes/hull_shader_transform.cpp
+                      src/shader_recompiler/ir/passes/identity_removal_pass.cpp
+                      src/shader_recompiler/ir/passes/inject_clip_distance_attributes.cpp
+                      src/shader_recompiler/ir/passes/ir_passes.h
+                      src/shader_recompiler/ir/passes/lower_buffer_format_to_raw.cpp
+                      src/shader_recompiler/ir/passes/lower_fp64_to_fp32.cpp
+                      src/shader_recompiler/ir/passes/readlane_elimination_pass.cpp
+                      src/shader_recompiler/ir/passes/resource_tracking_pass.cpp
+                      src/shader_recompiler/ir/passes/ring_access_elimination.cpp
+                      src/shader_recompiler/ir/passes/shader_info_collection_pass.cpp
+                      src/shader_recompiler/ir/passes/shared_memory_barrier_pass.cpp
+                      src/shader_recompiler/ir/passes/shared_memory_simplify_pass.cpp
+                      src/shader_recompiler/ir/passes/shared_memory_to_storage_pass.cpp
+                      src/shader_recompiler/ir/passes/ssa_rewrite_pass.cpp
+                      src/shader_recompiler/ir/abstract_syntax_list.cpp
+                      src/shader_recompiler/ir/abstract_syntax_list.h
+                      src/shader_recompiler/ir/attribute.cpp
+                      src/shader_recompiler/ir/attribute.h
+                      src/shader_recompiler/ir/basic_block.cpp
+                      src/shader_recompiler/ir/basic_block.h
+                      src/shader_recompiler/ir/breadth_first_search.h
+                      src/shader_recompiler/ir/condition.h
+                      src/shader_recompiler/ir/ir_emitter.cpp
+                      src/shader_recompiler/ir/ir_emitter.h
+                      src/shader_recompiler/ir/microinstruction.cpp
+                      src/shader_recompiler/ir/opcodes.cpp
+                      src/shader_recompiler/ir/opcodes.h
+                      src/shader_recompiler/ir/opcodes.inc
+                      src/shader_recompiler/ir/operand_helper.h
+                      src/shader_recompiler/ir/patch.cpp
+                      src/shader_recompiler/ir/patch.h
+                      src/shader_recompiler/ir/position.h
+                      src/shader_recompiler/ir/post_order.cpp
+                      src/shader_recompiler/ir/post_order.h
+                      src/shader_recompiler/ir/program.cpp
+                      src/shader_recompiler/ir/program.h
+                      src/shader_recompiler/ir/reinterpret.h
+                      src/shader_recompiler/ir/reg.h
+                      src/shader_recompiler/ir/type.cpp
+                      src/shader_recompiler/ir/type.h
+                      src/shader_recompiler/ir/value.cpp
+                      src/shader_recompiler/ir/value.h
+)
+
+set(VIDEO_CORE src/video_core/amdgpu/cb_db_extent.h
+               src/video_core/amdgpu/liverpool.cpp
+               src/video_core/amdgpu/liverpool.h
+               src/video_core/amdgpu/pixel_format.cpp
+               src/video_core/amdgpu/pixel_format.h
+               src/video_core/amdgpu/pm4_cmds.h
+               src/video_core/amdgpu/pm4_opcodes.h
+               src/video_core/amdgpu/regs_color.h
+               src/video_core/amdgpu/regs_depth.h
+               src/video_core/amdgpu/regs.cpp
+               src/video_core/amdgpu/regs.h
+               src/video_core/amdgpu/regs_primitive.h
+               src/video_core/amdgpu/regs_shader.h
+               src/video_core/amdgpu/regs_texture.h
+               src/video_core/amdgpu/regs_vertex.h
+               src/video_core/amdgpu/resource.h
+               src/video_core/amdgpu/tiling.cpp
+               src/video_core/amdgpu/tiling.h
+               src/video_core/buffer_cache/buffer.cpp
+               src/video_core/buffer_cache/buffer.h
+               src/video_core/buffer_cache/buffer_cache.cpp
+               src/video_core/buffer_cache/buffer_cache.h
+               src/video_core/buffer_cache/vk_dispatch_reload.cpp
+               src/video_core/buffer_cache/fault_manager.cpp
+               src/video_core/buffer_cache/fault_manager.h
+               src/video_core/buffer_cache/memory_tracker.h
+               src/video_core/buffer_cache/range_set.h
+               src/video_core/buffer_cache/region_definitions.h
+               src/video_core/buffer_cache/region_manager.h
+               src/video_core/renderer_vulkan/liverpool_to_vk.cpp
+               src/video_core/renderer_vulkan/liverpool_to_vk.h
+               src/video_core/renderer_vulkan/vk_common.cpp
+               src/video_core/renderer_vulkan/vk_common.h
+               src/video_core/renderer_vulkan/vk_compute_pipeline.cpp
+               src/video_core/renderer_vulkan/vk_compute_pipeline.h
+               src/video_core/renderer_vulkan/vk_graphics_pipeline.cpp
+               src/video_core/renderer_vulkan/vk_graphics_pipeline.h
+               src/video_core/renderer_vulkan/vk_instance.cpp
+               src/video_core/renderer_vulkan/vk_instance.h
+               src/video_core/renderer_vulkan/vk_master_semaphore.cpp
+               src/video_core/renderer_vulkan/vk_master_semaphore.h
+               src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+               src/video_core/renderer_vulkan/vk_pipeline_cache.h
+               src/video_core/renderer_vulkan/vk_pipeline_common.cpp
+               src/video_core/renderer_vulkan/vk_pipeline_common.h
+               src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp
+               src/video_core/renderer_vulkan/vk_pipeline_serialization.h
+               src/video_core/renderer_vulkan/vk_platform.cpp
+               src/video_core/renderer_vulkan/vk_platform.h
+               src/video_core/renderer_vulkan/vk_presenter.cpp
+               src/video_core/renderer_vulkan/vk_presenter.h
+               src/video_core/renderer_vulkan/vk_rasterizer.cpp
+               src/video_core/renderer_vulkan/vk_rasterizer.h
+               src/video_core/renderer_vulkan/vk_resource_pool.cpp
+               src/video_core/renderer_vulkan/vk_resource_pool.h
+               src/video_core/renderer_vulkan/vk_scheduler.cpp
+               src/video_core/renderer_vulkan/vk_scheduler.h
+               src/video_core/renderer_vulkan/vk_shader_hle.cpp
+               src/video_core/renderer_vulkan/vk_shader_hle.h
+               src/video_core/renderer_vulkan/vk_shader_util.cpp
+               src/video_core/renderer_vulkan/vk_shader_util.h
+               src/video_core/renderer_vulkan/vk_swapchain.cpp
+               src/video_core/renderer_vulkan/vk_swapchain.h
+               src/video_core/renderer_vulkan/host_passes/fsr_pass.cpp
+               src/video_core/renderer_vulkan/host_passes/fsr_pass.h
+               src/video_core/renderer_vulkan/host_passes/pp_pass.cpp
+               src/video_core/renderer_vulkan/host_passes/pp_pass.h
+               src/video_core/texture_cache/blit_helper.cpp
+               src/video_core/texture_cache/blit_helper.h
+               src/video_core/texture_cache/host_compatibility.cpp
+               src/video_core/texture_cache/host_compatibility.h
+               src/video_core/texture_cache/image.cpp
+               src/video_core/texture_cache/image.h
+               src/video_core/texture_cache/image_info.cpp
+               src/video_core/texture_cache/image_info.h
+               src/video_core/texture_cache/image_view.cpp
+               src/video_core/texture_cache/image_view.h
+               src/video_core/texture_cache/sampler.cpp
+               src/video_core/texture_cache/sampler.h
+               src/video_core/texture_cache/texture_cache.cpp
+               src/video_core/texture_cache/texture_cache.h
+               src/video_core/texture_cache/tile_manager.cpp
+               src/video_core/texture_cache/tile_manager.h
+               src/video_core/texture_cache/types.h
+               src/video_core/cache_storage.cpp
+               src/video_core/cache_storage.h
+               src/video_core/page_manager.cpp
+               src/video_core/page_manager.h
+               src/video_core/multi_level_page_table.h
+               src/video_core/renderdoc.cpp
+               src/video_core/renderdoc.h
+)
+
+set(IMGUI src/imgui/imgui_config.h
+          src/imgui/imgui_layer.h
+          src/imgui/imgui_std.h
+          src/imgui/imgui_texture.h
+          src/imgui/imgui_translations.cpp
+          src/imgui/imgui_translations.h
+          src/imgui/notifications_layer.cpp
+          src/imgui/notifications_layer.h
+          src/imgui/renderer/imgui_core.cpp
+          src/imgui/renderer/imgui_core.h
+          src/imgui/renderer/imgui_impl_sdl3.cpp
+          src/imgui/renderer/imgui_impl_sdl3.h
+          src/imgui/renderer/imgui_impl_vulkan.cpp
+          src/imgui/renderer/imgui_impl_vulkan.h
+          src/imgui/renderer/font_data.cpp
+          src/imgui/renderer/font_data.h
+          src/imgui/renderer/font_stack.cpp
+          src/imgui/renderer/font_stack.h
+          src/imgui/renderer/texture_manager.cpp
+          src/imgui/renderer/texture_manager.h
+          src/imgui/big_picture/big_picture.cpp
+          src/imgui/big_picture/big_picture.h
+          src/imgui/big_picture/settings_dialog_imgui.cpp
+          src/imgui/big_picture/settings_dialog_imgui.h
+          src/imgui/big_picture/settings_dialog_layer.cpp
+          src/imgui/big_picture/settings_dialog_layer.h
+          src/imgui/big_picture/imgui_impl_sdl3_big_picture.cpp
+          src/imgui/big_picture/imgui_impl_sdl3_big_picture.h
+          src/imgui/big_picture/imgui_impl_sdlrenderer3.cpp
+          src/imgui/big_picture/imgui_impl_sdlrenderer3.h
+)
+
+set(INPUT src/input/controller.cpp
+          src/input/controller.h
+          src/input/input_handler.cpp
+          src/input/input_handler.h
+          src/input/input_mouse.cpp
+          src/input/input_mouse.h
+)
+
+set(EMULATOR src/emulator.cpp
+             src/emulator.h
+             src/sdl_window.h
+             src/sdl_window.cpp
+)
+
+if (APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    # AppKit-based native dock icon -- iOS has neither AppKit nor a dock; sdl_window.cpp's
+    # generic SDL3+stb_image SetWindowIcon() compiles for iOS instead (see its comment).
+    list(APPEND EMULATOR src/sdl_window_apple.mm)
+endif()
+
+if(NOT ENABLE_TESTS)
+
+add_executable(shadps4
+    ${AUDIO_CORE}
+    ${IMGUI}
+    ${INPUT}
+    ${COMMON}
+    ${CORE}
+    ${SHADER_RECOMPILER}
+    ${VIDEO_CORE}
+    ${EMULATOR}
+    src/main.cpp
+    src/emulator.cpp
+    src/emulator.h
+    src/sdl_window.h
+    src/sdl_window.cpp
+)
+
+if (ENABLE_BACHATA_RUNTIME)
+    target_compile_definitions(shadps4 PRIVATE ENABLE_BACHATA_RUNTIME)
+    target_sources(shadps4 PRIVATE
+        src/platform/bachata/runtime_client.cpp
+        src/platform/bachata/controller_snapshot.cpp
+        src/platform/bachata/ffmpeg_cpu_policy.cpp
+        src/platform/bachata/runtime_client.h
+    )
+endif()
+
+# Unconditional (not gated behind ENABLE_BACHATA_RUNTIME, unlike the sources above):
+# src/core/libraries/audio/bachata_audio_out.cpp (part of the always-built AUDIO_CORE list)
+# calls Platform::Bachata::ConvertPcmToStereo() regardless of that flag. The iOS target
+# never hit the resulting missing-symbol link error only because its BachataPortBackend
+# is never actually reachable at runtime there and dead-stripping quietly removes it --
+# this target's linker isn't as forgiving, and the code shouldn't rely on that anyway.
+target_sources(shadps4 PRIVATE
+    src/platform/bachata/audio_transport.cpp
+    src/platform/bachata/audio_transport.h
+)
+
+create_target_directory_groups(shadps4)
+
+set_source_files_properties(
+    src/video_core/buffer_cache/vk_dispatch_reload.cpp
+    PROPERTIES COMPILE_FLAGS "-fno-lto"
+)
+
+target_link_libraries(shadps4 PRIVATE spdlog::spdlog)
+target_link_libraries(shadps4 PRIVATE magic_enum::magic_enum fmt::fmt toml11::toml11 tsl::robin_map xbyak::xbyak Tracy::TracyClient RenderDoc::API FFmpeg::ffmpeg Dear_ImGui ImGuiFileDialog gcn half::half ZLIB::ZLIB PNG::PNG minimp3)
+target_link_libraries(shadps4 PRIVATE Boost::headers GPUOpen::VulkanMemoryAllocator LibAtrac9 sirit Vulkan::Headers xxHash::xxhash Zydis::Zydis glslang::glslang SDL3::SDL3 pugixml::pugixml)
+target_link_libraries(shadps4 PRIVATE stb::headers lfreist-hwinfo::hwinfo nlohmann_json::nlohmann_json miniz::miniz fdk-aac CLI11::CLI11 OpenAL::OpenAL Cpp_Httplib miniupnpc::miniupnpc)
+target_link_libraries(shadps4 PRIVATE Freetype::Freetype)
+
+if (ENABLE_FEX_GUEST_CPU)
+    target_compile_definitions(shadps4 PRIVATE SHADPS4_ENABLE_FEX_GUEST_CPU=1)
+    target_include_directories(shadps4 PRIVATE
+        "${FEXCORE_GUEST_CPU_BUILD_DIR}"
+        "${FEXCORE_GUEST_CPU_SOURCE_DIR}"
+        "${FEXCORE_GUEST_CPU_SOURCE_DIR}/Source"
+        "${FEXCORE_GUEST_CPU_BUILD_DIR}/Source"
+        "${FEXCORE_GUEST_CPU_BUILD_DIR}/generated"
+        "${FEXCORE_GUEST_CPU_SOURCE_DIR}/Source/Tools/CommonTools"
+        "${FEXCORE_GUEST_CPU_BUILD_DIR}/FEXCore/Source"
+        "${FEXCORE_GUEST_CPU_SOURCE_DIR}/FEXCore/Source"
+        "${FEXCORE_GUEST_CPU_SOURCE_DIR}/FEXCore/include"
+        "${FEXCORE_GUEST_CPU_BUILD_DIR}/include"
+        "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/unordered_dense/include"
+        "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/fmt/include"
+        "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/xxhash/cmake_unofficial/.."
+        "${FEXCORE_GUEST_CPU_SOURCE_DIR}/FEXHeaderUtils/."
+        "${FEXCORE_GUEST_CPU_SOURCE_DIR}/CodeEmitter/."
+        "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/cephes/include"
+        "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/SoftFloat-3e/include"
+        "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/SoftFloat-3e/include/SoftFloat-3e"
+        "${FEXCORE_GUEST_CPU_SOURCE_DIR}/Source/Common/cpp-optparse"
+        "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/tiny-json"
+        "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/range-v3/include"
+        "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/rpmalloc"
+    )
+    target_compile_definitions(shadps4 PRIVATE
+        FEXCORE_HAS_PRESERVE_ALL_ATTR=1
+        FEX_DISABLE_TELEMETRY=1
+        FEX_HAS_PRESERVE_ALL_ATTR=1
+    )
+    target_compile_options(shadps4 PRIVATE
+        "-DFEXCORE_PRESERVE_ALL_ATTR=__attribute__((preserve_all))"
+        "-DFEX_PRESERVE_ALL_ATTR=__attribute__((preserve_all))"
+    )
+    target_link_libraries(shadps4 PRIVATE ${FEXCORE_GUEST_CPU_LIBRARIES} pthread dl)
+endif()
+
+if (${CMAKE_SYSTEM_NAME} STREQUAL "FreeBSD")
+    target_link_libraries(shadps4 PRIVATE "/usr/lib/libusb.so")
+    target_link_libraries(shadps4 PRIVATE "/usr/local/lib/libuuid.so")
+elseif (NOT ${CMAKE_SYSTEM_NAME} STREQUAL "iOS")
+    target_link_libraries(shadps4 PRIVATE libusb::usb)
+endif()
+
+target_compile_definitions(shadps4 PRIVATE IMGUI_USER_CONFIG="imgui/imgui_config.h")
+target_include_directories(Dear_ImGui PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_compile_definitions(Dear_ImGui PRIVATE IMGUI_USER_CONFIG="imgui/imgui_config.h")
+
+if (ENABLE_DISCORD_RPC)
+    target_compile_definitions(shadps4 PRIVATE ENABLE_DISCORD_RPC)
+endif()
+
+if (${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+    # Optional due to https://github.com/shadps4-emu/shadPS4/issues/1704
+    if (ENABLE_USERFAULTFD)
+        target_compile_definitions(shadps4 PRIVATE ENABLE_USERFAULTFD)
+    endif()
+
+    target_link_libraries(shadps4 PRIVATE uuid)
+endif()
+
+if (APPLE)
+    if (NOT ENABLE_SYSTEM_VULKAN AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        # Bundle Vulkan loader and KosmicKrisp driver with the emulator. Skipped on iOS
+        # for now -- see the matching guard in externals/CMakeLists.txt for why.
+        set_property(TARGET shadps4 APPEND PROPERTY BUILD_RPATH "@executable_path")
+
+        set(LOADER_DEST "${CMAKE_CURRENT_BINARY_DIR}/libvulkan.dylib")
+        set(DRIVER_DEST "${CMAKE_CURRENT_BINARY_DIR}/libvulkan_kosmickrisp.dylib")
+        set(ICD_DEST "${CMAKE_CURRENT_BINARY_DIR}/kosmickrisp_mesa_icd.json")
+
+        add_custom_command(
+            OUTPUT ${LOADER_DEST}
+            DEPENDS ${VULKAN_LOADER_PATH} vulkan
+            COMMAND ${CMAKE_COMMAND} -E copy ${VULKAN_LOADER_PATH} ${LOADER_DEST})
+        add_custom_command(
+            OUTPUT ${DRIVER_DEST}
+            DEPENDS ${VULKAN_DRIVER_PATH} kosmickrisp
+            COMMAND ${CMAKE_COMMAND} -E copy ${VULKAN_DRIVER_PATH} ${DRIVER_DEST})
+        add_custom_command(
+            OUTPUT ${ICD_DEST}
+            DEPENDS ${VULKAN_ICD_PATH} kosmickrisp
+            COMMAND ${CMAKE_COMMAND} -E copy ${VULKAN_ICD_PATH} ${ICD_DEST})
+
+        add_custom_target(CopyVulkanDriver DEPENDS ${LOADER_DEST} ${DRIVER_DEST} ${ICD_DEST})
+        add_dependencies(shadps4 CopyVulkanDriver)
+    endif()
+
+    if (ARCHITECTURE STREQUAL "x86_64")
+        # Reserve system-managed memory space.
+        target_link_options(shadps4 PRIVATE -Wl,-ld_classic,-no_pie,-no_fixup_chains,-no_huge,-pagezero_size,0x4000,-segaddr,TCB_SPACE,0x4000,-segaddr,SYSTEM_MANAGED,0x400000,-segaddr,SYSTEM_RESERVED,0x7FFFFC000,-segaddr,USER_AREA,0x7000000000,-image_base,0x700000000000)
+    endif()
+
+    # Replacement for std::chrono::time_zone
+    target_link_libraries(shadps4 PRIVATE date::date-tz epoll-shim)
+
+    # Create and embed Info.plist
+    set(INFO_PLIST_PATH ${CMAKE_CURRENT_BINARY_DIR}/src/dist/Info.plist)
+    configure_file(${CMAKE_CURRENT_SOURCE_DIR}/src/dist/MacOSBundleInfo.plist.in ${INFO_PLIST_PATH})
+    target_link_options(shadps4 PRIVATE LINKER:-sectcreate,__TEXT,__info_plist,${INFO_PLIST_PATH})
+elseif (${CMAKE_SYSTEM_NAME} STREQUAL "FreeBSD")
+    target_link_libraries(shadps4 PRIVATE date::date-tz epoll-shim)
+endif()
+
+if (WIN32)
+    target_link_libraries(shadps4 PRIVATE mincore wepoll wbemuuid)
+
+    if (MSVC)
+        # MSVC likes putting opinions on what people can use, disable:
+        add_compile_definitions(_CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_DEPRECATE _SCL_SECURE_NO_WARNINGS)
+    endif()
+
+    add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
+
+    if (MSVC)
+        # Needed for conflicts with time.h of windows.h
+        add_compile_definitions(_TIMESPEC_DEFINED)
+    endif()
+
+    # Target Windows 10 RS5
+    add_compile_definitions(NTDDI_VERSION=0x0A000006 _WIN32_WINNT=0x0A00 WINVER=0x0A00)
+
+    if (MSVC)
+        target_link_libraries(shadps4 PRIVATE clang_rt.builtins-x86_64.lib)
+    endif()
+
+    # Disable ASLR so we can reserve the user area
+    if (MSVC)
+        target_link_options(shadps4 PRIVATE /DYNAMICBASE:NO)
+    else()
+        target_link_options(shadps4 PRIVATE -Wl,--disable-dynamicbase)
+    endif()
+
+    # Increase stack commit area (Needed, otherwise there are crashes)
+    if (MSVC)
+        target_link_options(shadps4 PRIVATE /STACK:0x200000,0x200000)
+    else()
+        target_link_options(shadps4 PRIVATE -Wl,--stack,2097152)
+    endif()
+
+    # Change base image address
+    if (MSVC)
+        target_link_options(shadps4 PRIVATE /BASE:0x700000000000)
+    else()
+        target_link_options(shadps4 PRIVATE -Wl,--image-base=0x700000000000)
     endif()
 endif()
+
+if (WIN32)
+    target_sources(shadps4 PRIVATE src/dist/shadps4.rc)
+endif()
+
+add_compile_definitions(BOOST_ASIO_STANDALONE)
+
+target_include_directories(shadps4 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Shaders sources
+set(HOST_SHADERS_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/src/video_core/host_shaders)
+
+add_subdirectory(${HOST_SHADERS_INCLUDE})
+add_dependencies(shadps4 host_shaders)
+target_include_directories(shadps4 PRIVATE ${HOST_SHADERS_INCLUDE})
+
+# embed resources
+
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/CMakeRC.cmake")
+cmrc_add_resource_library(embedded-resources
+        ALIAS res::embedded
+        NAMESPACE res
+        src/resources/big_picture/controller.png
+        src/resources/big_picture/experimental.png
+        src/resources/big_picture/folder.png
+        src/resources/big_picture/graphics.png
+        src/resources/big_picture/log.png
+        src/resources/big_picture/profiles.png
+        src/resources/big_picture/settings.png
+        src/resources/big_picture/trophy.png
+        src/resources/bronze.png
+        src/resources/gold.png
+        src/resources/platinum.png
+        src/resources/shadps4.png
+        src/resources/silver.png
+        src/resources/trophy.wav)
+target_link_libraries(shadps4 PRIVATE res::embedded)
+
+# ImGui resources
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/src/imgui/renderer)
+add_dependencies(shadps4 ImGui_Resources)
+target_include_directories(shadps4 PRIVATE ${IMGUI_RESOURCES_INCLUDE})
+
 
 # Discord RPC
 if (ENABLE_DISCORD_RPC)
-    add_subdirectory(discord-rpc)
+    target_link_libraries(shadps4 PRIVATE discord-rpc)
 endif()
 
-# GCN Headers
-add_subdirectory(gcn)
+# Install rules
+install(TARGETS shadps4 BUNDLE DESTINATION .)
 
-# stb
-if (NOT TARGET stb::headers)
-    add_library(stb INTERFACE)
-    target_include_directories(stb INTERFACE stb)
-    add_library(stb::headers ALIAS stb)
-endif()
+if (ENABLE_SHADPS4_IOS_LIB)
+    # Embeddable C-API library for the standalone AetherPS4 app (see the iOS port plan).
+    # Builds for the host architecture for now -- arm64-apple-ios cross-compilation is a
+    # later phase. Reuses the same source-list variables as the shadps4 CLI executable
+    # above, with src/main.cpp's CLI/process-lifetime responsibilities replaced by
+    # src/platform/ios/shadps4_ios_api.cpp (see that file for the C API surface).
+    #
+    # Deliberately NOT mirrored from the shadps4 executable target above, since they're
+    # executable-packaging concerns a static library doesn't have: Info.plist embedding,
+    # BUILD_RPATH/bundling the Vulkan loader+KosmicKrisp driver next to the binary (the
+    # eventual iOS app project must do its own equivalent of this), and Windows/FreeBSD/
+    # Linux-only linker flags.
+    add_library(shadps4_ios STATIC
+        ${AUDIO_CORE}
+        ${IMGUI}
+        ${INPUT}
+        ${COMMON}
+        ${CORE}
+        ${SHADER_RECOMPILER}
+        ${VIDEO_CORE}
+        ${EMULATOR}
+        src/platform/ios/shadps4_ios_api.cpp
+        src/platform/ios/shadps4_ios_api.h
+        src/platform/ios/mobile_overlay.cpp
+        src/platform/ios/mobile_overlay.h
+        src/platform/ios/touch_controls_layer.cpp
+        src/platform/ios/touch_controls_layer.h
+    )
 
-# hwinfo
-set(HWINFO_STATIC ON)
-add_subdirectory(hwinfo)
+    if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        # No genuine iOS FFmpeg prebuilt exists (see externals/ffmpeg-core/CMakeLists.txt);
+        # this provides real (header-checked, not hand-transcribed) stub definitions for
+        # the FFmpeg symbols this codebase currently references, each returning FFmpeg's
+        # own documented failure sentinel. See that file for the full rationale.
+        target_sources(shadps4_ios PRIVATE src/platform/ios/ffmpeg_stub.cpp)
 
-if (APPLE OR ${CMAKE_SYSTEM_NAME} STREQUAL "FreeBSD")
-    # date
-    if (NOT TARGET date::date-tz)
-        option(BUILD_TZ_LIB "" ON)
-        option(USE_SYSTEM_TZ_DB "" ON)
-        add_subdirectory(date)
+        # Phase 3 dual-mapped JIT allocator (BreakpointJIT.framework-based) -- see
+        # src/core/ios/ios_jit_allocator.h for the full protocol writeup. Used by
+        # src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp's SRT
+        # walker JIT.
+        target_sources(shadps4_ios PRIVATE
+            src/core/ios/ios_jit_allocator.cpp
+            src/core/ios/ios_jit_allocator.h
+        )
+
+        # PKG extraction (bachata_pkg_probe/bachata_pkg_extract) -- ported from
+        # tools/pkg-extract/ (itself ported from the Bachata Android runtime's
+        # JNI module), since neither shadps4_run() nor anything else in this
+        # tree can turn a raw, encrypted .pkg into the extracted eboot.bin +
+        # sce_sys/ directory it actually needs. See src/core/pkg_extract/pkg_extractor.h
+        # for the C API surface. Not compiled with BACHATA_HAVE_LIBDEFLATE, so
+        # PFSC block decompression falls back to the already-linked ZLIB::ZLIB
+        # instead of pulling in a new dependency.
+        target_sources(shadps4_ios PRIVATE
+            src/core/pkg_extract/aes.c
+            src/core/pkg_extract/aes.h
+            src/core/pkg_extract/aes_neon.h
+            src/core/pkg_extract/keys.h
+            src/core/pkg_extract/pfs.h
+            src/core/pkg_extract/pkg_crypto.cpp
+            src/core/pkg_extract/pkg_crypto.h
+            src/core/pkg_extract/pkg_extractor.cpp
+            src/core/pkg_extract/pkg_extractor.h
+            src/core/pkg_extract/pkg_rsa_native.cpp
+            src/core/pkg_extract/pkg_rsa_native.h
+            src/core/pkg_extract/pkg_type.cpp
+            src/core/pkg_extract/pkg_type.h
+            src/core/pkg_extract/types.h
+        )
+        # LibreSSL's BN_* (RSA modexp) comes in transitively via Cpp_Httplib,
+        # already linked into shadps4_ios below.
     endif()
-    if (NOT TARGET epoll-shim)
-        add_subdirectory(epoll-shim)
+
+    create_target_directory_groups(shadps4_ios)
+
+    target_compile_definitions(shadps4_ios PRIVATE
+        SHADPS4_LIBRARY_BUILD=1
+        IMGUI_USER_CONFIG="imgui/imgui_config.h"
+    )
+    if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        # libusb has no iOS build story (see the USBD_LIB comment above); matches
+        # USBD_LIB being excluded from ${CORE} for this same platform check.
+        target_compile_definitions(shadps4_ios PRIVATE SHADPS4_DISABLE_USBD=1)
     endif()
+    target_include_directories(shadps4_ios PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${HOST_SHADERS_INCLUDE}
+        ${IMGUI_RESOURCES_INCLUDE}
+    )
+    add_dependencies(shadps4_ios host_shaders ImGui_Resources)
+
+    target_link_libraries(shadps4_ios PRIVATE spdlog::spdlog)
+    target_link_libraries(shadps4_ios PRIVATE magic_enum::magic_enum fmt::fmt toml11::toml11 tsl::robin_map xbyak::xbyak Tracy::TracyClient RenderDoc::API FFmpeg::ffmpeg Dear_ImGui ImGuiFileDialog gcn half::half ZLIB::ZLIB PNG::PNG minimp3)
+    target_link_libraries(shadps4_ios PRIVATE Boost::headers GPUOpen::VulkanMemoryAllocator LibAtrac9 sirit Vulkan::Headers xxHash::xxhash Zydis::Zydis glslang::glslang SDL3::SDL3 pugixml::pugixml)
+    target_link_libraries(shadps4_ios PRIVATE stb::headers lfreist-hwinfo::hwinfo nlohmann_json::nlohmann_json miniz::miniz fdk-aac OpenAL::OpenAL Cpp_Httplib miniupnpc::miniupnpc)
+    target_link_libraries(shadps4_ios PRIVATE Freetype::Freetype)
+    if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        target_link_libraries(shadps4_ios PRIVATE libusb::usb)
+    endif()
+    target_link_libraries(shadps4_ios PRIVATE res::embedded)
+
+    if (ENABLE_FEX_GUEST_CPU)
+        target_compile_definitions(shadps4_ios PRIVATE SHADPS4_ENABLE_FEX_GUEST_CPU=1)
+        target_include_directories(shadps4_ios PRIVATE
+            "${FEXCORE_GUEST_CPU_BUILD_DIR}"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/Source"
+            "${FEXCORE_GUEST_CPU_BUILD_DIR}/Source"
+            "${FEXCORE_GUEST_CPU_BUILD_DIR}/generated"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/Source/Tools/CommonTools"
+            "${FEXCORE_GUEST_CPU_BUILD_DIR}/FEXCore/Source"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/FEXCore/Source"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/FEXCore/include"
+            "${FEXCORE_GUEST_CPU_BUILD_DIR}/include"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/unordered_dense/include"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/fmt/include"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/xxhash/cmake_unofficial/.."
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/FEXHeaderUtils/."
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/CodeEmitter/."
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/cephes/include"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/SoftFloat-3e/include"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/SoftFloat-3e/include/SoftFloat-3e"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/Source/Common/cpp-optparse"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/tiny-json"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/range-v3/include"
+            "${FEXCORE_GUEST_CPU_SOURCE_DIR}/External/rpmalloc"
+        )
+        target_compile_definitions(shadps4_ios PRIVATE
+            FEXCORE_HAS_PRESERVE_ALL_ATTR=1
+            FEX_DISABLE_TELEMETRY=1
+            FEX_HAS_PRESERVE_ALL_ATTR=1
+            ARCHITECTURE_arm64=1
+        )
+        target_compile_options(shadps4_ios PRIVATE
+            "-DFEXCORE_PRESERVE_ALL_ATTR=__attribute__((preserve_all))"
+            "-DFEX_PRESERVE_ALL_ATTR=__attribute__((preserve_all))"
+        )
+        target_link_libraries(shadps4_ios PRIVATE ${FEXCORE_GUEST_CPU_LIBRARIES} pthread dl)
+    endif()
+
+    if (ENABLE_DISCORD_RPC)
+        target_compile_definitions(shadps4_ios PRIVATE ENABLE_DISCORD_RPC)
+        target_link_libraries(shadps4_ios PRIVATE discord-rpc)
+    endif()
+
+    if (APPLE)
+        # Replacement for std::chrono::time_zone
+        target_link_libraries(shadps4_ios PRIVATE date::date-tz epoll-shim)
+    endif()
+
+    # Phase 1 verification harness: links only against shadps4_ios's public C API
+    # header, proving the library is actually consumable standalone (CMake propagates
+    # a static library's link dependencies transitively to its consumers even when
+    # they were declared PRIVATE above, so this doesn't need to repeat any of them).
+    add_executable(shadps4_ios_smoke runtime/probes/shadps4-ios-smoke.cpp)
+    target_include_directories(shadps4_ios_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(shadps4_ios_smoke PRIVATE shadps4_ios)
 endif()
 
-#windows only
-if (WIN32)
-add_subdirectory(ext-wepoll)
-endif()
-
-add_subdirectory(aacdec)
-
-#nlohmann json 
-if (NOT TARGET nlohmann_json::nlohmann_json)
-set(JSON_BuildTests OFF CACHE INTERNAL "")
-add_subdirectory(json)
-endif()
-
-# miniz
-if (NOT TARGET miniz::miniz)
-add_subdirectory(miniz)
-add_library(miniz::miniz ALIAS miniz)
-endif()
-
-# cli11
-if (NOT TARGET CLI11::CLI11)
-    set(CLI11_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-    set(CLI11_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-    add_subdirectory(CLI11)
-endif()
-
-# miniupnpc
-if (NOT TARGET miniupnpc::miniupnpc)
-set(UPNPC_BUILD_STATIC ON CACHE BOOL "" FORCE)
-set(UPNPC_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-set(UPNPC_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(UPNPC_BUILD_SAMPLE OFF CACHE BOOL "" FORCE)
-set(UPNPC_NO_INSTALL ON CACHE BOOL "" FORCE)
-add_subdirectory(miniupnp/miniupnpc)
-endif()
-
-# minimp3
-add_library(minimp3 INTERFACE)
-target_include_directories(minimp3 INTERFACE minimp3)
-
-# ImGuiFileDialog
-add_library(ImGuiFileDialog ImGuiFileDialog/ImGuiFileDialog.cpp)
-target_compile_definitions(ImGuiFileDialog PRIVATE USE_STD_FILESYSTEM)
-target_include_directories(ImGuiFileDialog INTERFACE ImGuiFileDialog/)
-target_link_libraries(ImGuiFileDialog PRIVATE Dear_ImGui)
-
-#openal
-if (NOT TARGET OpenAL::OpenAL)
-set(ALSOFT_ENABLE_MODULES OFF CACHE BOOL "" FORCE)
-set(LIBTYPE "STATIC" CACHE STRING "" FORCE)
-# Disable everything we don't need
-set(ALSOFT_UTILS OFF CACHE BOOL "" FORCE)
-set(ALSOFT_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(ALSOFT_TESTS OFF CACHE BOOL "" FORCE)
-set(ALSOFT_INSTALL OFF CACHE BOOL "" FORCE)
-set(ALSOFT_CONFIG OFF CACHE BOOL "" FORCE)
-
-# Backends (platform-specific)
-if (WIN32)
-    set(ALSOFT_BACKEND_WASAPI ON CACHE BOOL "" FORCE)
-    set(ALSOFT_BACKEND_DSOUND OFF CACHE BOOL "" FORCE)
-    set(ALSOFT_BACKEND_WINMM OFF CACHE BOOL "" FORCE)
-elseif (APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    set(ALSOFT_BACKEND_COREAUDIO ON CACHE BOOL "" FORCE)
-elseif (APPLE)
-    # CoreAudio's coreaudio.cpp needs Objective-C++ (Foundation.h, pulled in
-    # transitively via AudioToolbox.h), which isn't wired up for this project's
-    # iOS cross-compile toolchain yet (CMAKE_OBJCXX_COMPILE_OBJECT unset --
-    # merely declaring OBJCXX in a project() breaks CMake's generate step even
-    # with no file using it). Deferred; audio isn't blocking iOS bring-up.
-    set(ALSOFT_BACKEND_COREAUDIO OFF CACHE BOOL "" FORCE)
 else()
-    set(ALSOFT_BACKEND_ALSA ON CACHE BOOL "" FORCE)
-    set(ALSOFT_BACKEND_PULSEAUDIO ON CACHE BOOL "" FORCE)
-    set(ALSOFT_BACKEND_PIPEWIRE OFF CACHE BOOL "" FORCE)
-endif()
-# Headless-safe
-set(ALSOFT_BACKEND_NULL ON CACHE BOOL "" FORCE)
-
-# Static build
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-
-add_subdirectory(openal-soft EXCLUDE_FROM_ALL)
-endif()
-
-# LibreSSL
-if (TARGET LibreSSL::SSL OR TARGET LibreSSL::Crypto)
-    set(SSL_DEPENDENCIES LibreSSL::SSL LibreSSL::Crypto)
-elseif (TARGET OpenSSL::SSL OR TARGET OpenSSL::Crypto)
-    set(SSL_DEPENDENCIES OpenSSL::SSL OpenSSL::Crypto)
-else()
-    set(LIBRESSL_SKIP_INSTALL ON CACHE BOOL "" FORCE)
-    set(LIBRESSL_APPS OFF CACHE BOOL "" FORCE)
-    set(LIBRESSL_TESTS OFF CACHE BOOL "" FORCE)
-    add_subdirectory(libressl EXCLUDE_FROM_ALL)
-    get_directory_property(SSL_DEPENDENCIES DIRECTORY libressl DEFINITION OPENSSL_LIBS)
-endif()
-
-# cpp-httplib
-add_library(Cpp_Httplib INTERFACE)
-target_include_directories(Cpp_Httplib INTERFACE cpp-httplib/)
-
-if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    # httplib.h auto-enables CPPHTTPLIB_USE_CERTS_FROM_MACOSX_KEYCHAIN for any
-    # __APPLE__ + clang + SSL build without distinguishing iOS -- but the
-    # SecTrustCopyAnchorCertificates() it calls isn't in iOS's public SDK. This is
-    # httplib's own documented opt-out for that auto-detection, not a header patch.
-    target_compile_definitions(Cpp_Httplib INTERFACE CPPHTTPLIB_DISABLE_MACOSX_AUTOMATIC_ROOT_CERTIFICATES)
-endif()
-
-if (TARGET ZLIB::ZLIB)
-    target_link_libraries(Cpp_Httplib INTERFACE ZLIB::ZLIB)
-    target_compile_definitions(Cpp_Httplib INTERFACE CPPHTTPLIB_ZLIB_SUPPORT)
-    message(STATUS "cpp-httplib: zlib support enabled (gzip response decompression)")
-else()
-    message(STATUS "cpp-httplib: zlib not available — gzip responses will arrive uncompressed")
-endif()
-
-if (DEFINED SSL_DEPENDENCIES)
-    target_link_libraries(Cpp_Httplib INTERFACE ${SSL_DEPENDENCIES})
-    target_compile_definitions(Cpp_Httplib INTERFACE CPPHTTPLIB_OPENSSL_SUPPORT)
-    message(STATUS "cpp-httplib: SSL support enabled (TLS connections)")
-else()
-    message(STATUS "cpp-httplib: OpenSSL/LibreSSL not available — libSceHttp HTTPS will fall back to mock at runtime.")
-endif()
-
-# macOS Vulkan driver. Skipped on iOS for now: KosmicKrisp/Mesa's `platforms` build
-# option has no iOS choice yet (only auto/x11/wayland/haiku/android/windows/macos --
-# see externals/mesa-kosmickrisp/externals/mesa/meson.options), so building it for
-# arm64-apple-ios needs its own follow-up. shadps4_ios (a static library) never links
-# the compiled driver anyway -- only the shadps4 executable's packaging step
-# (CopyVulkanDriver, below) does, so this doesn't block shadps4_ios from building.
-if (APPLE AND NOT ENABLE_SYSTEM_VULKAN AND NOT ENABLE_TESTS AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    add_subdirectory(vulkan-loader)
-    set(VULKAN_LOADER_PATH "${CMAKE_CURRENT_BINARY_DIR}/vulkan-loader/loader/libvulkan.dylib" PARENT_SCOPE)
-
-    add_subdirectory(mesa-kosmickrisp)
-    set(VULKAN_DRIVER_PATH "${CMAKE_CURRENT_BINARY_DIR}/mesa-kosmickrisp/outputs/libvulkan_kosmickrisp.dylib" PARENT_SCOPE)
-    set(VULKAN_ICD_PATH "${CMAKE_CURRENT_BINARY_DIR}/mesa-kosmickrisp/outputs/kosmickrisp_mesa_icd.json" PARENT_SCOPE)
+    enable_testing()
+    add_subdirectory(tests)
 endif()

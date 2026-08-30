@@ -18,6 +18,7 @@
 
 #include <SDL3/SDL_events.h>
 
+#include "common/boot_timer.h"
 #include "common/debug.h"
 #include "common/logging/log.h"
 #include "common/thread.h"
@@ -213,6 +214,10 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
 
 void Emulator::PrepareWindow(std::filesystem::path file, std::vector<std::string> args,
                               std::optional<std::filesystem::path> p_game_folder) {
+    // Diagnostic-only: earliest point common to every launch, so every BACHATA_BOOT_TIMING
+    // checkpoint below (and in RunLoop()/Linker::Execute()) measures real elapsed time from
+    // here rather than guessing where a slow boot's time actually goes.
+    Common::MarkBootStart();
     Common::SetCurrentThreadName("shadPS4:Main");
     if (waitForDebuggerBeforeRun) {
         Debugger::WaitForDebuggerAttach();
@@ -467,6 +472,7 @@ void Emulator::PrepareWindow(std::filesystem::path file, std::vector<std::string
     pending_game_id = id;
     pending_eboot_path = eboot_path;
     pending_args = std::move(args);
+    LOG_CRITICAL(Core, "BACHATA_BOOT_TIMING: PrepareWindow done at {}ms", Common::BootElapsedMs());
 }
 
 void Emulator::RunLoop() {
@@ -537,7 +543,10 @@ void Emulator::RunLoop() {
     }
 
     // Initialize kernel and library facilities.
+    LOG_CRITICAL(Core, "BACHATA_BOOT_TIMING: InitHLELibs starting at {}ms",
+                Common::BootElapsedMs());
     Libraries::InitHLELibs(&linker->GetHLESymbols());
+    LOG_CRITICAL(Core, "BACHATA_BOOT_TIMING: InitHLELibs done at {}ms", Common::BootElapsedMs());
 
     // Load the module with the linker
     if (linker->LoadModule(eboot_path) == -1) {
@@ -551,6 +560,7 @@ void Emulator::RunLoop() {
         }
         SHADPS4_TERMINATE_RUN(0);
     }
+    LOG_CRITICAL(Core, "BACHATA_BOOT_TIMING: LoadModule done at {}ms", Common::BootElapsedMs());
 
 #ifdef ENABLE_DISCORD_RPC
     // Discord RPC
@@ -580,7 +590,8 @@ void Emulator::RunLoop() {
     }
 
     window->InitTimers();
-    LOG_CRITICAL(Core, "BACHATA_RUNLOOP: entering window event loop");
+    LOG_CRITICAL(Core, "BACHATA_RUNLOOP: entering window event loop at {}ms",
+                Common::BootElapsedMs());
     while (window->IsOpen()) {
         window->WaitEvent();
     }
