@@ -144,8 +144,11 @@ static auto UserPaths = [] {
     std::unordered_map<PathType, fs::path> paths;
 
     const auto create_path = [&](PathType shad_path, const fs::path& new_path) {
-        std::error_code ec;
-        std::filesystem::create_directories(new_path, ec);
+        // A fresh iOS sandbox does not necessarily contain Library/Application
+        // Support. Keep this recursive: create_directory() would fail for the
+        // first path and can abort the app during static initialization if the
+        // throwing overload is used.
+        (void)EnsureDirectoryTree(new_path);
         paths.insert_or_assign(shad_path, new_path);
     };
 
