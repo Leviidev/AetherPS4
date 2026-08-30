@@ -325,7 +325,17 @@ private struct FaceButton<Glyph: View>: View {
         }
         .frame(width: radius * 2, height: radius * 2)
         .contentShape(Circle())
-        .gesture(
+        // simultaneousGesture, not gesture: the four face buttons are close enough that their
+        // *bounding frames* (not their circular contentShape/hit area, which do have a real
+        // gap -- see FaceButtonsView's own comment) overlap at the corners. SwiftUI's plain
+        // .gesture() sets each sibling's DragGesture up as UIKit-exclusive, which forces a
+        // recognizer-negotiation pass to pick a winner whenever frames overlap like this --
+        // and that negotiation was eating the first touch, only resolving (and registering the
+        // press) once the finger moved enough to disambiguate. Reported on-device as buttons
+        // only registering on "press then drag out of it". simultaneousGesture opts this
+        // recognizer out of that exclusivity entirely, so it starts the instant its own
+        // contentShape is hit, with no negotiation against its siblings.
+        .simultaneousGesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { _ in
                     guard !isPressed else { return }
