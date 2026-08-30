@@ -37,6 +37,7 @@ set(SETTINGS_TEST_SOURCES
 
     # Tests
     test_emulator_settings.cpp
+    common/test_path_util.cpp
 )
 
 set(GCN_TEST_SOURCES
