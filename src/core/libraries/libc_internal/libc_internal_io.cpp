@@ -635,10 +635,19 @@ void RegisterFexLibcIoAliases(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("jbz9I9vkqkk", "libc", 1, "libc", internal_vsprintf);
     LIB_FUNCTION("Q2V+iqvjgC0", "libc", 1, "libc", internal_vsnprintf);
     LIB_FUNCTION("xeYO4u7uyJ0", "libc", 1, "libc", internal_fopen);
-    // Hash confirmed from an on-device "unresolved HLE freopen" log line for Journey
-    // (RIa6GnWp+iU#libc#1#libc#Function) -- see internal_freopen's own comment for why this
-    // one specifically needed a real implementation instead of the generic ENOSYS fallback.
-    LIB_FUNCTION("RIa6GnWp+iU", "libc", 1, "libc", internal_freopen);
+    // gkWgn0p1AfU is freopen's real NID per aerolib.inl (STUB("gkWgn0p1AfU", freopen)) --
+    // NOT the hash from the BACHATA_FEX_VENEER log line adjacent to the "unresolved HLE
+    // freopen" warning, which was a mistaken read the first time this was fixed: veneer
+    // lines print lazily on first *use*, in whatever order symbols actually get called at
+    // runtime, not paired 1:1 with the "unresolved" warnings from *resolution* time right
+    // next to them in the log. That wrong hash ("RIa6GnWp+iU") actually belongs to
+    // strerror (see libc_internal_str.cpp's own registration under the same nid) -- using
+    // it here didn't fix freopen at all and additionally shadowed strerror's real
+    // registration with this function's incompatible signature, since SymbolsResolver::
+    // AddFunction only overwrites an *existing* record when it's a prior ENOSYS fallback;
+    // finding strerror's real, already-registered (hle_fallback=false) entry under that
+    // name, it appended a second, colliding record instead of replacing anything.
+    LIB_FUNCTION("gkWgn0p1AfU", "libc", 1, "libc", internal_freopen);
     LIB_FUNCTION("rQFVBXp-Cxg", "libc", 1, "libc", internal_fseek);
     LIB_FUNCTION("lbB+UlZqVG0", "libc", 1, "libc", internal_fread);
     LIB_FUNCTION("uodLYyUip20", "libc", 1, "libc", internal_fclose);
