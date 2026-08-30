@@ -248,6 +248,10 @@ extern "C" int shadps4_has_presented_frame() {
     return Common::FramePresentedFlag().load(std::memory_order_relaxed) ? 1 : 0;
 }
 
+extern "C" uint64_t shadps4_get_presented_frame_count() {
+    return Common::PresentedFrameCount().load(std::memory_order_relaxed);
+}
+
 extern "C" void shadps4_register_first_frame_callback(void (*callback)(void)) {
     Common::FramePresentedCallback().store(callback, std::memory_order_relaxed);
 }

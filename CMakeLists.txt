@@ -14,8 +14,18 @@ if(APPLE)
     # Ninja/Makefiles generator (used for the macOS target) enforces it strictly and
     # fails to even regenerate build.ninja without it.
     list(APPEND ADDITIONAL_LANGUAGES OBJC OBJCXX)
-    # Minimum OS version for KosmicKrisp
-    set(CMAKE_OSX_DEPLOYMENT_TARGET 26.0 CACHE STRING "")
+    if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        # iOS never bundles KosmicKrisp (see the "Skipped on iOS" guard around
+        # CopyVulkanDriver below) -- it renders through MoltenVK instead, which has no
+        # comparable floor, so the app's own deployment target is what actually gates
+        # compatibility here. Kept as its own branch, not folded into the macOS value
+        # below, precisely so raising/lowering one platform's floor never silently moves
+        # the other's.
+        set(CMAKE_OSX_DEPLOYMENT_TARGET 18.0 CACHE STRING "")
+    else()
+        # Minimum OS version for KosmicKrisp
+        set(CMAKE_OSX_DEPLOYMENT_TARGET 26.0 CACHE STRING "")
+    endif()
 endif()
 
 if (NOT CMAKE_BUILD_TYPE)
