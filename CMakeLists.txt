@@ -8,7 +8,12 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 if(APPLE)
-    list(APPEND ADDITIONAL_LANGUAGES OBJC)
+    # OBJCXX (not just OBJC): needed for src/common/logging/objc_exception_describe.mm.
+    # Xcode's generator (used for the iOS target) compiles .mm files by extension
+    # regardless of this, which is why that build never surfaced the gap -- but the
+    # Ninja/Makefiles generator (used for the macOS target) enforces it strictly and
+    # fails to even regenerate build.ninja without it.
+    list(APPEND ADDITIONAL_LANGUAGES OBJC OBJCXX)
     # Minimum OS version for KosmicKrisp
     set(CMAKE_OSX_DEPLOYMENT_TARGET 26.0 CACHE STRING "")
 endif()
@@ -824,6 +829,8 @@ set(COMMON src/common/logging/classes.h
            src/common/io_file.cpp
            src/common/io_file.h
            src/common/lru_cache.h
+           src/common/boot_timer.cpp
+           src/common/boot_timer.h
            src/common/error.cpp
            src/common/error.h
            src/common/fixed_value.h
@@ -1285,11 +1292,21 @@ if (ENABLE_BACHATA_RUNTIME)
     target_sources(shadps4 PRIVATE
         src/platform/bachata/runtime_client.cpp
         src/platform/bachata/controller_snapshot.cpp
-        src/platform/bachata/audio_transport.cpp
         src/platform/bachata/ffmpeg_cpu_policy.cpp
         src/platform/bachata/runtime_client.h
     )
 endif()
+
+# Unconditional (not gated behind ENABLE_BACHATA_RUNTIME, unlike the sources above):
+# src/core/libraries/audio/bachata_audio_out.cpp (part of the always-built AUDIO_CORE list)
+# calls Platform::Bachata::ConvertPcmToStereo() regardless of that flag. The iOS target
+# never hit the resulting missing-symbol link error only because its BachataPortBackend
+# is never actually reachable at runtime there and dead-stripping quietly removes it --
+# this target's linker isn't as forgiving, and the code shouldn't rely on that anyway.
+target_sources(shadps4 PRIVATE
+    src/platform/bachata/audio_transport.cpp
+    src/platform/bachata/audio_transport.h
+)
 
 create_target_directory_groups(shadps4)
 

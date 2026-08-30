@@ -13,6 +13,7 @@
 #include <SDL3/SDL_properties.h>
 #include <SDL3/SDL_video.h>
 
+#include "common/boot_timer.h"
 #include "common/frame_presented_flag.h"
 #include "common/key_manager.h"
 #include "common/logging/log.h"
@@ -166,6 +167,12 @@ extern "C" int shadps4_run_loop(void) {
     if (!g_init_ok) {
         return -1;
     }
+    // Gap between this and PrepareWindow's own "done" checkpoint covers Swift's own overlay
+    // window setup plus the main-thread -> background-thread handoff latency (see
+    // EmulatorProcess.swift's continueLaunch) -- part of the same boot-timing investigation
+    // as the BACHATA_BOOT_TIMING checkpoints in emulator.cpp/linker.cpp.
+    LOG_CRITICAL(Core, "BACHATA_BOOT_TIMING: shadps4_run_loop entered at {}ms",
+                Common::BootElapsedMs());
     auto* emulator = Common::Singleton<Core::Emulator>::Instance();
     // RunLoop() blocks until the SDL window closes or shadps4_stop() pushes a quit event
     // (see emulator.cpp); SHADPS4_LIBRARY_BUILD makes it return here instead of
