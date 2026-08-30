@@ -85,6 +85,25 @@ static std::optional<std::filesystem::path> GetBundleParentDirectory() {
 }
 #endif
 
+// getenv("HOME") feeding straight into std::filesystem::path's const char* constructor is
+// undefined behavior if HOME is ever unset -- normally never null on iOS, but this runs
+// inside UserPaths' static initializer below, which executes before main() and therefore
+// before Common::Log::Setup() or CrashLogger's stdout/stderr redirect are ever set up. If
+// this ever did crash from a null HOME, it would do so silently, with no crash log at all
+// (a real, still-unexplained crash-on-first-launch report on some installs prompted this
+// check). TMPDIR is POSIX-mandated and, unlike HOME, always set on iOS regardless of sandbox
+// state, so it's a safe non-null fallback; the literal "/tmp" below only matters if even
+// that were somehow unset, which would be effectively impossible.
+static const char* GetHomeDirEnv() {
+    if (const char* home = getenv("HOME"); home != nullptr && home[0] != '\0') {
+        return home;
+    }
+    if (const char* tmpdir = getenv("TMPDIR"); tmpdir != nullptr && tmpdir[0] != '\0') {
+        return tmpdir;
+    }
+    return "/tmp";
+}
+
 static auto UserPaths = [] {
     fs::path user_dir;
 #if defined(__APPLE__) && TARGET_OS_IPHONE
@@ -93,7 +112,7 @@ static auto UserPaths = [] {
     // abort the process during static initialization, before main() ever runs.
     // Skip the portable-directory probe entirely and go straight to the app's
     // writable Application Support directory.
-    user_dir = std::filesystem::path(getenv("HOME")) / "Library" / "Application Support" / "shadPS4";
+    user_dir = std::filesystem::path(GetHomeDirEnv()) / "Library" / "Application Support" / "shadPS4";
 #else
     // Try the portable user directory first.
     try {
@@ -106,13 +125,13 @@ static auto UserPaths = [] {
         // NOTE: On Windows we currently just create the portable directory instead.
 #ifdef __APPLE__
         user_dir =
-            std::filesystem::path(getenv("HOME")) / "Library" / "Application Support" / "shadPS4";
+            std::filesystem::path(GetHomeDirEnv()) / "Library" / "Application Support" / "shadPS4";
 #elif defined(__linux__)
         const char* xdg_data_home = getenv("XDG_DATA_HOME");
         if (xdg_data_home != nullptr && strlen(xdg_data_home) > 0) {
             user_dir = std::filesystem::path(xdg_data_home) / "shadPS4";
         } else {
-            user_dir = std::filesystem::path(getenv("HOME")) / ".local" / "share" / "shadPS4";
+            user_dir = std::filesystem::path(GetHomeDirEnv()) / ".local" / "share" / "shadPS4";
         }
 #elif _WIN32
         TCHAR appdata[MAX_PATH] = {0};
