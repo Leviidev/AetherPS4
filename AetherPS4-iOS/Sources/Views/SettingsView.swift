@@ -180,13 +180,16 @@ struct SettingsView: View {
                     get: { !touchControlsDisabled },
                     set: { touchControlsDisabled = !$0 }
                 ))
+                NavigationLink("Customize Touch Control Layout") {
+                    TouchControlsLayoutEditorView()
+                }
                 Button("Reset Touch Control Layout", role: .destructive) {
                     TouchLayoutStore.shared.resetAll()
                 }
             } header: {
                 Text("Touch Controls")
             } footer: {
-                Text("Turning this off removes the on-screen stick/button overlay entirely -- only useful with an actual controller connected. To move a button, tap \"Edit Layout\" at the bottom of the screen while a game is running, drag the dashed placeholders where you want them, then tap \"Done\". Both take effect the next time you start a game.")
+                Text("Turning this off removes the on-screen stick/button overlay entirely -- only useful with an actual controller connected. Both settings take effect the next time you start a game.")
             }
 
             Section {

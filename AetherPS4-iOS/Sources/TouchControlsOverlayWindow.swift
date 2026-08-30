@@ -333,15 +333,37 @@ private struct PerformanceOverlayBadge: View {
     @ObservedObject var perf: PerformanceOverlayState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text("\(Int(perf.fps.rounded())) FPS")
-            Text("CPU \(Int(perf.cpuPercent.rounded()))%")
+        HStack(spacing: 18) {
+            metric(icon: "gauge.with.dots.needle.67percent", value: "\(Int(perf.fps.rounded()))",
+                  unit: "FPS")
+            Divider()
+                .frame(height: 30)
+                .overlay(Color.white.opacity(0.25))
+            metric(icon: "cpu", value: "\(Int(perf.cpuPercent.rounded()))", unit: "% CPU")
         }
-        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-        .foregroundStyle(.white)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(Color.white.opacity(0.15), lineWidth: 1)
+        )
+    }
+
+    private func metric(icon: String, value: String, unit: String) -> some View {
+        VStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.system(size: 15))
+                .foregroundStyle(.white.opacity(0.7))
+            Text(value)
+                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+                .monospacedDigit()
+            Text(unit)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.6))
+                .textCase(.uppercase)
+        }
     }
 }
 
@@ -352,7 +374,6 @@ private struct TouchControlsView: View {
     @StateObject private var bootProgress = BootProgressState()
     @StateObject private var perf = PerformanceOverlayState()
     @StateObject private var layout = TouchLayoutStore.shared
-    @State private var editMode = false
 
     /// Base position for a named control, offset by whatever the player has dragged it to in
     /// layout-edit mode (see LayoutHandle below). Keys are stable identifiers persisted in
@@ -426,69 +447,15 @@ private struct TouchControlsView: View {
                             .position(pos("options", w * 0.60, u * 6))
                     }
                 }
-                // While repositioning, the real controls must not also react to the same
-                // drag as a button press/stick move -- disable their hit-testing entirely
-                // and let the LayoutHandle overlay below own every touch instead.
-                .allowsHitTesting(!editMode)
-                .opacity(editMode ? 0.5 : 1.0)
-
-                if editMode {
-                    Group {
-                        LayoutHandle(layout: layout, key: "leftStick", label: "L Stick", size: u * 34)
-                            .position(pos("leftStick", u * 20, h - u * 22))
-                        LayoutHandle(layout: layout, key: "dpad", label: "D-Pad", size: u * 26)
-                            .position(pos("dpad", u * 22, u * 38))
-                        LayoutHandle(layout: layout, key: "rightStick", label: "R Stick", size: u * 34)
-                            .position(pos("rightStick", w - u * 36, h - u * 22))
-                        LayoutHandle(layout: layout, key: "faceButtons", label: "Face", size: u * 54)
-                            .position(pos("faceButtons", w - u * 34, u * 47))
-                        LayoutHandle(layout: layout, key: "L1", label: "L1", width: u * 16, height: u * 8)
-                            .position(pos("L1", u * 10, u * 12))
-                        LayoutHandle(layout: layout, key: "L2", label: "L2", width: u * 16, height: u * 8)
-                            .position(pos("L2", u * 10, u * 2))
-                        LayoutHandle(layout: layout, key: "R1", label: "R1", width: u * 16, height: u * 8)
-                            .position(pos("R1", w - u * 40, u * 12))
-                        LayoutHandle(layout: layout, key: "R2", label: "R2", width: u * 16, height: u * 8)
-                            .position(pos("R2", w - u * 40, u * 2))
-                        LayoutHandle(layout: layout, key: "share", label: "SH", size: u * 9)
-                            .position(pos("share", w * 0.40, u * 6))
-                        LayoutHandle(layout: layout, key: "touchpad", label: "TP", size: u * 9)
-                            .position(pos("touchpad", w * 0.50, u * 6))
-                        LayoutHandle(layout: layout, key: "options", label: "OPT", size: u * 9)
-                            .position(pos("options", w * 0.60, u * 6))
-                    }
-                }
-
-                // Always-available small toggle for layout-edit mode, and (while active) the
-                // controls to reset/exit it. Bottom-center so it stays clear of every control
-                // above and of the boot-progress ring (top-center).
-                VStack(spacing: 6) {
-                    if editMode {
-                        Button("Reset Layout") {
-                            layout.resetAll()
-                        }
-                        .font(.system(size: 12, weight: .semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(.black.opacity(0.55), in: Capsule())
-                        .foregroundStyle(.white)
-                    }
-                    Button(editMode ? "Done" : "Edit Layout") {
-                        editMode.toggle()
-                    }
-                    .font(.system(size: 12, weight: .semibold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(editMode ? Color.accentColor.opacity(0.85) : .black.opacity(0.4),
-                               in: Capsule())
-                    .foregroundStyle(.white)
-                }
-                .position(x: w * 0.5, y: h - u * 4)
                 } // if controlsEnabled
 
                 if perf.isEnabled {
+                    // Below the Share/Touchpad/Options row and the boot-progress ring (both
+                    // top-center too), so the two never overlap while both happen to be
+                    // visible during boot -- by the time a player is actually watching FPS
+                    // during real gameplay, the boot ring has already faded out anyway.
                     PerformanceOverlayBadge(perf: perf)
-                        .position(x: u * 12, y: u * 6)
+                        .position(x: w * 0.5, y: u * 26)
                 }
 
                 if bootProgress.isVisible {
@@ -820,66 +787,6 @@ private struct SmallButton: View {
     }
 }
 
-// MARK: - Layout editing
-
-// A dashed placeholder shown in place of a real control while layout-edit mode is active
-// (see TouchControlsView.editMode). Deliberately not the real control itself: the real
-// controls' own gesture recognizers are for game input (press/drag-to-move-stick), which
-// would fight a drag-to-reposition gesture on the exact same view. Real controls get
-// allowsHitTesting(false) while this is showing, so this is the only thing receiving
-// touches during a reposition drag.
-private struct LayoutHandle: View {
-    @ObservedObject var layout: TouchLayoutStore
-    let key: String
-    let label: String
-    var width: CGFloat
-    var height: CGFloat
-
-    // Tracks the last-seen cumulative translation from the current drag so each onChanged
-    // call can compute just this step's delta -- DragGesture's translation is relative to
-    // the drag's start, not the previous callback, and TouchLayoutStore.addOffset is additive.
-    @State private var lastTranslation: CGSize = .zero
-
-    init(layout: TouchLayoutStore, key: String, label: String, size: CGFloat) {
-        self.layout = layout
-        self.key = key
-        self.label = label
-        self.width = size
-        self.height = size
-    }
-
-    init(layout: TouchLayoutStore, key: String, label: String, width: CGFloat, height: CGFloat) {
-        self.layout = layout
-        self.key = key
-        self.label = label
-        self.width = width
-        self.height = height
-    }
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.accentColor.opacity(0.35))
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.white, style: StrokeStyle(lineWidth: 2, dash: [4, 3]))
-            Text(label)
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.white)
-        }
-        .frame(width: max(width, 28), height: max(height, 28))
-        .contentShape(Rectangle())
-        .gesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { value in
-                    let delta = CGSize(width: value.translation.width - lastTranslation.width,
-                                       height: value.translation.height - lastTranslation.height)
-                    layout.addOffset(delta, for: key)
-                    lastTranslation = value.translation
-                }
-                .onEnded { _ in
-                    lastTranslation = .zero
-                    layout.commit()
-                }
-        )
-    }
-}
+// Layout editing (dragging each control to a new position) now lives entirely in
+// TouchControlsLayoutEditorView.swift, reachable from Settings, rather than in this overlay
+// -- see that file for LayoutHandle and the shared position formulas.
