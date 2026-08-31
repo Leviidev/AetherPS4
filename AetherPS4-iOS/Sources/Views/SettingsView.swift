@@ -43,6 +43,13 @@ struct SettingsView: View {
     // Audio
     @State private var audioBackend = 0 // AudioBackend: SDL/OpenAL
 
+    // Debug export: installed games live under Application Support, which Files app doesn't
+    // expose (UIFileSharingEnabled only surfaces Documents) -- this copies a chosen game's
+    // eboot.bin into Documents so it becomes reachable for troubleshooting. Temporary debug
+    // tool, not meant to stay long-term.
+    @State private var installedGameDirs: [String] = []
+    @State private var ebootExportMessage: String?
+
     private var versionLabel: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString")
             as? String ?? "Unknown"
@@ -199,6 +206,29 @@ struct SettingsView: View {
             }
 
             Section {
+                if installedGameDirs.isEmpty {
+                    Text("No installed games found.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(installedGameDirs, id: \.self) { contentId in
+                        Button(contentId) {
+                            exportEboot(for: contentId)
+                        }
+                    }
+                }
+                if let ebootExportMessage {
+                    Text(ebootExportMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Debug: Export Game Executable")
+            } footer: {
+                Text("Copies the selected installed game's eboot.bin into the Files app (Documents) for troubleshooting a crash report.")
+            }
+
+            Section {
                 Link(destination: URL(string: "https://discord.gg/xApMHWAzkh")!) {
                     Label("Join the Discord", systemImage: "bubble.left.and.bubble.right")
                 }
@@ -212,7 +242,10 @@ struct SettingsView: View {
                     .accessibilityLabel("Version \(versionLabel)")
             }
         }
-        .onAppear(perform: loadFromStore)
+        .onAppear {
+            loadFromStore()
+            loadInstalledGameDirs()
+        }
     }
 
     private func loadFromStore() {
@@ -245,5 +278,43 @@ struct SettingsView: View {
         extraDmemMBytes = store.int("General", "extra_dmem_in_mbytes", default: 0)
 
         audioBackend = store.int("Audio", "audio_backend", default: 0)
+    }
+
+    private func loadInstalledGameDirs() {
+        let fm = FileManager.default
+        guard let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            installedGameDirs = []
+            return
+        }
+        let gamesDir = appSupport.appendingPathComponent("AetherPS4/games")
+        guard let entries = try? fm.contentsOfDirectory(at: gamesDir, includingPropertiesForKeys: nil) else {
+            installedGameDirs = []
+            return
+        }
+        installedGameDirs = entries
+            .filter { fm.fileExists(atPath: $0.appendingPathComponent("eboot.bin").path) }
+            .map(\.lastPathComponent)
+            .sorted()
+    }
+
+    private func exportEboot(for contentId: String) {
+        let fm = FileManager.default
+        guard let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first,
+              let documents = fm.urls(for: .documentDirectory, in: .userDomainMask).first
+        else {
+            ebootExportMessage = "Failed: could not resolve app directories."
+            return
+        }
+        let source = appSupport.appendingPathComponent("AetherPS4/games/\(contentId)/eboot.bin")
+        let destination = documents.appendingPathComponent("\(contentId)_eboot.bin")
+        do {
+            if fm.fileExists(atPath: destination.path) {
+                try fm.removeItem(at: destination)
+            }
+            try fm.copyItem(at: source, to: destination)
+            ebootExportMessage = "Exported to Files app as \(destination.lastPathComponent)"
+        } catch {
+            ebootExportMessage = "Failed: \(error.localizedDescription)"
+        }
     }
 }
