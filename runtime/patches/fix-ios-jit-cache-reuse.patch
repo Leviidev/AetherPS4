@@ -1,5 +1,5 @@
 diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
-index b872b6ff..103c5293 100644
+index b872b6ff..ed731eda 100644
 --- a/FEXCore/Source/Interface/Core/JIT/JIT.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
 @@ -519,7 +519,15 @@ static void DirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record,
@@ -33,7 +33,20 @@ index b872b6ff..103c5293 100644
    ARMEmitter::Emitter::ClearICache(reinterpret_cast<void*>(JumpThunkStartAddress), 4);
  
    // No need to reset HostCode here as the exit linker pointer is stored separately, and if the block is relinked it will be updated.
-@@ -588,6 +601,30 @@ uint64_t Arm64JITCore::ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEX
+@@ -561,6 +574,12 @@ uint64_t Arm64JITCore::ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEX
+       auto CodeBuffer = static_cast<Arm64JITCore*>(Thread->CPUBackend.get())->CurrentCodeBuffer;
+       HostCode = static_cast<Context::ContextImpl*>(Thread->CTX)->CompileBlock(Frame, GuestRip, 0);
+       if (Thread->LookupCache->Shared != CodeBuffer->LookupCache.get()) {
++        // See the final return's own comment, below, for why this is set here too -- the
++        // caller's ExitFunctionLinker (Dispatcher.cpp) branches to whatever HostCode this
++        // function returns with no lock or synchronization of its own, and a safepoint-paused
++        // thread caught in that window needs State.rip to already reflect this target for a
++        // DispatcherLoopTop redirect to land anywhere sane.
++        Frame->State.rip = GuestRip;
+         return HostCode;
+       }
+     }
+@@ -588,6 +607,30 @@ uint64_t Arm64JITCore::ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEX
    // Guard the LookupCache lock with the code invalidation mutex, to avoid issues with forking
    auto lk_inval = GuardSignalDeferringSection<std::shared_lock>(static_cast<Context::ContextImpl*>(Thread->CTX)->CodeInvalidationMutex, Thread);
  
@@ -64,7 +77,7 @@ index b872b6ff..103c5293 100644
    // Lock here is necessary to prevent simultaneous linking and delinking
    auto lk = Thread->LookupCache->AcquireWriteLock();
  
-@@ -610,20 +647,34 @@ uint64_t Arm64JITCore::ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEX
+@@ -610,25 +653,49 @@ uint64_t Arm64JITCore::ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEX
          GuestRip, Record, [](FEXCore::Context::ExitFunctionLinkData* Record) { DirectBlockDelinker(Record, false); }, lk);
      }
  
@@ -103,7 +116,22 @@ index b872b6ff..103c5293 100644
      ARMEmitter::Emitter::ClearICache(reinterpret_cast<void*>(JumpThunkStartAddress), 4);
  
      Thread->LookupCache->AddBlockLink(GuestRip, Record, IndirectBlockDelinker, lk);
-@@ -702,11 +753,30 @@ void Arm64JITCore::ClearCache() {
+   }
+ 
++  // The caller (ExitFunctionLinker, Dispatcher.cpp) takes this return value in TMP1 and, after a
++  // few more instructions (spilling regs, an isb, no further lock or synchronization of any
++  // kind), branches straight to it -- a second, separate instance of the same class of bug the
++  // HostCode re-validation above this function already fixed, just living in the assembly glue
++  // around this call instead of inside it. A thread safepoint-paused anywhere in that window
++  // resumes still holding this exact value with the branch to it still pending; the
++  // SafepointSignalHandler (fex_guest_engine.cpp) redirects such a thread back to
++  // DispatcherLoopTop, which needs State.rip to already be the real target -- match the TFSet
++  // branch above, which has done this from the start for exactly this reason.
++  Frame->State.rip = GuestRip;
+   return HostCode;
+ }
+ 
+@@ -702,11 +769,30 @@ void Arm64JITCore::ClearCache() {
    auto PrevCodeBuffer = CurrentCodeBuffer;
    auto lk = PrevCodeBuffer->LookupCache->AcquireWriteLock();
  
@@ -134,7 +162,7 @@ index b872b6ff..103c5293 100644
  }
  
  Arm64JITCore::~Arm64JITCore() {}
-@@ -1110,6 +1180,14 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1110,6 +1196,14 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
    {
      auto CodeBufferLock = std::unique_lock {CodeBuffers.CodeBufferWriteMutex};
  
@@ -149,7 +177,7 @@ index b872b6ff..103c5293 100644
      // Query size of generated code
      const auto TempSize = GetCursorOffset();
  
-@@ -1128,7 +1206,73 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1128,7 +1222,73 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
        SetCursorOffset(CodeBuffers.LatestOffset);
        Align16B();
        if ((GetCursorOffset() + TempSize) > CurrentCodeBuffer->UsableSize()) {
@@ -223,7 +251,7 @@ index b872b6ff..103c5293 100644
        }
  
        CodeBuffers.LatestOffset = GetCursorOffset();
-@@ -1139,6 +1283,12 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1139,6 +1299,12 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
      CodeData.BlockBegin += Delta;
      for (auto& EntryPoint : CodeData.EntryPoints) {
        EntryPoint.second += Delta;
@@ -236,7 +264,7 @@ index b872b6ff..103c5293 100644
      }
      CodeBegin += Delta;
  
-@@ -1151,11 +1301,39 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1151,11 +1317,39 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
      SetCursorOffset(CodeBuffers.LatestOffset + TempSize);
  
      CodeBuffers.LatestOffset = GetCursorOffset();
@@ -542,7 +570,7 @@ index bf958d80..68cef7d1 100644
    void CacheBlockMapping(uint64_t Address, const GuestToHostMap::BlockEntry& Entry, bool L1Only, const LookupCacheBaseLockToken& lk) {
      for (const auto& CodePage : Entry.CodePages) {
 diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
-index 19719c2b..9286a0a6 100644
+index 19719c2b..07da17a9 100644
 --- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
 @@ -64,7 +64,15 @@ void Dispatcher::EmitDispatcher() {
@@ -579,7 +607,7 @@ index 19719c2b..9286a0a6 100644
    {
      ThreadStopHandlerAddressSpillSRA = GetCursorAddress<uint64_t>();
      SpillStaticRegs(TMP1);
-@@ -309,6 +327,14 @@ void Dispatcher::EmitDispatcher() {
+@@ -309,7 +327,24 @@ void Dispatcher::EmitDispatcher() {
        FillStaticRegs();
      });
  
@@ -592,9 +620,19 @@ index 19719c2b..9286a0a6 100644
 +    // instruction-fetch-vs-cache-maintenance ordering gap on the executing core.
 +    isb();
      br(TMP1);
++
++    // See JITPointers::DispatcherBlockLookupRangeEnd's own comment (CoreState.h) and
++    // ExitFunctionLink's final-return comment (JIT.cpp) for the full story: this whole
++    // ExitFunctionLinkerAddress routine, from its start above through this point, is a second
++    // window with the exact same class of hazard as the block-cache lookup below -- it takes
++    // ExitFunctionLink's C++ return value in TMP1 and branches straight to it (the `br` just
++    // above) with no lock or synchronization of its own. A thread safepoint-paused anywhere in
++    // this range may already be holding that value with the branch still pending.
++    ExitFunctionLinkerRangeEndAddress = GetCursorAddress<uint64_t>();
    }
  
-@@ -343,7 +369,10 @@ void Dispatcher::EmitDispatcher() {
+   // Need to create the block
+@@ -343,7 +378,10 @@ void Dispatcher::EmitDispatcher() {
        FillStaticRegs();
      });
  
@@ -606,7 +644,7 @@ index 19719c2b..9286a0a6 100644
      br(TMP1);
    }
  
-@@ -376,7 +405,9 @@ void Dispatcher::EmitDispatcher() {
+@@ -376,7 +414,9 @@ void Dispatcher::EmitDispatcher() {
        FillStaticRegs();
      });
  
@@ -617,7 +655,7 @@ index 19719c2b..9286a0a6 100644
      br(TMP1);
    }
  
-@@ -477,7 +508,11 @@ void Dispatcher::EmitDispatcher() {
+@@ -477,7 +517,11 @@ void Dispatcher::EmitDispatcher() {
      // On return to the thunk, the thunk can get whatever its return value is from the thread context depending on ABI handling on its end
      // When the thunk itself returns, it'll do its regular return logic there
      // void ReentrantCallback(FEXCore::Core::InternalThreadState *Thread, uint64_t RIP);
@@ -630,7 +668,7 @@ index 19719c2b..9286a0a6 100644
  
      // We expect the thunk to have previously pushed the registers it was using
      PushCalleeSavedRegisters();
-@@ -605,7 +640,18 @@ void Dispatcher::EmitDispatcher() {
+@@ -605,7 +649,18 @@ void Dispatcher::EmitDispatcher() {
    dc64(PMFCompileSingleStep.GetConvertedPointer());
  
    Start = reinterpret_cast<uint64_t>(DispatchPtr);
@@ -650,7 +688,7 @@ index 19719c2b..9286a0a6 100644
    ClearICache(reinterpret_cast<void*>(DispatchPtr), End - reinterpret_cast<uint64_t>(DispatchPtr));
  
    if (CTX->Config.BlockJITNaming()) {
-@@ -2611,7 +2657,24 @@ uint64_t Dispatcher::GenerateABICall(FallbackABI ABI) {
+@@ -2611,7 +2666,24 @@ uint64_t Dispatcher::GenerateABICall(FallbackABI ABI) {
    // Return to JIT
    ret();
  
@@ -676,7 +714,7 @@ index 19719c2b..9286a0a6 100644
  }
  
  void Dispatcher::InitThreadPointers(FEXCore::Core::InternalThreadState* Thread) {
-@@ -2619,36 +2682,85 @@ void Dispatcher::InitThreadPointers(FEXCore::Core::InternalThreadState* Thread)
+@@ -2619,36 +2691,87 @@ void Dispatcher::InitThreadPointers(FEXCore::Core::InternalThreadState* Thread)
    {
      auto& Ptrs = Thread->CurrentFrame->Pointers;
  
@@ -723,6 +761,8 @@ index 19719c2b..9286a0a6 100644
 +            reinterpret_cast<void*>(AbsoluteLoopTopAddressEnterECFillSRA)));
 +    Ptrs.ExitFunctionLinker = reinterpret_cast<uint64_t>(
 +        FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(ExitFunctionLinkerAddress)));
++    Ptrs.ExitFunctionLinkerRangeEnd = reinterpret_cast<uint64_t>(FEXCore::Allocator::GetExecutableAddress(
++        reinterpret_cast<void*>(ExitFunctionLinkerRangeEndAddress)));
 +    Ptrs.ThreadStopHandlerSpillSRA = reinterpret_cast<uint64_t>(FEXCore::Allocator::GetExecutableAddress(
 +        reinterpret_cast<void*>(ThreadStopHandlerAddressSpillSRA)));
 +    Ptrs.ThreadPauseHandlerSpillSRA = reinterpret_cast<uint64_t>(FEXCore::Allocator::GetExecutableAddress(
@@ -786,7 +826,7 @@ index 19719c2b..9286a0a6 100644
  SignalDelegatorConfig Dispatcher::MakeSignalDelegatorConfig() const {
    // PF/AF are the final two SRA registers. We only want GPRs
    const auto GPRCount = uint16_t(StaticRegisters.size() - 2);
-@@ -2670,22 +2782,30 @@ SignalDelegatorConfig Dispatcher::MakeSignalDelegatorConfig() const {
+@@ -2670,22 +2793,30 @@ SignalDelegatorConfig Dispatcher::MakeSignalDelegatorConfig() const {
      return Mapping;
    };
  
@@ -827,7 +867,7 @@ index 19719c2b..9286a0a6 100644
      // SRA information.
      .SRAGPRCount = GPRCount,
 diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h
-index b0f3d7a4..58864a4b 100644
+index b0f3d7a4..a5e1be46 100644
 --- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h
 +++ b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h
 @@ -55,9 +55,35 @@ public:
@@ -869,7 +909,7 @@ index b0f3d7a4..58864a4b 100644
  
    SignalDelegatorConfig MakeSignalDelegatorConfig() const;
  
-@@ -76,6 +102,8 @@ private:
+@@ -76,12 +102,16 @@ private:
    uint64_t ThreadStopHandlerAddress {};
    uint64_t ThreadStopHandlerAddressSpillSRA {};
    uint64_t AbsoluteLoopTopAddress {};
@@ -878,11 +918,19 @@ index b0f3d7a4..58864a4b 100644
    uint64_t AbsoluteLoopTopAddressFillSRA {};
    uint64_t AbsoluteLoopTopAddressEnterEC {};
    uint64_t AbsoluteLoopTopAddressEnterECFillSRA {};
+   uint64_t ThreadPauseHandlerAddress {};
+   uint64_t ThreadPauseHandlerAddressSpillSRA {};
+   uint64_t ExitFunctionLinkerAddress {};
++  // See JITPointers::DispatcherBlockLookupRangeEnd (CoreState.h) for what this bounds.
++  uint64_t ExitFunctionLinkerRangeEndAddress {};
+   uint64_t SignalHandlerReturnAddress {};
+   uint64_t SignalHandlerReturnAddressRT {};
+   uint64_t GuestSignal_SIGILL {};
 diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
-index 7c64dd83..542d9612 100644
+index 7c64dd83..27727b3d 100644
 --- a/FEXCore/include/FEXCore/Core/CoreState.h
 +++ b/FEXCore/include/FEXCore/Core/CoreState.h
-@@ -364,6 +364,16 @@ struct JITPointers {
+@@ -364,10 +364,25 @@ struct JITPointers {
     * @name Dispatcher pointers
     * @{ */
    uint64_t DispatcherLoopTop {};
@@ -899,3 +947,12 @@ index 7c64dd83..542d9612 100644
    uint64_t DispatcherLoopTopFillSRA {};
    uint64_t DispatcherLoopTopEnterEC {};
    uint64_t DispatcherLoopTopEnterECFillSRA {};
+   uint64_t ExitFunctionLinker {};
++  // End of ExitFunctionLinker's own routine -- a second window with the same lock-free
++  // read-cached-target-then-branch hazard as DispatcherBlockLookupRangeEnd above, see that
++  // field's comment. [ExitFunctionLinker, ExitFunctionLinkerRangeEnd) is the range
++  // SafepointSignalHandler checks and redirects out of, same as the block-lookup range.
++  uint64_t ExitFunctionLinkerRangeEnd {};
+   uint64_t ThreadStopHandlerSpillSRA {};
+   uint64_t ThreadPauseHandlerSpillSRA {};
+   uint64_t GuestSignal_SIGILL {};
