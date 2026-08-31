@@ -1,5 +1,5 @@
 diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
-index b872b6ff..151515c7 100644
+index b872b6ff..103c5293 100644
 --- a/FEXCore/Source/Interface/Core/JIT/JIT.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
 @@ -519,7 +519,15 @@ static void DirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record,
@@ -33,7 +33,38 @@ index b872b6ff..151515c7 100644
    ARMEmitter::Emitter::ClearICache(reinterpret_cast<void*>(JumpThunkStartAddress), 4);
  
    // No need to reset HostCode here as the exit linker pointer is stored separately, and if the block is relinked it will be updated.
-@@ -610,20 +623,34 @@ uint64_t Arm64JITCore::ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEX
+@@ -588,6 +601,30 @@ uint64_t Arm64JITCore::ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEX
+   // Guard the LookupCache lock with the code invalidation mutex, to avoid issues with forking
+   auto lk_inval = GuardSignalDeferringSection<std::shared_lock>(static_cast<Context::ContextImpl*>(Thread->CTX)->CodeInvalidationMutex, Thread);
+ 
++  // Re-validate HostCode now that we hold CodeInvalidationMutex again -- it was captured earlier
++  // (either FindBlock's fast-path hit above, or CompileBlock's return value on the slow path)
++  // while that lock was held only briefly, and an iOS reuse-in-place cycle (NewCodeBuffer=false)
++  // could have run entirely within the gap since then. Unlike a NewCodeBuffer=true reuse,
++  // reuse-in-place clears BlockList/BlockLinks without swapping the LookupCache object itself,
++  // so it's invisible to the "Thread->LookupCache->Shared != CodeBuffer->LookupCache.get()" check
++  // the slow path already does above. Worse, neither that check nor the safepoint mechanism
++  // protects a value already captured into this function's own HostCode local: a thread can be
++  // safepoint-paused *after* reading a since-invalidated HostCode but *before* ever writing it
++  // anywhere, and on resume it has no way to know the value it's still holding went stale while
++  // it was frozen -- the pause only ever protected memory, not a local variable already sitting
++  // in a register. Confirmed on-device as the remaining source of the exact same
++  // "instruction-fetch fault, not inside any currently-live JIT allocation" crash even after the
++  // safepoint's own hold window and CodeInvalidationMutex acquisition ordering were separately
++  // fixed. A fresh FindBlock() here is cheap insurance (this must run before AcquireWriteLock()
++  // below -- FindBlock takes its own read lock on the same underlying mutex GuestToHostMap::Lock,
++  // which would deadlock against that write lock from this same thread); if it disagrees with
++  // what we're still holding, re-resolve properly instead of patching a branch to a target
++  // that's already gone.
++  if (auto Current = Thread->LookupCache->FindBlock(Thread, GuestRip); Current != HostCode) {
++    HostCode = Current ? Current : static_cast<Context::ContextImpl*>(Thread->CTX)->CompileBlock(Frame, GuestRip, 0);
++    BranchOffset = HostCode / 4 - CallerAddress / 4;
++  }
++
+   // Lock here is necessary to prevent simultaneous linking and delinking
+   auto lk = Thread->LookupCache->AcquireWriteLock();
+ 
+@@ -610,20 +647,34 @@ uint64_t Arm64JITCore::ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEX
          GuestRip, Record, [](FEXCore::Context::ExitFunctionLinkData* Record) { DirectBlockDelinker(Record, false); }, lk);
      }
  
@@ -72,7 +103,7 @@ index b872b6ff..151515c7 100644
      ARMEmitter::Emitter::ClearICache(reinterpret_cast<void*>(JumpThunkStartAddress), 4);
  
      Thread->LookupCache->AddBlockLink(GuestRip, Record, IndirectBlockDelinker, lk);
-@@ -702,11 +729,30 @@ void Arm64JITCore::ClearCache() {
+@@ -702,11 +753,30 @@ void Arm64JITCore::ClearCache() {
    auto PrevCodeBuffer = CurrentCodeBuffer;
    auto lk = PrevCodeBuffer->LookupCache->AcquireWriteLock();
  
@@ -103,7 +134,7 @@ index b872b6ff..151515c7 100644
  }
  
  Arm64JITCore::~Arm64JITCore() {}
-@@ -1110,6 +1156,14 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1110,6 +1180,14 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
    {
      auto CodeBufferLock = std::unique_lock {CodeBuffers.CodeBufferWriteMutex};
  
@@ -118,7 +149,7 @@ index b872b6ff..151515c7 100644
      // Query size of generated code
      const auto TempSize = GetCursorOffset();
  
-@@ -1128,7 +1182,73 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1128,7 +1206,73 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
        SetCursorOffset(CodeBuffers.LatestOffset);
        Align16B();
        if ((GetCursorOffset() + TempSize) > CurrentCodeBuffer->UsableSize()) {
@@ -192,7 +223,7 @@ index b872b6ff..151515c7 100644
        }
  
        CodeBuffers.LatestOffset = GetCursorOffset();
-@@ -1139,6 +1259,12 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1139,6 +1283,12 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
      CodeData.BlockBegin += Delta;
      for (auto& EntryPoint : CodeData.EntryPoints) {
        EntryPoint.second += Delta;
@@ -205,7 +236,7 @@ index b872b6ff..151515c7 100644
      }
      CodeBegin += Delta;
  
-@@ -1151,11 +1277,39 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1151,11 +1301,39 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
      SetCursorOffset(CodeBuffers.LatestOffset + TempSize);
  
      CodeBuffers.LatestOffset = GetCursorOffset();
