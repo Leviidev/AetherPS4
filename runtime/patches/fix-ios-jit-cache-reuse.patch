@@ -541,3 +541,361 @@ index bf958d80..68cef7d1 100644
  private:
    void CacheBlockMapping(uint64_t Address, const GuestToHostMap::BlockEntry& Entry, bool L1Only, const LookupCacheBaseLockToken& lk) {
      for (const auto& CodePage : Entry.CodePages) {
+diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
+index 19719c2b..9286a0a6 100644
+--- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
++++ b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
+@@ -64,7 +64,15 @@ void Dispatcher::EmitDispatcher() {
+   const auto DisasmBegin = GetCursorAddress<const vixl::aarch64::Instruction*>();
+ #endif
+ 
+-  DispatchPtr = GetCursorAddress<AsmDispatch>();
++  // DispatchPtr is a raw C function pointer other code CALLS directly (see fex_guest_engine.cpp
++  // on iOS) -- unlike relative branches encoded entirely within this same buffer, an escaping
++  // absolute pointer like this one must be the executable (RX) address, not the write (RW)
++  // address GetCursorAddress() returns. Identity on every platform except iOS.
++  // DispatchRawBegin keeps the untranslated (RW) cursor too -- the dispatcher's bytes below are
++  // all written through it, so the end-of-emission ClearICache call needs both aliases (see the
++  // comment there for why one alone isn't enough on iOS's dual-mapped scheme).
++  void* const DispatchRawBegin = GetCursorAddress<void*>();
++  DispatchPtr = reinterpret_cast<AsmDispatch>(FEXCore::Allocator::GetExecutableAddress(DispatchRawBegin));
+ 
+   // while (true) {
+   //    Ptr = FindBlock(RIP)
+@@ -242,6 +250,16 @@ void Dispatcher::EmitDispatcher() {
+     }
+   }
+ 
++  // This whole block-cache lookup routine (from AbsoluteLoopTopAddress, captured above, through
++  // here) is deliberately lock-free -- it's the hottest path in the entire JIT, executed on
++  // every guest dispatch. It reads a cached guest->host mapping and, on a hit, holds the cached
++  // host address in a register (TMP4 above) for the short window between that read and the
++  // `br(TMP4)` that consumes it. See SafepointSignalHandler's own comment
++  // (fex_guest_engine.cpp) for why a thread paused by this codebase's iOS JIT-buffer-reuse
++  // safepoint mechanism during that window is unsafe, and why it redirects such a thread back to
++  // AbsoluteLoopTopAddress using exactly this end boundary.
++  DispatcherBlockLookupRangeEndAddress = GetCursorAddress<uint64_t>();
++
+   {
+     ThreadStopHandlerAddressSpillSRA = GetCursorAddress<uint64_t>();
+     SpillStaticRegs(TMP1);
+@@ -309,6 +327,14 @@ void Dispatcher::EmitDispatcher() {
+       FillStaticRegs();
+     });
+ 
++    // TMP1 may be a branch target inside code that was just compiled (or re-linked) by
++    // the call above, on iOS's dual-mapped RW/RX JIT scheme. Cache maintenance
++    // (ClearICache -> sys_icache_invalidate, see JIT.cpp/Allocator.cpp) should already
++    // include its own barriers, but this is the exact "compile/patch, then immediately
++    // branch to it" sequence that's been the hardest bug to fully close in this port, so
++    // an explicit ISB here is cheap, iOS-only-in-effect insurance against any remaining
++    // instruction-fetch-vs-cache-maintenance ordering gap on the executing core.
++    isb();
+     br(TMP1);
+   }
+ 
+@@ -343,7 +369,10 @@ void Dispatcher::EmitDispatcher() {
+       FillStaticRegs();
+     });
+ 
+-    // Jump to the compiled block
++    // Jump to the compiled block. TMP1 is a branch target inside code CompileBlock just
++    // finished writing (see the ExitFunctionLink path above's comment on why an explicit
++    // ISB is cheap insurance here specifically, on iOS's dual-mapped JIT scheme).
++    isb();
+     br(TMP1);
+   }
+ 
+@@ -376,7 +405,9 @@ void Dispatcher::EmitDispatcher() {
+       FillStaticRegs();
+     });
+ 
+-    // Jump to the compiled block
++    // Jump to the compiled block. Same just-compiled-then-immediately-branched-to
++    // ordering concern as the NoBlock/ExitFunctionLink paths above.
++    isb();
+     br(TMP1);
+   }
+ 
+@@ -477,7 +508,11 @@ void Dispatcher::EmitDispatcher() {
+     // On return to the thunk, the thunk can get whatever its return value is from the thread context depending on ABI handling on its end
+     // When the thunk itself returns, it'll do its regular return logic there
+     // void ReentrantCallback(FEXCore::Core::InternalThreadState *Thread, uint64_t RIP);
+-    CallbackPtr = GetCursorAddress<JITCallback>();
++    // CallbackPtr is invoked as a raw function pointer from ContextImpl::HandleCallback for
++    // thunk-reentrancy callbacks (GuestEngine::CallGuest), the same "escapes as a direct call
++    // target" pattern as DispatchPtr above, so it needs the same RW->RX translation.
++    CallbackPtr =
++        reinterpret_cast<JITCallback>(FEXCore::Allocator::GetExecutableAddress(GetCursorAddress<void*>()));
+ 
+     // We expect the thunk to have previously pushed the registers it was using
+     PushCalleeSavedRegisters();
+@@ -605,7 +640,18 @@ void Dispatcher::EmitDispatcher() {
+   dc64(PMFCompileSingleStep.GetConvertedPointer());
+ 
+   Start = reinterpret_cast<uint64_t>(DispatchPtr);
+-  End = GetCursorAddress<uint64_t>();
++  void* const DispatchRawEnd = GetCursorAddress<void*>();
++  // End is compared against a faulting thread's PC by the signal delegator, and on iOS a fault
++  // always lands on the executable (RX) side, so this boundary must be RX too, matching Start
++  // (already RX via DispatchPtr).
++  End = reinterpret_cast<uint64_t>(FEXCore::Allocator::GetExecutableAddress(DispatchRawEnd));
++
++  // Both aliases need clearing here, same reasoning as JIT.cpp's post-compile ClearICache: the
++  // dispatcher's bytes were written through the RW cursor (DispatchRawBegin/DispatchRawEnd), so
++  // that's the alias whose dirtied data-cache line actually needs flushing, while DispatchPtr/End
++  // (RX) is the alias later fetched from and needs any stale icache entries invalidated there.
++  ClearICache(DispatchRawBegin,
++              reinterpret_cast<uintptr_t>(DispatchRawEnd) - reinterpret_cast<uintptr_t>(DispatchRawBegin));
+   ClearICache(reinterpret_cast<void*>(DispatchPtr), End - reinterpret_cast<uint64_t>(DispatchPtr));
+ 
+   if (CTX->Config.BlockJITNaming()) {
+@@ -2611,7 +2657,24 @@ uint64_t Dispatcher::GenerateABICall(FallbackABI ABI) {
+   // Return to JIT
+   ret();
+ 
+-  return Address;
++  // Address is the write-side (RW) address GetCursorAddress() returned at the top of this
++  // function, same as every other named handler address in this file (F64SinHandlerAddress,
++  // ExitFunctionLinkerAddress, etc.) -- but unlike those, which all get translated via
++  // GetExecutableAddress() before being stored where JIT'd code can branch to them
++  // (InitThreadPointers's Ptrs.* assignments), this function's caller
++  // (Dispatcher::EmitDispatcher's `ABIPointers[ABI] = GenerateABICall(ABI);` loop) stores the
++  // return value directly into ABIPointers with no translation anywhere downstream:
++  // InterpreterOps::FillFallbackIndexPointers copies it verbatim into
++  // Pointers.FallbackHandlerPointers[...].ABIHandler, which JIT'd guest code then loads and
++  // calls directly (`ldr TMP1, STATE_PTR(..., ABIHandler); blr TMP1;`, see the F64FPREM1
++  // fallback just above as one example) for every F80/F64 transcendental-math fallback
++  // operation. Confirmed on-device: this is the actual source of a fault that looked like
++  // stale-JIT-buffer corruption but recurred identically after a full app relaunch with a
++  // freshly allocated dispatcher buffer -- a hot floating-point fallback path (plausible for
++  // any game doing significant world-gen/physics math) branching to this untranslated write
++  // address over and over, millions of times, each fixed for one instruction by
++  // TryRecoverJitAliasFault's signal-time recovery but never for the actual cached target.
++  return reinterpret_cast<uint64_t>(FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(Address)));
+ }
+ 
+ void Dispatcher::InitThreadPointers(FEXCore::Core::InternalThreadState* Thread) {
+@@ -2619,36 +2682,85 @@ void Dispatcher::InitThreadPointers(FEXCore::Core::InternalThreadState* Thread)
+   {
+     auto& Ptrs = Thread->CurrentFrame->Pointers;
+ 
+-    Ptrs.DispatcherLoopTop = AbsoluteLoopTopAddress;
+-    Ptrs.DispatcherLoopTopFillSRA = AbsoluteLoopTopAddressFillSRA;
+-    Ptrs.DispatcherLoopTopEnterEC = AbsoluteLoopTopAddressEnterEC;
+-    Ptrs.DispatcherLoopTopEnterECFillSRA = AbsoluteLoopTopAddressEnterECFillSRA;
+-    Ptrs.ExitFunctionLinker = ExitFunctionLinkerAddress;
+-    Ptrs.ThreadStopHandlerSpillSRA = ThreadStopHandlerAddressSpillSRA;
+-    Ptrs.ThreadPauseHandlerSpillSRA = ThreadPauseHandlerAddressSpillSRA;
+-    Ptrs.GuestSignal_SIGILL = GuestSignal_SIGILL;
+-    Ptrs.GuestSignal_SIGTRAP = GuestSignal_SIGTRAP;
+-    Ptrs.GuestSignal_SIGSEGV = GuestSignal_SIGSEGV;
+-    Ptrs.SignalReturnHandler = SignalHandlerReturnAddress;
+-    Ptrs.SignalReturnHandlerRT = SignalHandlerReturnAddressRT;
+-    Ptrs.LUDIVHandler = LUDIVHandlerAddress;
+-    Ptrs.LDIVHandler = LDIVHandlerAddress;
+-    Ptrs.F64SinHandler = F64SinHandlerAddress;
+-    Ptrs.F64CosHandler = F64CosHandlerAddress;
+-    Ptrs.F64TanHandler = F64TanHandlerAddress;
+-    Ptrs.F64F2XM1Handler = F64F2XM1HandlerAddress;
+-    Ptrs.F64ScaleHandler = F64ScaleHandlerAddress;
+-    Ptrs.F64AtanHandler = F64AtanHandlerAddress;
+-    Ptrs.F64FYL2XHandler = F64FYL2XHandlerAddress;
+-    Ptrs.F64FYL2XP1Handler = F64FYL2XP1HandlerAddress;
+-    Ptrs.F64FPREMHandler = F64FPREMHandlerAddress;
+-    Ptrs.F64FPREM1Handler = F64FPREM1HandlerAddress;
++    // All of these are branch/return targets reached directly from JIT-generated ARM64 code
++    // (dispatcher loop top, signal return, thread pause/stop, and the div/transcendental-math
++    // fallback ABI thunks). GetCursorAddress() above returned the write-side (RW) address the
++    // emitter used while generating this code; on iOS that's a different virtual address than
++    // the one that's actually executable, so every address that escapes here as something later
++    // branched to must be translated through GetExecutableAddress() first (identity elsewhere).
++    Ptrs.DispatcherLoopTop = reinterpret_cast<uint64_t>(
++        FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(AbsoluteLoopTopAddress)));
++    Ptrs.DispatcherBlockLookupRangeEnd = reinterpret_cast<uint64_t>(FEXCore::Allocator::GetExecutableAddress(
++        reinterpret_cast<void*>(DispatcherBlockLookupRangeEndAddress)));
++    Ptrs.DispatcherLoopTopFillSRA = reinterpret_cast<uint64_t>(FEXCore::Allocator::GetExecutableAddress(
++        reinterpret_cast<void*>(AbsoluteLoopTopAddressFillSRA)));
++    Ptrs.DispatcherLoopTopEnterEC = reinterpret_cast<uint64_t>(FEXCore::Allocator::GetExecutableAddress(
++        reinterpret_cast<void*>(AbsoluteLoopTopAddressEnterEC)));
++    Ptrs.DispatcherLoopTopEnterECFillSRA =
++        reinterpret_cast<uint64_t>(FEXCore::Allocator::GetExecutableAddress(
++            reinterpret_cast<void*>(AbsoluteLoopTopAddressEnterECFillSRA)));
++    Ptrs.ExitFunctionLinker = reinterpret_cast<uint64_t>(
++        FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(ExitFunctionLinkerAddress)));
++    Ptrs.ThreadStopHandlerSpillSRA = reinterpret_cast<uint64_t>(FEXCore::Allocator::GetExecutableAddress(
++        reinterpret_cast<void*>(ThreadStopHandlerAddressSpillSRA)));
++    Ptrs.ThreadPauseHandlerSpillSRA = reinterpret_cast<uint64_t>(FEXCore::Allocator::GetExecutableAddress(
++        reinterpret_cast<void*>(ThreadPauseHandlerAddressSpillSRA)));
++    Ptrs.GuestSignal_SIGILL = reinterpret_cast<uint64_t>(
++        FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(GuestSignal_SIGILL)));
++    Ptrs.GuestSignal_SIGTRAP = reinterpret_cast<uint64_t>(
++        FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(GuestSignal_SIGTRAP)));
++    Ptrs.GuestSignal_SIGSEGV = reinterpret_cast<uint64_t>(
++        FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(GuestSignal_SIGSEGV)));
++    Ptrs.SignalReturnHandler = reinterpret_cast<uint64_t>(
++        FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(SignalHandlerReturnAddress)));
++    Ptrs.SignalReturnHandlerRT = reinterpret_cast<uint64_t>(FEXCore::Allocator::GetExecutableAddress(
++        reinterpret_cast<void*>(SignalHandlerReturnAddressRT)));
++    Ptrs.LUDIVHandler = reinterpret_cast<uint64_t>(
++        FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(LUDIVHandlerAddress)));
++    Ptrs.LDIVHandler = reinterpret_cast<uint64_t>(
++        FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(LDIVHandlerAddress)));
++    Ptrs.F64SinHandler = reinterpret_cast<uint64_t>(
++        FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(F64SinHandlerAddress)));
++    Ptrs.F64CosHandler = reinterpret_cast<uint64_t>(
++        FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(F64CosHandlerAddress)));
++    Ptrs.F64TanHandler = reinterpret_cast<uint64_t>(
++        FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(F64TanHandlerAddress)));
++    Ptrs.F64F2XM1Handler = reinterpret_cast<uint64_t>(
++        FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(F64F2XM1HandlerAddress)));
++    Ptrs.F64ScaleHandler = reinterpret_cast<uint64_t>(
++        FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(F64ScaleHandlerAddress)));
++    Ptrs.F64AtanHandler = reinterpret_cast<uint64_t>(
++        FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(F64AtanHandlerAddress)));
++    Ptrs.F64FYL2XHandler = reinterpret_cast<uint64_t>(
++        FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(F64FYL2XHandlerAddress)));
++    Ptrs.F64FYL2XP1Handler = reinterpret_cast<uint64_t>(
++        FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(F64FYL2XP1HandlerAddress)));
++    Ptrs.F64FPREMHandler = reinterpret_cast<uint64_t>(
++        FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(F64FPREMHandlerAddress)));
++    Ptrs.F64FPREM1Handler = reinterpret_cast<uint64_t>(
++        FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(F64FPREM1HandlerAddress)));
+ 
+     // Fill in the fallback handlers
+     InterpreterOps::FillFallbackIndexPointers(Ptrs.FallbackHandlerPointers, &ABIPointers[0]);
+   }
+ }
+ 
++uint64_t Dispatcher::GetExitFunctionLinkerAddress() const {
++  return reinterpret_cast<uint64_t>(
++      FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(ExitFunctionLinkerAddress)));
++}
++
++Dispatcher::DiagnosticAddresses Dispatcher::GetDiagnosticAddresses() const {
++  return DiagnosticAddresses {
++    .DispatchPtr = reinterpret_cast<uint64_t>(DispatchPtr),
++    .Start = Start,
++    .End = End,
++    .ExitFunctionLinkerAddress = GetExitFunctionLinkerAddress(),
++    .DispatcherLoopTopAddress = reinterpret_cast<uint64_t>(
++        FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(AbsoluteLoopTopAddress))),
++  };
++}
++
+ SignalDelegatorConfig Dispatcher::MakeSignalDelegatorConfig() const {
+   // PF/AF are the final two SRA registers. We only want GPRs
+   const auto GPRCount = uint16_t(StaticRegisters.size() - 2);
+@@ -2670,22 +2782,30 @@ SignalDelegatorConfig Dispatcher::MakeSignalDelegatorConfig() const {
+     return Mapping;
+   };
+ 
++  // These addresses are all consumed by the signal delegator to recognize/redirect a faulting
++  // or resuming thread's PC, which on iOS is always an executable (RX) address, so each must be
++  // translated the same way as the InitThreadPointers targets above.
++  const auto ExecAddr = [](uint64_t WriteAddr) -> uint64_t {
++    return reinterpret_cast<uint64_t>(
++        FEXCore::Allocator::GetExecutableAddress(reinterpret_cast<void*>(WriteAddr)));
++  };
++
+   return FEXCore::SignalDelegatorConfig {
+     .DispatcherBegin = Start,
+     .DispatcherEnd = End,
+ 
+-    .AbsoluteLoopTopAddress = AbsoluteLoopTopAddress,
+-    .AbsoluteLoopTopAddressFillSRA = AbsoluteLoopTopAddressFillSRA,
+-    .SignalHandlerReturnAddress = SignalHandlerReturnAddress,
+-    .SignalHandlerReturnAddressRT = SignalHandlerReturnAddressRT,
++    .AbsoluteLoopTopAddress = ExecAddr(AbsoluteLoopTopAddress),
++    .AbsoluteLoopTopAddressFillSRA = ExecAddr(AbsoluteLoopTopAddressFillSRA),
++    .SignalHandlerReturnAddress = ExecAddr(SignalHandlerReturnAddress),
++    .SignalHandlerReturnAddressRT = ExecAddr(SignalHandlerReturnAddressRT),
+ 
+-    .PauseReturnInstruction = PauseReturnInstruction,
+-    .ThreadPauseHandlerAddressSpillSRA = ThreadPauseHandlerAddressSpillSRA,
+-    .ThreadPauseHandlerAddress = ThreadPauseHandlerAddress,
++    .PauseReturnInstruction = ExecAddr(PauseReturnInstruction),
++    .ThreadPauseHandlerAddressSpillSRA = ExecAddr(ThreadPauseHandlerAddressSpillSRA),
++    .ThreadPauseHandlerAddress = ExecAddr(ThreadPauseHandlerAddress),
+ 
+     // Stop handlers.
+-    .ThreadStopHandlerAddressSpillSRA = ThreadStopHandlerAddressSpillSRA,
+-    .ThreadStopHandlerAddress = ThreadStopHandlerAddress,
++    .ThreadStopHandlerAddressSpillSRA = ExecAddr(ThreadStopHandlerAddressSpillSRA),
++    .ThreadStopHandlerAddress = ExecAddr(ThreadStopHandlerAddress),
+ 
+     // SRA information.
+     .SRAGPRCount = GPRCount,
+diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h
+index b0f3d7a4..58864a4b 100644
+--- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h
++++ b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h
+@@ -55,9 +55,35 @@ public:
+   }
+ #endif
+ 
+-  uint64_t GetExitFunctionLinkerAddress() const {
+-    return ExitFunctionLinkerAddress;
+-  }
++  // Defined in Dispatcher.cpp (not inline here) since it needs FEXCore::Allocator's
++  // GetExecutableAddress, which AllocatorHooks.h isn't included in this header. This value
++  // gets embedded as an absolute literal into every compiled guest block (see
++  // Arm64Relocations.cpp's SYMBOL_LITERAL_EXITFUNCTION_LINKER) and later branched to as the
++  // block-linking exit stub, so on iOS it must be the executable (RX) address like every
++  // other escaping absolute pointer here -- ExitFunctionLinkerAddress itself is the raw
++  // write-side value captured via GetCursorAddress() during EmitDispatcher().
++  uint64_t GetExitFunctionLinkerAddress() const;
++
++  // Crash-diagnostic only: the dispatcher's own known-good, already-RX-translated entry
++  // addresses, for direct comparison against whatever is actually stored in a live thread's
++  // CpuStateFrame::Pointers at the moment of a crash (see BachataDumpDispatcherState in
++  // fex_guest_engine.cpp). DispatchPtr is the dispatcher's function entry point (its very
++  // first emitted byte); DispatcherLoopTopAddress is a separate label further into the same
++  // generated code, past the prologue -- these are two genuinely different addresses by
++  // construction (confirmed: ~0xa0 bytes apart in EmitDispatcher, matching AbsoluteLoopTop's
++  // Bind() coming after several prologue instructions), not two copies of the same value.
++  // Compare each live Pointers field against its OWN matching field here, never against
++  // DispatchPtr for anything but Pointers.DispatchPtr itself -- an earlier version of this
++  // comparison did exactly that (Live.DispatcherLoopTop vs Known.DispatchPtr) and reported a
++  // permanent, meaningless "MISMATCH" on every single run, real corruption or not.
++  struct DiagnosticAddresses {
++    uint64_t DispatchPtr;
++    uint64_t Start;
++    uint64_t End;
++    uint64_t ExitFunctionLinkerAddress;
++    uint64_t DispatcherLoopTopAddress;
++  };
++  DiagnosticAddresses GetDiagnosticAddresses() const;
+ 
+   SignalDelegatorConfig MakeSignalDelegatorConfig() const;
+ 
+@@ -76,6 +102,8 @@ private:
+   uint64_t ThreadStopHandlerAddress {};
+   uint64_t ThreadStopHandlerAddressSpillSRA {};
+   uint64_t AbsoluteLoopTopAddress {};
++  // See JITPointers::DispatcherBlockLookupRangeEnd (CoreState.h) for what this bounds.
++  uint64_t DispatcherBlockLookupRangeEndAddress {};
+   uint64_t AbsoluteLoopTopAddressFillSRA {};
+   uint64_t AbsoluteLoopTopAddressEnterEC {};
+   uint64_t AbsoluteLoopTopAddressEnterECFillSRA {};
+diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
+index 7c64dd83..542d9612 100644
+--- a/FEXCore/include/FEXCore/Core/CoreState.h
++++ b/FEXCore/include/FEXCore/Core/CoreState.h
+@@ -364,6 +364,16 @@ struct JITPointers {
+    * @name Dispatcher pointers
+    * @{ */
+   uint64_t DispatcherLoopTop {};
++  // End of DispatcherLoopTop's lock-free block-cache lookup routine (the hottest path in the
++  // JIT: read a cached guest->host mapping straight out of L1/L2 with no synchronization at
++  // all, then branch directly to the cached host address). A thread interrupted anywhere in
++  // [DispatcherLoopTop, DispatcherBlockLookupRangeEnd) may already hold that cached address in
++  // a register with the branch to it still pending -- see SafepointSignalHandler's own comment
++  // (fex_guest_engine.cpp) for why that's unsafe specifically during a JIT buffer reuse, and why
++  // redirecting back to DispatcherLoopTop from anywhere in this range is always safe (the
++  // routine has no observable side effect before its final branch, so redoing it from scratch
++  // loses nothing).
++  uint64_t DispatcherBlockLookupRangeEnd {};
+   uint64_t DispatcherLoopTopFillSRA {};
+   uint64_t DispatcherLoopTopEnterEC {};
+   uint64_t DispatcherLoopTopEnterECFillSRA {};
