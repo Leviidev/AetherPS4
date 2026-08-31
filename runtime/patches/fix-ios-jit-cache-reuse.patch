@@ -334,10 +334,10 @@ index b872b6ff..a46d99bf 100644
  #ifdef VIXL_DISASSEMBLER
    if (Disassemble() & FEXCore::Config::Disassemble::STATS) {
 diff --git a/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp b/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
-index d555e064..039b7493 100644
+index d555e064..92d483e5 100644
 --- a/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
-@@ -189,6 +189,23 @@ DEF_OP(ExitFunction) {
+@@ -189,6 +189,33 @@ DEF_OP(ExitFunction) {
      ARMEmitter::ForwardLabel SkipFullLookup;
      auto RipReg = GetReg(Op->NewRIP);
  
@@ -353,15 +353,25 @@ index d555e064..039b7493 100644
 +    // only ever route through this indirect path, never the other two. TMP3 is unused elsewhere
 +    // in this function's indirect-branch handling, so it's safe as the snapshot register across
 +    // everything below, regardless of which of the three branch kinds (call/return/jump) is taken.
-+    ARMEmitter::ForwardLabel SkipComputedBranchGenerationCheck;
++    //
++    // ComputedBranchGenerationUnwired guards ONLY the dereference on the next line (can't safely
++    // dereference a null ReuseGenerationCounterAddress) -- it must never skip past the shadow
++    // stack / L1 lookup logic below. An earlier version of this check used one label for both
++    // "unwired, skip the whole mechanism" and "skip just the re-check at the end", which for the
++    // *unwired* case jumped straight past the entire original lookup, leaving TMP2 completely
++    // uninitialized before the final call/return/jump -- confirmed on-device as a new,
++    // unrelated-looking crash (garbage register values, fault address 0x0) that had nothing to
++    // do with JIT reuse at all, introduced by this fix itself.
++    ARMEmitter::ForwardLabel ComputedBranchGenerationUnwired;
 +    ldr(TMP3, STATE_PTR(CpuStateFrame, Pointers.ReuseGenerationCounterAddress));
-+    (void)cbz(ARMEmitter::Size::i64Bit, TMP3, &SkipComputedBranchGenerationCheck);
++    (void)cbz(ARMEmitter::Size::i64Bit, TMP3, &ComputedBranchGenerationUnwired);
 +    ldr(TMP3, TMP3, 0);
++    (void)Bind(&ComputedBranchGenerationUnwired);
 +
      if (Op->Hint == IR::BranchHint::Return) {
        // First try to pop from the call-ret stack, otherwise follow the normal path (but ending in a ret)
        ldp<ARMEmitter::IndexType::POST>(TMP1, TMP2, REG_CALLRET_SP, 0x10);
-@@ -213,6 +230,22 @@ DEF_OP(ExitFunction) {
+@@ -213,6 +240,30 @@ DEF_OP(ExitFunction) {
      str(RipReg.X(), STATE, offsetof(FEXCore::Core::CpuStateFrame, State.rip));
  
      (void)Bind(&SkipFullLookup);
@@ -373,14 +383,22 @@ index d555e064..039b7493 100644
 +    // Safe unconditionally, same reasoning as the other two checks of this kind -- and TMP1 is
 +    // free to reuse here regardless of which path led to this point (none of the three branch
 +    // kinds below rely on its value surviving from earlier in this function).
++    //
++    // Re-loads and re-checks ReuseGenerationCounterAddress itself here rather than reusing TMP3's
++    // zero-ness, deliberately: TMP3 legitimately reads as 0 both when unwired (nothing to compare
++    // against) AND when wired but no reuse cycle has happened yet this session (a real, valid
++    // snapshot that just happens to be 0) -- conflating those would skip this whole check for
++    // that second, perfectly normal case.
++    ARMEmitter::ForwardLabel SkipComputedBranchRecheck;
 +    ldr(TMP1, STATE_PTR(CpuStateFrame, Pointers.ReuseGenerationCounterAddress));
++    (void)cbz(ARMEmitter::Size::i64Bit, TMP1, &SkipComputedBranchRecheck);
 +    ldr(TMP1, TMP1, 0);
 +    sub(TMP1, TMP1, TMP3);
-+    (void)cbz(ARMEmitter::Size::i64Bit, TMP1, &SkipComputedBranchGenerationCheck);
++    (void)cbz(ARMEmitter::Size::i64Bit, TMP1, &SkipComputedBranchRecheck);
 +    ldr(TMP2, STATE_PTR(CpuStateFrame, Pointers.DispatcherLoopTop));
 +    str(RipReg.X(), STATE, offsetof(FEXCore::Core::CpuStateFrame, State.rip));
 +
-+    (void)Bind(&SkipComputedBranchGenerationCheck);
++    (void)Bind(&SkipComputedBranchRecheck);
      if (Op->Hint == IR::BranchHint::Call) {
        ARMEmitter::ForwardLabel l_CallReturn;
        if (!Op->CallReturnBlock.IsInvalid()) {
@@ -664,7 +682,7 @@ index bf958d80..68cef7d1 100644
    void CacheBlockMapping(uint64_t Address, const GuestToHostMap::BlockEntry& Entry, bool L1Only, const LookupCacheBaseLockToken& lk) {
      for (const auto& CodePage : Entry.CodePages) {
 diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
-index 19719c2b..43455835 100644
+index 19719c2b..c422199d 100644
 --- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
 @@ -64,7 +64,15 @@ void Dispatcher::EmitDispatcher() {
@@ -684,7 +702,7 @@ index 19719c2b..43455835 100644
  
    // while (true) {
    //    Ptr = FindBlock(RIP)
-@@ -212,6 +220,18 @@ void Dispatcher::EmitDispatcher() {
+@@ -212,6 +220,28 @@ void Dispatcher::EmitDispatcher() {
        // Shift the offset by the size of the block cache entry
        add(TMP1, TMP1, TMP2, ARMEmitter::ShiftType::LSL, FEXCore::ilog2(sizeof(LookupCache::LookupCacheEntry)));
  
@@ -695,15 +713,25 @@ index 19719c2b..43455835 100644
 +      // ExitFunctionLink-equivalent to piggyback a validated value on, so both the "before" and
 +      // "after" reads have to happen entirely within this routine. TMP3 is unused elsewhere in
 +      // this routine, so it's safe as a snapshot register across everything below.
-+      ARMEmitter::ForwardLabel SkipBlockLookupGenerationCheck;
++      //
++      // BlockLookupGenerationUnwired guards ONLY the dereference on the next line (can't safely
++      // dereference a null ReuseGenerationCounterAddress) -- it must never skip past the actual
++      // lookup logic below. An earlier version of this check used one label for both "unwired,
++      // skip the whole mechanism" and "skip just my own re-check at the end", which for the
++      // *unwired* case jumped straight past the entire original lookup (the ldp/sub/cbnz/cbz/L1
++      // update sequence below), leaving TMP4 completely uninitialized before the final `br` --
++      // confirmed on-device as a new, unrelated-looking crash (garbage register values, fault
++      // address 0x0) that had nothing to do with JIT reuse at all, introduced by this fix itself.
++      ARMEmitter::ForwardLabel BlockLookupGenerationUnwired;
 +      ldr(TMP3, STATE_PTR(CpuStateFrame, Pointers.ReuseGenerationCounterAddress));
-+      (void)cbz(ARMEmitter::Size::i64Bit, TMP3, &SkipBlockLookupGenerationCheck);
++      (void)cbz(ARMEmitter::Size::i64Bit, TMP3, &BlockLookupGenerationUnwired);
 +      ldr(TMP3, TMP3, 0);
++      (void)Bind(&BlockLookupGenerationUnwired);
 +
        // The the full LookupCacheEntry with a single LDP.
        // Check the guest address first to ensure it maps to the address we are currently at.
        // This fixes aliasing problems
-@@ -236,12 +256,38 @@ void Dispatcher::EmitDispatcher() {
+@@ -236,12 +266,46 @@ void Dispatcher::EmitDispatcher() {
  
          stp<ARMEmitter::IndexType::OFFSET>(TMP4, RipReg, TMP1);
  
@@ -716,13 +744,21 @@ index 19719c2b..43455835 100644
 +        // trusting TMP4 -- safe unconditionally, since nothing above this point has any guest- or
 +        // host-visible side effect (the L1 cache write just above is host-only bookkeeping,
 +        // harmlessly stale/overwritten by whatever this retry finds).
++        //
++        // Re-loads and re-checks ReuseGenerationCounterAddress itself here rather than reusing
++        // TMP3's zero-ness, deliberately: TMP3 legitimately reads as 0 both when unwired (nothing
++        // to compare against) AND when wired but no reuse cycle has happened yet this session (a
++        // real, valid snapshot that just happens to be 0) -- conflating those would skip this
++        // whole check for that second, perfectly normal case.
++        ARMEmitter::ForwardLabel SkipBlockLookupRecheck;
 +        ldr(TMP1, STATE_PTR(CpuStateFrame, Pointers.ReuseGenerationCounterAddress));
++        (void)cbz(ARMEmitter::Size::i64Bit, TMP1, &SkipBlockLookupRecheck);
 +        ldr(TMP1, TMP1, 0);
 +        sub(TMP1, TMP1, TMP3);
-+        (void)cbz(ARMEmitter::Size::i64Bit, TMP1, &SkipBlockLookupGenerationCheck);
++        (void)cbz(ARMEmitter::Size::i64Bit, TMP1, &SkipBlockLookupRecheck);
 +        ldr(TMP4, STATE_PTR(CpuStateFrame, Pointers.DispatcherLoopTop));
 +
-+        (void)Bind(&SkipBlockLookupGenerationCheck);
++        (void)Bind(&SkipBlockLookupRecheck);
          // Jump to the block
          br(TMP4);
        }
@@ -742,7 +778,7 @@ index 19719c2b..43455835 100644
    {
      ThreadStopHandlerAddressSpillSRA = GetCursorAddress<uint64_t>();
      SpillStaticRegs(TMP1);
-@@ -309,7 +355,52 @@ void Dispatcher::EmitDispatcher() {
+@@ -309,7 +373,52 @@ void Dispatcher::EmitDispatcher() {
        FillStaticRegs();
      });
  
@@ -795,7 +831,7 @@ index 19719c2b..43455835 100644
    }
  
    // Need to create the block
-@@ -343,7 +434,10 @@ void Dispatcher::EmitDispatcher() {
+@@ -343,7 +452,10 @@ void Dispatcher::EmitDispatcher() {
        FillStaticRegs();
      });
  
@@ -807,7 +843,7 @@ index 19719c2b..43455835 100644
      br(TMP1);
    }
  
-@@ -376,7 +470,9 @@ void Dispatcher::EmitDispatcher() {
+@@ -376,7 +488,9 @@ void Dispatcher::EmitDispatcher() {
        FillStaticRegs();
      });
  
@@ -818,7 +854,7 @@ index 19719c2b..43455835 100644
      br(TMP1);
    }
  
-@@ -477,7 +573,11 @@ void Dispatcher::EmitDispatcher() {
+@@ -477,7 +591,11 @@ void Dispatcher::EmitDispatcher() {
      // On return to the thunk, the thunk can get whatever its return value is from the thread context depending on ABI handling on its end
      // When the thunk itself returns, it'll do its regular return logic there
      // void ReentrantCallback(FEXCore::Core::InternalThreadState *Thread, uint64_t RIP);
@@ -831,7 +867,7 @@ index 19719c2b..43455835 100644
  
      // We expect the thunk to have previously pushed the registers it was using
      PushCalleeSavedRegisters();
-@@ -605,7 +705,18 @@ void Dispatcher::EmitDispatcher() {
+@@ -605,7 +723,18 @@ void Dispatcher::EmitDispatcher() {
    dc64(PMFCompileSingleStep.GetConvertedPointer());
  
    Start = reinterpret_cast<uint64_t>(DispatchPtr);
@@ -851,7 +887,7 @@ index 19719c2b..43455835 100644
    ClearICache(reinterpret_cast<void*>(DispatchPtr), End - reinterpret_cast<uint64_t>(DispatchPtr));
  
    if (CTX->Config.BlockJITNaming()) {
-@@ -2611,7 +2722,24 @@ uint64_t Dispatcher::GenerateABICall(FallbackABI ABI) {
+@@ -2611,7 +2740,24 @@ uint64_t Dispatcher::GenerateABICall(FallbackABI ABI) {
    // Return to JIT
    ret();
  
@@ -877,7 +913,7 @@ index 19719c2b..43455835 100644
  }
  
  void Dispatcher::InitThreadPointers(FEXCore::Core::InternalThreadState* Thread) {
-@@ -2619,36 +2747,90 @@ void Dispatcher::InitThreadPointers(FEXCore::Core::InternalThreadState* Thread)
+@@ -2619,36 +2765,90 @@ void Dispatcher::InitThreadPointers(FEXCore::Core::InternalThreadState* Thread)
    {
      auto& Ptrs = Thread->CurrentFrame->Pointers;
  
@@ -992,7 +1028,7 @@ index 19719c2b..43455835 100644
  SignalDelegatorConfig Dispatcher::MakeSignalDelegatorConfig() const {
    // PF/AF are the final two SRA registers. We only want GPRs
    const auto GPRCount = uint16_t(StaticRegisters.size() - 2);
-@@ -2670,22 +2852,30 @@ SignalDelegatorConfig Dispatcher::MakeSignalDelegatorConfig() const {
+@@ -2670,22 +2870,30 @@ SignalDelegatorConfig Dispatcher::MakeSignalDelegatorConfig() const {
      return Mapping;
    };
  
