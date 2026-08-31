@@ -113,6 +113,44 @@ index e374d85..0764d29 100644
  
    // returns false if a handler was already registered
    std::optional<CustomIRResult>
+diff --git a/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp b/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp
+index 8856b44..73fb0e9 100644
+--- a/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp
++++ b/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp
+@@ -73,11 +73,33 @@ namespace x64 {
+     ARMEmitter::Reg::r8, ARMEmitter::Reg::r16, ARMEmitter::Reg::r17,
+   };
+ 
++#if defined(__APPLE__)
++  // On Apple platforms x18 is reserved by the OS as the "platform register": the kernel,
++  // signal delivery, and other system runtime code are documented as free to clobber it at any
++  // time, independent of anything the running code itself does. Upstream FEX includes it in this
++  // pool unconditionally (fine on Linux/Android, which impose no such reservation), so a value
++  // FEX's own register allocator assigns to x18 here can read back silently corrupted moments
++  // after being computed. Confirmed on-device via a 100%-reproducible Rocket League crash: a
++  // compiled RIP-relative-address computation (mov/movk/movk) into x18, immediately followed by
++  // a store through it (stlur), where the disassembled code at the fault is unambiguously
++  // correct -- x18 loaded with a valid non-null guest address right before the store -- yet the
++  // store faults writing to address 0. The block that triggers it executes this exact
++  // compute-into-x18-then-store pattern hundreds of times in a row, which is consistent with a
++  // rare, timing-dependent OS clobber rather than a compile-time miscalculation (the same
++  // pattern was byte-for-byte identical between compile time and crash time, ruling out a JIT
++  // buffer/memory bug). Excluding x18 from the allocatable pool entirely removes the exposure.
++  constexpr std::array<ARMEmitter::Register, 6> RA = {
++    // All these callee saved
++    ARMEmitter::Reg::r20, ARMEmitter::Reg::r21, ARMEmitter::Reg::r22, ARMEmitter::Reg::r23,
++    ARMEmitter::Reg::r24, ARMEmitter::Reg::r30,
++  };
++#else
+   constexpr std::array<ARMEmitter::Register, 7> RA = {
+     // All these callee saved
+     ARMEmitter::Reg::r20, ARMEmitter::Reg::r21, ARMEmitter::Reg::r22, ARMEmitter::Reg::r23,
+     ARMEmitter::Reg::r24, ARMEmitter::Reg::r30, ARMEmitter::Reg::r18,
+   };
++#endif
+ 
+   constexpr unsigned RAPairs = 4;
+ 
 diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
 index b9aa740..dba3057 100644
 --- a/FEXCore/Source/Interface/Core/Core.cpp
