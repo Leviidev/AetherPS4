@@ -50,6 +50,13 @@ public:
             return ORBIS_KERNEL_ERROR_EPERM;
         }
 
+        // Deliberately unconditional (not gated behind a debug log level): sceKernelWaitEventFlag
+        // logs on entry already, but never on success and never with which event flag object is
+        // involved -- indistinguishable from a stuck wait if the game has more than one event
+        // flag in flight (UE4's RenderThread/RHIThread readiness handshakes commonly use these).
+        LOG_INFO(Kernel_Event, "BACHATA_EVENTFLAG_WAIT: ef={} bits={:#x} waitmode={} infinite={}",
+                 m_name, bits, wait_mode == WaitMode::And ? "AND" : "OR", infinitely);
+
         auto const start = std::chrono::system_clock::now();
         m_waiting_threads++;
         auto waitFunc = [this, wait_mode, bits] {
@@ -67,10 +74,13 @@ public:
                 }
                 *ptr_micros = 0;
                 --m_waiting_threads;
+                LOG_INFO(Kernel_Event, "BACHATA_EVENTFLAG_WAIT_RETURN: ef={} -- timed out", m_name);
                 return ORBIS_KERNEL_ERROR_ETIMEDOUT;
             }
         }
         --m_waiting_threads;
+        LOG_INFO(Kernel_Event, "BACHATA_EVENTFLAG_WAIT_RETURN: ef={} -- woken, bits now {:#x}",
+                 m_name, m_bits);
         if (result != nullptr) {
             *result = m_bits;
         }
@@ -121,6 +131,8 @@ public:
         }
 
         m_bits |= bits;
+        LOG_INFO(Kernel_Event, "BACHATA_EVENTFLAG_SET: ef={} bits={:#x} bits_now={:#x} waiters={}",
+                 m_name, bits, m_bits, m_waiting_threads);
         m_cond_var.notify_all();
     }
 

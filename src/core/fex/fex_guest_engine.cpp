@@ -186,32 +186,52 @@ std::atomic<int64_t> g_last_hle_operation_start_ms {0};
 std::atomic<int64_t> g_last_hle_operation_logged_start_ms {-1};
 std::atomic<bool> g_hle_stall_watchdog_started {false};
 
+// Second, identically-structured slot for RenderingThread -- added after Rocket League was
+// confirmed (via BACHATA_SAFEPOINT thread lists and manual log inspection) to spawn a real
+// UE4 RenderingThread that went silent at the exact same point Game:Main did, right after
+// engine init finished ("Initializing Engine..." in the log) and before the first tick. The
+// original single-slot design deliberately only watched Game:Main (see the comment below) to
+// avoid worker threads clobbering it; RenderingThread is, like Game:Main, a single well-known
+// thread worth its own dedicated slot for the same reason, not one of the many interchangeable
+// pool workers.
+std::atomic<uint64_t> g_last_hle_operation_rt {0};
+std::atomic<int64_t> g_last_hle_operation_start_ms_rt {0};
+std::atomic<int64_t> g_last_hle_operation_logged_start_ms_rt {-1};
+
 void HleStallWatchdogThread() {
   for (;;) {
     std::this_thread::sleep_for(std::chrono::seconds(3));
-    const auto start_ms = g_last_hle_operation_start_ms.load(std::memory_order_acquire);
-    if (start_ms == 0) {
-      continue;
+    for (int which = 0; which < 2; ++which) {
+      auto& start_ms_slot = which == 0 ? g_last_hle_operation_start_ms : g_last_hle_operation_start_ms_rt;
+      auto& logged_slot =
+        which == 0 ? g_last_hle_operation_logged_start_ms : g_last_hle_operation_logged_start_ms_rt;
+      auto& op_slot = which == 0 ? g_last_hle_operation : g_last_hle_operation_rt;
+      const char* who = which == 0 ? "Game:Main" : "RenderingThread";
+
+      const auto start_ms = start_ms_slot.load(std::memory_order_acquire);
+      if (start_ms == 0) {
+        continue;
+      }
+      const auto elapsed_ms = Common::BootElapsedMs() - start_ms;
+      // 3s: comfortably above any legitimate single HLE call's normal cost (even the slowest
+      // ones logged elsewhere in this codebase, e.g. GetHostPath's directory scans, finish in
+      // well under a second), so this only fires for a call that's genuinely stuck, not merely
+      // busy.
+      if (elapsed_ms < 3000) {
+        continue;
+      }
+      // Dedup by start_ms, not a bool: a *different* call stalling later (new start_ms) after an
+      // earlier one was already logged should still get its own log line.
+      auto already_logged = logged_slot.load(std::memory_order_acquire);
+      if (already_logged == start_ms) {
+        continue;
+      }
+      logged_slot.store(start_ms, std::memory_order_release);
+      LogMan::Msg::EFmt("BACHATA_HLE_STALL: thread={} operation={} has been in-flight for {}ms "
+                        "without returning -- cross-reference against this log's own "
+                        "BACHATA_FEX_VENEER lines for this operation number to find its name",
+                        who, op_slot.load(std::memory_order_acquire), elapsed_ms);
     }
-    const auto elapsed_ms = Common::BootElapsedMs() - start_ms;
-    // 3s: comfortably above any legitimate single HLE call's normal cost (even the slowest
-    // ones logged elsewhere in this codebase, e.g. GetHostPath's directory scans, finish in
-    // well under a second), so this only fires for a call that's genuinely stuck, not merely
-    // busy.
-    if (elapsed_ms < 3000) {
-      continue;
-    }
-    // Dedup by start_ms, not a bool: a *different* call stalling later (new start_ms) after an
-    // earlier one was already logged should still get its own log line.
-    auto already_logged = g_last_hle_operation_logged_start_ms.load(std::memory_order_acquire);
-    if (already_logged == start_ms) {
-      continue;
-    }
-    g_last_hle_operation_logged_start_ms.store(start_ms, std::memory_order_release);
-    LogMan::Msg::EFmt("BACHATA_HLE_STALL: operation={} has been in-flight for {}ms without "
-                      "returning -- cross-reference against this log's own "
-                      "BACHATA_FEX_VENEER lines for this operation number to find its name",
-                      g_last_hle_operation.load(std::memory_order_acquire), elapsed_ms);
   }
 }
 
@@ -242,7 +262,61 @@ bool IsCurrentThreadGameMain() {
   return cached != 0;
 }
 
-void SafepointSignalHandler(int) noexcept {
+// See g_last_hle_operation_rt's own comment for why this thread gets the same treatment as
+// Game:Main. Unlike Game:Main (renamed from a fixed name at guest-thread creation, checked once
+// before any guest code runs), RenderingThread is a name UE4 itself assigns to a pthread it
+// spawns partway through boot -- this can't cache a permanent answer on a thread's very first
+// HLE call the way IsCurrentThreadGameMain does, since the *name itself* isn't set yet at that
+// point for other threads that later rename themselves. Re-checking the name (cheap: one
+// pthread_getname_np, no allocation) on every call is the correct tradeoff here.
+bool IsCurrentThreadRenderingThread() {
+  char name[64] = {};
+  pthread_getname_np(pthread_self(), name, sizeof(name));
+  return std::strcmp(name, "RenderingThread") == 0;
+}
+
+void SafepointSignalHandler(int, siginfo_t*, void* rawContext) noexcept {
+  // If this thread was interrupted inside either of two lock-free dispatcher routines, it may
+  // already have a soon-to-be-reused host code address loaded into a register with the branch
+  // to it still pending:
+  //  - DispatcherLoopTop's block-cache lookup (Dispatcher.cpp): reads a cached guest->host
+  //    mapping straight out of L1/L2 with no synchronization at all -- the single hottest path
+  //    in the entire JIT, executed on every guest dispatch.
+  //  - ExitFunctionLinker (Dispatcher.cpp): calls into the C++ ExitFunctionLink (JIT.cpp,
+  //    already re-validates the value it hands back under CodeInvalidationMutex before
+  //    returning), then takes that return value in TMP1 and branches straight to it a few
+  //    instructions later with no lock or synchronization of its own -- a second instance of
+  //    the same hazard, just in the assembly glue around the call instead of inside it.
+  // Neither routine's lock-free design is itself the bug -- pausing a thread mid-lookup is
+  // exactly as safe as pausing it mid-execution of an already-linked branch, PROVIDED nothing
+  // it's already holding in a register goes stale while it's frozen. Every other gap this
+  // safepoint mechanism closes protects *memory* (delinking branches, clearing lookup caches)
+  // or *ordering* (CodeInvalidationMutex acquired before the pause opens) -- none of that
+  // reaches a value already sitting in a register. Confirmed on-device as the remaining source
+  // of the "instruction-fetch fault, not inside any currently-live JIT allocation" crash even
+  // after every other known gap in this mechanism was fixed: both faulting threads' saved link
+  // registers pointed into the dispatcher's own tiny, fixed code range, and their actual fault
+  // PCs were addresses the LookupCache had already forgotten -- exactly what resuming with a
+  // stale cached address and then executing the pending branch produces. Redirecting PC back to
+  // DispatcherLoopTop is safe from anywhere in either range: DispatcherLoopTop's own routine has
+  // no observable side effect before its final branch, so redoing it from scratch loses nothing,
+  // and ExitFunctionLink (JIT.cpp) now sets Frame->State.rip to the real target before every
+  // return specifically so a DispatcherLoopTop redirect from within ExitFunctionLinker's range
+  // lands on the correct guest RIP instead of whatever RIP was active before this call began.
+  if (ActiveFexExecution.Thread != nullptr && rawContext != nullptr) {
+    auto& Ptrs = ActiveFexExecution.Thread->CurrentFrame->Pointers;
+    auto* context = reinterpret_cast<ucontext_t*>(rawContext);
+    auto& ts = context->uc_mcontext->__ss;
+    const auto pc = arm_thread_state64_get_pc(ts);
+    const bool InBlockLookup =
+      Ptrs.DispatcherBlockLookupRangeEnd != 0 && pc >= Ptrs.DispatcherLoopTop && pc < Ptrs.DispatcherBlockLookupRangeEnd;
+    const bool InExitFunctionLinker =
+      Ptrs.ExitFunctionLinkerRangeEnd != 0 && pc >= Ptrs.ExitFunctionLinker && pc < Ptrs.ExitFunctionLinkerRangeEnd;
+    if (InBlockLookup || InExitFunctionLinker) {
+      arm_thread_state64_set_pc_fptr(ts, reinterpret_cast<void*>(Ptrs.DispatcherLoopTop));
+    }
+  }
+
   g_safepoint_paused_count.fetch_add(1, std::memory_order_acq_rel);
   while (!g_safepoint_resume.load(std::memory_order_acquire)) {
     sched_yield();
@@ -256,14 +330,16 @@ void EnsureSafepointHandlerInstalled() noexcept {
     return;
   }
   struct sigaction action {};
-  action.sa_handler = SafepointSignalHandler;
+  action.sa_sigaction = SafepointSignalHandler;
   sigemptyset(&action.sa_mask);
   // Deliberately no SA_RESTART: a thread parked in a blocking host syscall isn't executing
   // guest code and so isn't at risk from a buffer reuse anyway (see the bounded-wait comment
   // at the call site below) -- but if it DOES get interrupted, EINTR is the normal, already-
   // handled outcome elsewhere in this codebase, safer than silently swallowing the signal
-  // until the syscall eventually returns on its own.
-  action.sa_flags = 0;
+  // until the syscall eventually returns on its own. SA_SIGINFO is required now (rather than
+  // the plain sa_handler this used before) to reach the interrupted thread's saved PC -- see
+  // the handler's own comment for why.
+  action.sa_flags = SA_SIGINFO;
   sigaction(kSafepointSignal, &action, nullptr);
 }
 
@@ -1037,10 +1113,13 @@ public:
       hleFrame.xmm[index] = {frame->State.xmm.sse.data[index][0], frame->State.xmm.sse.data[index][1]};
     }
     const bool is_main = IsCurrentThreadGameMain();
-    if (is_main) {
+    const bool is_rt = !is_main && IsCurrentThreadRenderingThread();
+    if (is_main || is_rt) {
       EnsureHleStallWatchdogStarted();
-      g_last_hle_operation.store(hleFrame.operation, std::memory_order_relaxed);
-      g_last_hle_operation_start_ms.store(Common::BootElapsedMs(), std::memory_order_relaxed);
+      auto& op_slot = is_main ? g_last_hle_operation : g_last_hle_operation_rt;
+      auto& start_slot = is_main ? g_last_hle_operation_start_ms : g_last_hle_operation_start_ms_rt;
+      op_slot.store(hleFrame.operation, std::memory_order_relaxed);
+      start_slot.store(Common::BootElapsedMs(), std::memory_order_relaxed);
     }
     auto result = Bridge.Invoke(hleFrame);
     // Only meaningful while this exact call is still in flight; once it returns (here, on
@@ -1049,8 +1128,9 @@ public:
     // arbitrarily far in the future if this thread goes on to block in a signal handler or
     // elsewhere before making another HLE call -- clearing it here, right as this call
     // completes, is what actually matters.
-    if (is_main) {
-      g_last_hle_operation_start_ms.store(0, std::memory_order_relaxed);
+    if (is_main || is_rt) {
+      auto& start_slot = is_main ? g_last_hle_operation_start_ms : g_last_hle_operation_start_ms_rt;
+      start_slot.store(0, std::memory_order_relaxed);
     }
     if (const auto* error = std::get_if<EngineFailure>(&result)) {
       invocation->Failure = *error;

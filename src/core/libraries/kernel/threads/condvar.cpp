@@ -3,6 +3,7 @@
 
 #include <cstring>
 #include "common/assert.h"
+#include "common/logging/log.h"
 #include "core/libraries/kernel/kernel.h"
 #include "core/libraries/kernel/posix_error.h"
 #include "core/libraries/kernel/threads/pthread.h"
@@ -100,6 +101,14 @@ int PthreadCond::Wait(PthreadMutexT* mutex, const OrbisKernelTimespec* abstime, 
     }
 
     Pthread* curthread = g_curthread;
+    // Deliberately unconditional (not gated behind a debug log level): this is one of the most
+    // common UE4 cross-thread readiness handshakes (RenderThread/GameThread signaling each
+    // other via a condvar) and, until this logging existed, a stuck wait here produced zero log
+    // output at all -- indistinguishable from any other cause of "the game went quiet". Cheap
+    // (one line per wait/wake, not per spin) and directly answers "what is this thread blocked
+    // on" the next time that happens.
+    LOG_INFO(Kernel_Pthread, "BACHATA_CONDVAR_WAIT: cond={} thread={} abstime={} usec={}",
+             this->name, curthread->name, abstime != nullptr, usec);
     ASSERT_MSG(curthread->wchan == nullptr, "Thread was already on queue.");
     // _thr_testcancel(curthread);
     SleepqLock(this);
@@ -150,6 +159,8 @@ int PthreadCond::Wait(PthreadMutexT* mutex, const OrbisKernelTimespec* abstime, 
     if (error == 0) {
         error = error2;
     }
+    LOG_INFO(Kernel_Pthread, "BACHATA_CONDVAR_WAIT_RETURN: cond={} thread={} error={}", this->name,
+             curthread->name, error);
     return error;
 }
 
@@ -192,9 +203,19 @@ int PthreadCond::Signal(Pthread* thread) {
     SleepqLock(this);
     SleepQueue* sq = SleepqLookup(this);
     if (sq == nullptr) {
+        // No thread is currently waiting on this condvar -- see this function's own comment
+        // (BACHATA_CONDVAR_WAIT log site) for why that's worth knowing: if a signal meant to
+        // wake a specific handshake arrives before the other side has started waiting, this is
+        // exactly what that missed wakeup looks like from here (though PthreadCond::Wait sets
+        // has_user_waiters before ever unlocking its mutex, so a genuine race window this narrow
+        // would itself be a distinct finding worth chasing if seen paired with a stuck Wait).
+        LOG_INFO(Kernel_Pthread, "BACHATA_CONDVAR_SIGNAL: cond={} thread={} -- no waiter", this->name,
+                 curthread->name);
         SleepqUnlock(this);
         return 0;
     }
+    LOG_INFO(Kernel_Pthread, "BACHATA_CONDVAR_SIGNAL: cond={} thread={} -- waking one waiter",
+             this->name, curthread->name);
 
     Pthread* td = thread ? thread : sq->sq_blocked.front();
 
@@ -255,6 +276,8 @@ int PthreadCond::Broadcast() {
     SleepqLock(this);
     SleepQueue* sq = SleepqLookup(this);
     if (sq == nullptr) {
+        LOG_INFO(Kernel_Pthread, "BACHATA_CONDVAR_BROADCAST: cond={} thread={} -- no waiter",
+                 this->name, ba.curthread->name);
         SleepqUnlock(this);
         return 0;
     }
@@ -263,6 +286,8 @@ int PthreadCond::Broadcast() {
     has_user_waiters = false;
     SleepqUnlock(this);
 
+    LOG_INFO(Kernel_Pthread, "BACHATA_CONDVAR_BROADCAST: cond={} thread={} -- waking {} waiter(s)",
+             this->name, ba.curthread->name, ba.count);
     for (int i = 0; i < ba.count; i++) {
         ba.waddrs[i]->release();
     }

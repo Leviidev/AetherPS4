@@ -50,6 +50,14 @@ public:
             return ORBIS_KERNEL_ERROR_ETIMEDOUT;
         }
 
+        // Deliberately unconditional (not gated behind a debug log level): a common UE4
+        // cross-thread readiness handshake, and until this logging existed a stuck wait here
+        // produced zero log output -- indistinguishable from any other cause of "the game went
+        // quiet". Cheap (one line per genuine block, not per spin).
+        LOG_INFO(Kernel_Pthread, "BACHATA_SEMA_WAIT: sema={} thread={} need={} have={} timeout={}",
+                 name, g_curthread ? g_curthread->name : "?", need_count, token_count.load(),
+                 timeout != nullptr);
+
         // Create waiting thread object and add it into the list of waiters.
         WaitingThread waiter{need_count, is_fifo};
         const auto it = AddWaiter(&waiter);
@@ -59,6 +67,8 @@ public:
         if (result == ORBIS_KERNEL_ERROR_ETIMEDOUT) {
             wait_list.erase(it);
         }
+        LOG_INFO(Kernel_Pthread, "BACHATA_SEMA_WAIT_RETURN: sema={} thread={} result={:#x}", name,
+                 waiter.thr_name, result);
         return result;
     }
 
@@ -70,6 +80,7 @@ public:
         token_count += signal_count;
 
         // Wake up threads in order of priority.
+        int woken = 0;
         for (auto it = wait_list.begin(); it != wait_list.end();) {
             auto* waiter = *it;
             if (waiter->need_count > token_count) {
@@ -80,7 +91,10 @@ public:
             token_count -= waiter->need_count;
             waiter->was_signaled = true;
             waiter->sem.release();
+            ++woken;
         }
+        LOG_INFO(Kernel_Pthread, "BACHATA_SEMA_SIGNAL: sema={} thread={} count={} woke={} waiter(s)",
+                 name, g_curthread ? g_curthread->name : "?", signal_count, woken);
 
         return true;
     }
