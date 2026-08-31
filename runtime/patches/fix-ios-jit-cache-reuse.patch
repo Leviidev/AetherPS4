@@ -437,7 +437,7 @@ index 7946ccdd..9eb443d6 100644
  }
  
 diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
-index b9aa7407..c0214e43 100644
+index b9aa7407..43fab030 100644
 --- a/FEXCore/Source/Interface/Core/Core.cpp
 +++ b/FEXCore/Source/Interface/Core/Core.cpp
 @@ -496,9 +496,63 @@ void ContextImpl::ClearCodeCache(FEXCore::Core::InternalThreadState* Thread, boo
@@ -505,6 +505,36 @@ index b9aa7407..c0214e43 100644
    }
    Allocator::VirtualDontNeed(Thread->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE);
  }
+@@ -862,6 +916,29 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
+ 
+   auto [CompiledCode, DebugData, StartAddr, Length, NeedsAddGuestCodeRanges] = CompileCode(Thread, GuestRIP, MaxInst);
+   auto CodePtr = CompiledCode.EntryPoints[GuestRIP];
++
++  // Diagnostic only, gated to a single known-deterministic guest RIP: a 100%-reproducible
++  // "write to address 0x0" crash traces back to this exact block (a VEX MOVAPS pair with
++  // RIP-relative operands), with the fault's own register dump showing a scratch register (x18)
++  // as zero even though the host code physically at the fault PC, read moments after the fault,
++  // disassembles as a correct mov/movk/movk sequence that should have set it. That could mean
++  // the disassembly-after-the-fact is stale (something rewrote this exact memory between fault
++  // and read), or it could mean the compile-time-emitted bytes were never actually correct at
++  // this address in the first place and the crash dump's read is accurate. Logging the freshly
++  // compiled host entry address and its first bytes right here, at the moment of compilation
++  // (before this thread or any other could possibly have executed or reused any of it), settles
++  // which one it is.
++  if (GuestRIP == 0x7001a19ed0ULL && CodePtr != nullptr) {
++    auto* Bytes = reinterpret_cast<const unsigned char*>(
++      FEXCore::Allocator::GetWritableAddress(const_cast<void*>(reinterpret_cast<const void*>(CodePtr))));
++    fextl::string HexDump;
++    for (int i = 0; i < 64; ++i) {
++      HexDump += fmt::format("{:02x} ", Bytes[i]);
++    }
++    LogMan::Msg::EFmt("BACHATA_COMPILE_SNAPSHOT: GuestRIP={:#x} CodePtr={:#x} first64bytes={}", GuestRIP,
++                      reinterpret_cast<uintptr_t>(CodePtr), HexDump);
++  }
++
+   if (CodePtr == nullptr) {
+     return 0;
+   } else if (!DebugData) {
 diff --git a/FEXCore/Source/Interface/Context/Context.h b/FEXCore/Source/Interface/Context/Context.h
 index e374d857..0764d298 100644
 --- a/FEXCore/Source/Interface/Context/Context.h
