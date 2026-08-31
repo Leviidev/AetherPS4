@@ -170,6 +170,18 @@ std::atomic<bool> g_safepoint_resume {false};
 std::atomic<bool> g_safepoint_handler_installed {false};
 std::atomic<int> g_threads_in_hle_syscall {0};
 
+// Wired into ContextImpl::ReuseGenerationCounter below and incremented once per completed
+// reuse-in-place cycle, right as EndBufferInvalidationSafepoint releases the pause. See
+// CpuStateFrame::ExitFunctionLinkValidatedGeneration's own comment (CoreState.h) for the full
+// story: the safepoint signal above protects any thread it successfully pauses before a reuse
+// starts, but signal delivery has real, nonzero latency -- a thread whose own trip through
+// ExitFunctionLinker's post-call window happens to finish faster than that latency can execute
+// a stale branch before ever being signaled at all. This counter is what ExitFunctionLinker
+// checks itself, live, right before trusting a returned HostCode, as a fallback for exactly
+// that gap -- confirmed on-device as the actual remaining source of the reuse-in-place crash
+// even with the signal-based redirect already covering this same range.
+std::atomic<uint64_t> g_reuse_generation {0};
+
 // Rocket League's Game:Main thread was observed running normally for ~1.6s after guest entry
 // (thousands of unaligned-access fixups, i.e. real JIT'd guest code executing), then going
 // completely silent for the rest of a 7+ minute session -- no more fixups, no unsupported-HLE
@@ -2417,8 +2429,14 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
     };
     static_cast<FEXCore::Context::ContextImpl*>(impl->Context.get())
         ->EndBufferInvalidationSafepoint = [](FEXCore::Core::InternalThreadState*) {
+      // See g_reuse_generation's own comment for what this closes and why it has to happen
+      // here specifically: after the buffer's bytes are fully repopulated (this callback fires
+      // after that memcpy -- see CompileCode, JIT.cpp), before any paused thread can resume.
+      g_reuse_generation.fetch_add(1, std::memory_order_release);
       g_safepoint_resume.store(true, std::memory_order_release);
     };
+    static_cast<FEXCore::Context::ContextImpl*>(impl->Context.get())->ReuseGenerationCounter =
+      &g_reuse_generation;
   }
 
   return std::unique_ptr<GuestEngine> {new GuestEngine {std::move(impl)}};
