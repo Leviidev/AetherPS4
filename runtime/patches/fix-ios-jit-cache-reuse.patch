@@ -333,6 +333,57 @@ index b872b6ff..a46d99bf 100644
  
  #ifdef VIXL_DISASSEMBLER
    if (Disassemble() & FEXCore::Config::Disassemble::STATS) {
+diff --git a/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp b/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
+index d555e064..039b7493 100644
+--- a/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
++++ b/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
+@@ -189,6 +189,23 @@ DEF_OP(ExitFunction) {
+     ARMEmitter::ForwardLabel SkipFullLookup;
+     auto RipReg = GetReg(Op->NewRIP);
+ 
++    // Snapshot the reuse-generation counter before either lookup below (call-ret shadow stack or
++    // L1 cache) reads a cached HostCode -- same mechanism as DispatcherLoopTop's own block lookup
++    // and ExitFunctionLinker (see JITPointers::ReuseGenerationCounterAddress's own comment,
++    // CoreState.h, and SafepointSignalHandler's, fex_guest_engine.cpp, for the full story). This
++    // path handles genuinely computed/indirect guest branches -- register-indirect calls/jumps,
++    // returns, and memory-indirect jumps like x86 `jmp [mem]` -- a third instance of the same
++    // lock-free read-then-branch shape, with its own separate cache, that neither of those two
++    // fixes reached. Confirmed on-device as the actual remaining source of the reuse-in-place
++    // crash: the guest instruction at the fault RIP was exactly `jmp [rip+disp]`, a case that can
++    // only ever route through this indirect path, never the other two. TMP3 is unused elsewhere
++    // in this function's indirect-branch handling, so it's safe as the snapshot register across
++    // everything below, regardless of which of the three branch kinds (call/return/jump) is taken.
++    ARMEmitter::ForwardLabel SkipComputedBranchGenerationCheck;
++    ldr(TMP3, STATE_PTR(CpuStateFrame, Pointers.ReuseGenerationCounterAddress));
++    (void)cbz(ARMEmitter::Size::i64Bit, TMP3, &SkipComputedBranchGenerationCheck);
++    ldr(TMP3, TMP3, 0);
++
+     if (Op->Hint == IR::BranchHint::Return) {
+       // First try to pop from the call-ret stack, otherwise follow the normal path (but ending in a ret)
+       ldp<ARMEmitter::IndexType::POST>(TMP1, TMP2, REG_CALLRET_SP, 0x10);
+@@ -213,6 +230,22 @@ DEF_OP(ExitFunction) {
+     str(RipReg.X(), STATE, offsetof(FEXCore::Core::CpuStateFrame, State.rip));
+ 
+     (void)Bind(&SkipFullLookup);
++
++    // Re-check right before trusting TMP2 (a cache-hit HostCode from either lookup above, or --
++    // harmlessly redundant in that specific case -- DispatcherLoopTop's own address from the
++    // fallback just above, converged to the same TMP2 by this point): if the generation changed
++    // since the snapshot, redirect to DispatcherLoopTop instead of whatever TMP2 currently holds.
++    // Safe unconditionally, same reasoning as the other two checks of this kind -- and TMP1 is
++    // free to reuse here regardless of which path led to this point (none of the three branch
++    // kinds below rely on its value surviving from earlier in this function).
++    ldr(TMP1, STATE_PTR(CpuStateFrame, Pointers.ReuseGenerationCounterAddress));
++    ldr(TMP1, TMP1, 0);
++    sub(TMP1, TMP1, TMP3);
++    (void)cbz(ARMEmitter::Size::i64Bit, TMP1, &SkipComputedBranchGenerationCheck);
++    ldr(TMP2, STATE_PTR(CpuStateFrame, Pointers.DispatcherLoopTop));
++    str(RipReg.X(), STATE, offsetof(FEXCore::Core::CpuStateFrame, State.rip));
++
++    (void)Bind(&SkipComputedBranchGenerationCheck);
+     if (Op->Hint == IR::BranchHint::Call) {
+       ARMEmitter::ForwardLabel l_CallReturn;
+       if (!Op->CallReturnBlock.IsInvalid()) {
 diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
 index b9aa7407..c0214e43 100644
 --- a/FEXCore/Source/Interface/Core/Core.cpp
