@@ -402,6 +402,40 @@ index d555e064..92d483e5 100644
      if (Op->Hint == IR::BranchHint::Call) {
        ARMEmitter::ForwardLabel l_CallReturn;
        if (!Op->CallReturnBlock.IsInvalid()) {
+diff --git a/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp b/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp
+index 7946ccdd..9eb443d6 100644
+--- a/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp
++++ b/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp
+@@ -11,6 +11,8 @@ $end_info$
+ #include "Interface/Core/JIT/JITClass.h"
+ #include "Interface/IR/Passes/RegisterAllocationPass.h"
+ 
++#include <FEXCore/Utils/LogManager.h>
++
+ namespace FEXCore::CPU {
+ 
+ #define DEF_BINOP_WITH_CONSTANT(FEXOp, VarOp, ConstOp)                                    \
+@@ -61,6 +63,20 @@ DEF_OP(EntrypointOffset) {
+     Mask = 0xFFFF'FFFFULL;
+   }
+ 
++  // A RIP-relative guest memory operand (the overwhelmingly common use of this IR op) resolving
++  // to exactly 0 is never legitimate -- no real module is ever loaded at guest address 0, so a
++  // real game's own RIP-relative reference can never actually target it. Flagging this
++  // unconditionally (not gated behind a debug log level) since it's rare and, if it fires, is
++  // by itself strong evidence of a compile-time miscalculation in Entry/Offset for this
++  // specific block -- worth capturing at the exact moment it happens rather than only inferring
++  // it after the fact from a "write to 0x0" crash dump, which doesn't say which of the many
++  // memory operands in a block was the wrong one.
++  if ((Constant & Mask) == 0) {
++    LogMan::Msg::EFmt("BACHATA_ENTRYPOINT_OFFSET_ZERO: Entry={:#x} Offset={:#x} OpSize={} -> "
++                      "Constant=0 (suspicious -- no real guest address should ever resolve here)",
++                      Entry, Op->Offset, static_cast<int>(OpSize));
++  }
++
+   InsertGuestRIPMove(GetReg(Node), Constant & Mask);
+ }
+ 
 diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
 index b9aa7407..c0214e43 100644
 --- a/FEXCore/Source/Interface/Core/Core.cpp
