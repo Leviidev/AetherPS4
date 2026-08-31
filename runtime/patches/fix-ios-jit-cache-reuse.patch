@@ -437,7 +437,7 @@ index 7946ccdd..9eb443d6 100644
  }
  
 diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
-index b9aa7407..6652a7b7 100644
+index b9aa7407..89cb30ac 100644
 --- a/FEXCore/Source/Interface/Core/Core.cpp
 +++ b/FEXCore/Source/Interface/Core/Core.cpp
 @@ -496,9 +496,63 @@ void ContextImpl::ClearCodeCache(FEXCore::Core::InternalThreadState* Thread, boo
@@ -530,7 +530,7 @@ index b9aa7407..6652a7b7 100644
  uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_t GuestRIP, uint64_t MaxInst) {
    if constexpr (BLOCK_DEBUGGING) {
      // Block debugging logic is hand-written and needs to be handled with care.
-@@ -862,6 +934,44 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
+@@ -862,6 +934,62 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
  
    auto [CompiledCode, DebugData, StartAddr, Length, NeedsAddGuestCodeRanges] = CompileCode(Thread, GuestRIP, MaxInst);
    auto CodePtr = CompiledCode.EntryPoints[GuestRIP];
@@ -562,6 +562,24 @@ index b9aa7407..6652a7b7 100644
 +    }
 +    LogMan::Msg::EFmt("BACHATA_COMPILE_SNAPSHOT: GuestRIP={:#x} CodePtr={:#x} CompiledSize={:#x} first64bytes={}",
 +                      GuestRIP, reinterpret_cast<uintptr_t>(CodePtr), CompiledCode.Size, HexDump);
++    // Also dump the raw *guest* x86 bytes this block was actually compiled from -- FEX
++    // identity-maps guest memory into the host process, so GuestRIP is directly readable as a
++    // host pointer, no translation needed. This sidesteps offline PS4 SELF-format extraction
++    // entirely (individually compressed segments made a naive raw-file dump of the exported
++    // eboot.bin unreliable past the first instruction or two -- disassembly repeated
++    // suspiciously, a classic sign of reading through non-code/compressed bytes) by capturing
++    // exactly what the JIT itself decoded, straight from the live, already-decompressed guest
++    // image. 2KB should comfortably cover the guest-side source for a block this large.
++    {
++      const auto* GuestBytes = reinterpret_cast<const unsigned char*>(GuestRIP);
++      fextl::string GuestHexDump;
++      constexpr int GuestCaptureLen = 2048;
++      for (int i = 0; i < GuestCaptureLen; ++i) {
++        GuestHexDump += fmt::format("{:02x}", GuestBytes[i]);
++      }
++      LogMan::Msg::EFmt("BACHATA_GUEST_SOURCE_SNAPSHOT: GuestRIP={:#x} len={:#x} bytes={}", GuestRIP,
++                        GuestCaptureLen, GuestHexDump);
++    }
 +    // Also stash the full capture for a byte-for-byte crash-time comparison (see
 +    // AetherPS4::Fex::BachataCompareKnownBlockSnapshot, called from signals.cpp) -- a plain
 +    // forward declaration rather than including Bachata-S4's own app-level header from this
@@ -575,7 +593,7 @@ index b9aa7407..6652a7b7 100644
    if (CodePtr == nullptr) {
      return 0;
    } else if (!DebugData) {
-@@ -968,6 +1078,14 @@ uintptr_t ContextImpl::CompileSingleStep(FEXCore::Core::CpuStateFrame* Frame, ui
+@@ -968,6 +1096,14 @@ uintptr_t ContextImpl::CompileSingleStep(FEXCore::Core::CpuStateFrame* Frame, ui
  void ContextImpl::InvalidateCodeBuffersCodeRange(uint64_t Start, uint64_t Length) {
    FEXCORE_PROFILE_SCOPED("InvalidateCodeBuffersCodeRange");
  
@@ -590,7 +608,7 @@ index b9aa7407..6652a7b7 100644
    LOGMAN_THROW_A_FMT(CodeInvalidationMutex.try_lock() == false, "CodeInvalidationMutex needs to be unique_locked here");
    std::scoped_lock lk {CodeBufferListLock};
    auto it = CodeBufferList.begin();
-@@ -982,6 +1100,11 @@ void ContextImpl::InvalidateCodeBuffersCodeRange(uint64_t Start, uint64_t Length
+@@ -982,6 +1118,11 @@ void ContextImpl::InvalidateCodeBuffersCodeRange(uint64_t Start, uint64_t Length
  }
  
  void ContextImpl::InvalidateThreadCachedCodeRange(FEXCore::Core::InternalThreadState* Thread, uint64_t Start, uint64_t Length) {
