@@ -437,7 +437,7 @@ index 7946ccdd..9eb443d6 100644
  }
  
 diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
-index b9aa7407..43fab030 100644
+index b9aa7407..6652a7b7 100644
 --- a/FEXCore/Source/Interface/Core/Core.cpp
 +++ b/FEXCore/Source/Interface/Core/Core.cpp
 @@ -496,9 +496,63 @@ void ContextImpl::ClearCodeCache(FEXCore::Core::InternalThreadState* Thread, boo
@@ -505,7 +505,32 @@ index b9aa7407..43fab030 100644
    }
    Allocator::VirtualDontNeed(Thread->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE);
  }
-@@ -862,6 +916,29 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
+@@ -830,6 +884,24 @@ ContextImpl::CompileCodeResult ContextImpl::CompileCode(FEXCore::Core::InternalT
+   };
+ }
+ 
++} // namespace FEXCore::Context
++
++// Forward declaration only, deliberately not an #include of Bachata-S4's own app-level header
++// from this vendored FEXCore file -- this is temporary, diagnostic-only wiring (see its call
++// site below, inside ContextImpl::CompileBlock), not a permanent architectural dependency. Both
++// this file and its real definition (fex_guest_engine.cpp) end up in the same final static
++// library, so this links correctly as long as the signature matches exactly. Declared here, at
++// true global scope with FEXCore::Context closed and reopened around it, rather than nested
++// three levels deep inside it (this whole file is one un-closed `namespace FEXCore::Context {`
++// block starting near its top) -- a nested `namespace AetherPS4::Fex {}` here would silently
++// declare FEXCore::Context::AetherPS4::Fex::... instead of the real, top-level one, which then
++// fails to link against the call site's `::AetherPS4::Fex::...`.
++namespace AetherPS4::Fex {
++void BachataRecordKnownBlockSnapshot(uintptr_t writable_code_ptr, const unsigned char* bytes, std::size_t len) noexcept;
++}
++
++namespace FEXCore::Context {
++
+ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_t GuestRIP, uint64_t MaxInst) {
+   if constexpr (BLOCK_DEBUGGING) {
+     // Block debugging logic is hand-written and needs to be handled with care.
+@@ -862,6 +934,44 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
  
    auto [CompiledCode, DebugData, StartAddr, Length, NeedsAddGuestCodeRanges] = CompileCode(Thread, GuestRIP, MaxInst);
    auto CodePtr = CompiledCode.EntryPoints[GuestRIP];
@@ -524,17 +549,59 @@ index b9aa7407..43fab030 100644
 +  if (GuestRIP == 0x7001a19ed0ULL && CodePtr != nullptr) {
 +    auto* Bytes = reinterpret_cast<const unsigned char*>(
 +      FEXCore::Allocator::GetWritableAddress(const_cast<void*>(reinterpret_cast<const void*>(CodePtr))));
++    // Capture the *entire* compiled fragment, not just its first few bytes -- the crash this is
++    // chasing faults partway through a block (not necessarily at its very entry point), so a
++    // short, fixed-size snapshot from CodePtr could miss the actual faulting address entirely
++    // if the block is longer than that. CompiledCode.Size is the true host code size for this
++    // exact compile; capped defensively since this is a fixed-size diagnostic buffer, not
++    // because any real block is expected to approach that cap.
++    const std::size_t CaptureLen = std::min<std::size_t>(CompiledCode.Size, 4096);
 +    fextl::string HexDump;
-+    for (int i = 0; i < 64; ++i) {
++    for (std::size_t i = 0; i < std::min<std::size_t>(CaptureLen, 64); ++i) {
 +      HexDump += fmt::format("{:02x} ", Bytes[i]);
 +    }
-+    LogMan::Msg::EFmt("BACHATA_COMPILE_SNAPSHOT: GuestRIP={:#x} CodePtr={:#x} first64bytes={}", GuestRIP,
-+                      reinterpret_cast<uintptr_t>(CodePtr), HexDump);
++    LogMan::Msg::EFmt("BACHATA_COMPILE_SNAPSHOT: GuestRIP={:#x} CodePtr={:#x} CompiledSize={:#x} first64bytes={}",
++                      GuestRIP, reinterpret_cast<uintptr_t>(CodePtr), CompiledCode.Size, HexDump);
++    // Also stash the full capture for a byte-for-byte crash-time comparison (see
++    // AetherPS4::Fex::BachataCompareKnownBlockSnapshot, called from signals.cpp) -- a plain
++    // forward declaration rather than including Bachata-S4's own app-level header from this
++    // vendored FEXCore file, since this is temporary, diagnostic-only wiring, not a permanent
++    // architectural dependency. Same final static library, so this links correctly as long as
++    // the signature here matches the real definition exactly (namespace included -- name
++    // mangling depends on it).
++    ::AetherPS4::Fex::BachataRecordKnownBlockSnapshot(reinterpret_cast<uintptr_t>(Bytes), Bytes, CaptureLen);
 +  }
 +
    if (CodePtr == nullptr) {
      return 0;
    } else if (!DebugData) {
+@@ -968,6 +1078,14 @@ uintptr_t ContextImpl::CompileSingleStep(FEXCore::Core::CpuStateFrame* Frame, ui
+ void ContextImpl::InvalidateCodeBuffersCodeRange(uint64_t Start, uint64_t Length) {
+   FEXCORE_PROFILE_SCOPED("InvalidateCodeBuffersCodeRange");
+ 
++  // Diagnostic only, temporary: unconditional (not gated behind a debug log level) since real
++  // invalidations should be rare -- typically self-modifying-code detection or an explicit
++  // guest unmap/remap, not a hot path -- so this is cheap insurance while chasing a
++  // reproducible crash whose root cause (compiled-correct-but-wrong-at-crash-time memory, or
++  // something else) is still unconfirmed. Directly answers whether anything ever invalidates a
++  // range overlapping the one known-deterministic guest RIP under investigation.
++  LogMan::Msg::EFmt("BACHATA_INVALIDATE_CODE_RANGE: Start={:#x} Length={:#x} End={:#x}", Start, Length, Start + Length);
++
+   LOGMAN_THROW_A_FMT(CodeInvalidationMutex.try_lock() == false, "CodeInvalidationMutex needs to be unique_locked here");
+   std::scoped_lock lk {CodeBufferListLock};
+   auto it = CodeBufferList.begin();
+@@ -982,6 +1100,11 @@ void ContextImpl::InvalidateCodeBuffersCodeRange(uint64_t Start, uint64_t Length
+ }
+ 
+ void ContextImpl::InvalidateThreadCachedCodeRange(FEXCore::Core::InternalThreadState* Thread, uint64_t Start, uint64_t Length) {
++  // Diagnostic only, temporary: see InvalidateCodeBuffersCodeRange's own comment, just above --
++  // same reasoning, same investigation.
++  LogMan::Msg::EFmt("BACHATA_INVALIDATE_THREAD_RANGE: Thread={:#x} Start={:#x} Length={:#x} End={:#x}",
++                    reinterpret_cast<uintptr_t>(Thread), Start, Length, Start + Length);
++
+   LOGMAN_THROW_A_FMT(CodeInvalidationMutex.try_lock() == false, "CodeInvalidationMutex needs to be unique_locked here");
+ 
+   // Ensures now-modified mappings aren't cached as being in their previous non-executable state.
 diff --git a/FEXCore/Source/Interface/Context/Context.h b/FEXCore/Source/Interface/Context/Context.h
 index e374d857..0764d298 100644
 --- a/FEXCore/Source/Interface/Context/Context.h

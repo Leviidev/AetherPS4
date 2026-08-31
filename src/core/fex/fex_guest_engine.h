@@ -116,6 +116,15 @@ bool BachataDumpGuestRegisters(char* out_buf, std::size_t out_buf_size,
 // the variable-length x86 case. Returns false (out_buf untouched) outside iOS/FEX builds.
 bool BachataDumpHostCodeWords(void* fault_pc, char* out_buf, std::size_t out_buf_size) noexcept;
 
+// Diagnostic-only pair for one specific, known-deterministic guest block (see the matching call
+// in Core.cpp's ContextImpl::CompileBlock). Record stores a snapshot of the freshly compiled
+// bytes at compile time; Compare re-reads the same address later (from the crash path) and
+// reports byte-for-byte whether it's still identical or something rewrote it in between. Not a
+// general mechanism -- a single, process-wide slot for the one address currently under
+// investigation.
+void BachataRecordKnownBlockSnapshot(uintptr_t writable_code_ptr, const unsigned char* bytes, std::size_t len) noexcept;
+bool BachataCompareKnownBlockSnapshot(char* out_buf, std::size_t out_buf_size) noexcept;
+
 // Deliver any Orbis guest signal queued by DeliverGuestOrbisSignal for the
 // current thread, running its handler via nested HandleCallback at this safe HLE
 // point. No-op when nothing is pending or no FEX guest thread is active. Blocking

@@ -1402,6 +1402,90 @@ bool BachataDumpGuestRegisters(char* out_buf, std::size_t out_buf_size, uint64_t
   return true;
 }
 
+// Diagnostic storage for a single, known-deterministic guest block (see Core.cpp's
+// ContextImpl::CompileBlock, which populates this at compile time) and a crash-time comparison
+// against it. Directly answers the one question neither the compile-time snapshot log nor the
+// crash-time disassembly can answer alone: are the two reads of the *same* memory actually
+// identical, or did something rewrite it in between? A plain global, not thread_local -- this
+// is deliberately a single, process-wide slot for one specific address, not a general
+// mechanism, matching the same "one known thing, own dedicated slot" reasoning as
+// g_last_hle_operation_rt's comment above.
+// 4096: matches Core.cpp's own CaptureLen cap (CompiledCode.Size, capped defensively) -- large
+// enough to comfortably cover any real compiled block's full length, so the fault PC (which
+// must fall somewhere inside this exact compile, since it shares the same guest RIP) is always
+// within the captured range, not just the block's first few bytes.
+constexpr int kKnownBlockSnapshotCap = 4096;
+std::atomic<uintptr_t> g_known_block_code_ptr {0};
+std::atomic<int> g_known_block_compile_count {0};
+std::atomic<std::size_t> g_known_block_snapshot_len {0};
+unsigned char g_known_block_snapshot[kKnownBlockSnapshotCap] = {};
+std::atomic<uint64_t> g_known_block_compile_thread {0};
+
+void BachataRecordKnownBlockSnapshot(uintptr_t writable_code_ptr, const unsigned char* bytes, std::size_t len) noexcept {
+  len = std::min<std::size_t>(len, kKnownBlockSnapshotCap);
+  g_known_block_compile_count.fetch_add(1, std::memory_order_relaxed);
+  g_known_block_code_ptr.store(writable_code_ptr, std::memory_order_release);
+  std::memcpy(g_known_block_snapshot, bytes, len);
+  g_known_block_snapshot_len.store(len, std::memory_order_release);
+  g_known_block_compile_thread.store(reinterpret_cast<uint64_t>(pthread_self()), std::memory_order_relaxed);
+}
+
+// Called from the crash path (signals.cpp) once a fault is confirmed at or inside the known
+// block's recorded address. Re-reads the *current* bytes at that same address and compares them
+// byte-for-byte against what was recorded at compile time -- IDENTICAL proves the compiled code
+// itself was never wrong and something else (execution flow landing here incorrectly, or a
+// register going stale some other way) is the real cause; any mismatch, reported with the exact
+// offset and both values, proves something rewrote this memory after compilation, which then
+// narrows the search to whatever else touches code memory (invalidation, a second compile of
+// the same or an overlapping range, etc).
+bool BachataCompareKnownBlockSnapshot(char* out_buf, std::size_t out_buf_size) noexcept {
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+  if (out_buf == nullptr || out_buf_size == 0) {
+    return false;
+  }
+  const auto code_ptr = g_known_block_code_ptr.load(std::memory_order_acquire);
+  const auto compile_count = g_known_block_compile_count.load(std::memory_order_relaxed);
+  const auto snapshot_len = g_known_block_snapshot_len.load(std::memory_order_acquire);
+  if (code_ptr == 0 || snapshot_len == 0) {
+    std::snprintf(out_buf, out_buf_size, "no snapshot recorded (this block was never compiled this session)");
+    return true;
+  }
+  const auto* current = reinterpret_cast<const volatile unsigned char*>(code_ptr);
+  long first_mismatch = -1;
+  unsigned char expected = 0;
+  unsigned char actual = 0;
+  for (std::size_t i = 0; i < snapshot_len; ++i) {
+    const unsigned char cur = current[i];
+    if (cur != g_known_block_snapshot[i]) {
+      first_mismatch = static_cast<long>(i);
+      expected = g_known_block_snapshot[i];
+      actual = cur;
+      break;
+    }
+  }
+  if (first_mismatch < 0) {
+    std::snprintf(out_buf, out_buf_size,
+                  "IDENTICAL to compile-time snapshot across all %zu captured bytes (compiled %d "
+                  "time(s), compile_thread=%#llx) -- the compiled bytes were never wrong, something "
+                  "else explains the fault",
+                  snapshot_len, compile_count,
+                  static_cast<unsigned long long>(g_known_block_compile_thread.load(std::memory_order_relaxed)));
+  } else {
+    std::snprintf(out_buf, out_buf_size,
+                  "MISMATCH at offset %ld (of %zu captured bytes): compile-time=%#04x current=%#04x "
+                  "(compiled %d time(s), compile_thread=%#llx) -- this memory was rewritten after "
+                  "compilation",
+                  first_mismatch, snapshot_len, expected, actual, compile_count,
+                  static_cast<unsigned long long>(g_known_block_compile_thread.load(std::memory_order_relaxed)));
+  }
+  return true;
+#else
+  static_cast<void>(out_buf);
+  static_cast<void>(out_buf_size);
+  return false;
+#endif
+}
+
 bool BachataDumpHostCodeWords(void* fault_pc, char* out_buf, std::size_t out_buf_size) noexcept {
 #if defined(__APPLE__) && TARGET_OS_IPHONE
   if (fault_pc == nullptr || out_buf == nullptr || out_buf_size == 0) {
@@ -1418,11 +1502,14 @@ bool BachataDumpHostCodeWords(void* fault_pc, char* out_buf, std::size_t out_buf
   if (writable_pc == 0) {
     return false;
   }
-  // 8 words (4 bytes each) before fault_pc through 8 after: ARM64 instructions are fixed
+  // 24 words (4 bytes each) before fault_pc through 24 after: ARM64 instructions are fixed
   // 4-byte width, so this is exact context, not a guess at instruction boundaries the way
-  // the earlier variable-length x86 byte dump was.
-  constexpr int kWordsBefore = 8;
-  constexpr int kWordsAfter = 8;
+  // the earlier variable-length x86 byte dump was. Widened from an original 8/8 while chasing
+  // a reproducible "write to 0x0" crash whose immediate 8-word-before window turned out to
+  // span a suspiciously round (16KB-aligned) boundary -- more context on both sides helps tell
+  // whether that's this block's own start or a neighboring, unrelated block.
+  constexpr int kWordsBefore = 24;
+  constexpr int kWordsAfter = 24;
   char* w = out_buf;
   char* const end = out_buf + out_buf_size;
   for (int i = -kWordsBefore; i <= kWordsAfter && w < end; ++i) {

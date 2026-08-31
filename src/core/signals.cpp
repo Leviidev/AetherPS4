@@ -190,10 +190,22 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
         // host code address in between, since nothing else here would explain instructions
         // that plainly do the opposite of what fired. Moving this read to right after
         // ReportCrash (this handler's only other work before it) minimizes that window.
-        char host_code[256] = {};
+        // Sized for BachataDumpHostCodeWords' current 24-words-before/24-after window: 49 words
+        // at up to 9 chars each ("xxxxxxxx ") plus 2 extra chars for the bracketed word, rounded
+        // up generously.
+        char host_code[640] = {};
         if (::AetherPS4::Fex::BachataDumpHostCodeWords(code_address, host_code, sizeof(host_code))) {
             LOG_CRITICAL(Debug, "FEX host ARM64 words around fault pc={:#x}: {}",
                         reinterpret_cast<uintptr_t>(code_address), host_code);
+        }
+        // Byte-for-byte comparison against whatever was recorded at compile time for the one
+        // known-deterministic block currently under investigation (see Core.cpp's
+        // ContextImpl::CompileBlock and its BachataRecordKnownBlockSnapshot call) -- settles
+        // definitively whether the disassembly above is still identical to what was originally
+        // compiled, or whether this exact memory was rewritten sometime after.
+        char snapshot_compare[256] = {};
+        if (::AetherPS4::Fex::BachataCompareKnownBlockSnapshot(snapshot_compare, sizeof(snapshot_compare))) {
+            LOG_CRITICAL(Debug, "FEX known-block snapshot comparison: {}", snapshot_compare);
         }
         uint64_t guest_rip = 0;
         uint64_t guest_rax = 0;
