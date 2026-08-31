@@ -1,5 +1,5 @@
 diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
-index b872b6ff..54176912 100644
+index b872b6ff..151515c7 100644
 --- a/FEXCore/Source/Interface/Core/JIT/JIT.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
 @@ -519,7 +519,15 @@ static void DirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record,
@@ -103,20 +103,22 @@ index b872b6ff..54176912 100644
  }
  
  Arm64JITCore::~Arm64JITCore() {}
-@@ -1110,6 +1156,12 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1110,6 +1156,14 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
    {
      auto CodeBufferLock = std::unique_lock {CodeBuffers.CodeBufferWriteMutex};
  
-+    // Set below, on the iOS reuse-in-place path only, when BeginBufferInvalidationSafepoint was
-+    // actually called for this compile -- see the matching EndBufferInvalidationSafepoint call
-+    // near this function's memcpy below, and BeginBufferInvalidationSafepoint's own comment
-+    // (Context.h) for why the pause needs to stay held that far past the metadata clear.
++    // Set below, on the iOS reuse-in-place path only, when this compile actually took
++    // CodeInvalidationMutex exclusively and opened a BeginBufferInvalidationSafepoint pause --
++    // see the matching unlock()/EndBufferInvalidationSafepoint call near this function's memcpy
++    // below, and BeginBufferInvalidationSafepoint's own comment (Context.h) for why both need to
++    // stay held that far past the metadata clear, and why the mutex must be acquired before the
++    // pause is opened rather than after.
 +    bool HeldReuseSafepoint = false;
 +
      // Query size of generated code
      const auto TempSize = GetCursorOffset();
  
-@@ -1128,7 +1180,63 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1128,7 +1182,73 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
        SetCursorOffset(CodeBuffers.LatestOffset);
        Align16B();
        if ((GetCursorOffset() + TempSize) > CurrentCodeBuffer->UsableSize()) {
@@ -140,21 +142,31 @@ index b872b6ff..54176912 100644
 +        // real bug underneath it is fixed, rather than working around it by avoiding this
 +        // path altogether.
 +        //
-+        // ClearCodeCache's NewCodeBuffer=false branch (Core.cpp) now takes CodeInvalidationMutex
-+        // exclusively for the duration of the clear, to exclude any other thread that might
-+        // currently be *executing* out of the buffer being reused (not just compiling into it --
-+        // execution of already-JIT'd code never touches this mutex at all, so this is the only
-+        // guard available). This call site is reached from deep inside CompileBlock (Core.cpp),
-+        // which already holds that same mutex *shared* for its entire duration
++        // ClearCodeCache's NewCodeBuffer=false branch (Core.cpp) requires the caller to already
++        // hold CodeInvalidationMutex exclusively before calling in, to exclude any other thread
++        // that might currently be *executing* out of the buffer being reused (not just compiling
++        // into it -- execution of already-JIT'd code never touches this mutex at all, so this is
++        // the only guard available). This call site is reached from deep inside CompileBlock
++        // (Core.cpp), which already holds that same mutex *shared* for its entire duration
 +        // (GuardSignalDeferringSection<std::shared_lock>) -- this mutex doesn't support
-+        // recursive or shared-to-exclusive-upgrade locking, so calling in here without first
-+        // releasing that shared lock would deadlock against the exclusive lock ClearCodeCache
-+        // now takes. Release it manually here and restore it immediately after, bypassing the
++        // recursive or shared-to-exclusive-upgrade locking, so acquiring the exclusive lock
++        // without first releasing that shared reference would deadlock against ourselves.
++        // Release it manually here and restore it (see below, past the memcpy), bypassing the
 +        // RAII wrapper CompileBlock's local `lk` owns (its own eventual unlock_shared() in that
 +        // caller's destructor stays correctly balanced as long as this thread holds exactly one
 +        // shared reference again by the time this function returns, which the sequence below
 +        // guarantees) -- WritePriorityMutex::Mutex doesn't track *which* call site (de)acquired
 +        // it, only the net reader/writer counts, so this is safe purely at the mutex level.
++        //
++        // Acquire the exclusive lock BEFORE opening the safepoint pause, not after -- see
++        // BeginBufferInvalidationSafepoint's own comment (Context.h) for the deadlock this
++        // ordering avoids: pausing every other thread first can freeze one of them mid-hold of
++        // this same mutex (shared, from inside its own CompileBlock/ExitFunctionLink), and it can
++        // never release that hold until its pause lifts, which can't happen until we finish here
++        // -- confirmed on-device as an indefinite hang with the safepoint itself reporting every
++        // other thread successfully paused. Taking the exclusive lock first sidesteps this
++        // entirely: once acquired, no thread can currently hold it shared, so freezing everyone
++        // afterward can't catch one mid-hold.
 +        //
 +        // The pause itself (BeginBufferInvalidationSafepoint/EndBufferInvalidationSafepoint) is
 +        // owned here, not inside ClearCodeCache, because clearing the LookupCache metadata alone
@@ -166,21 +178,21 @@ index b872b6ff..54176912 100644
 +        // as two different guest threads instruction-fetch-faulting at addresses only 0x80 apart,
 +        // both landing in memory the LookupCache had already forgotten. Held open from here
 +        // through the memcpy closes that window; see the matching End call below.
++        auto& InvalidationMutex = CTX->GetCodeInvalidationMutex();
++        InvalidationMutex.unlock_shared();
++        InvalidationMutex.lock();
 +        if (CTX->BeginBufferInvalidationSafepoint) {
 +          CTX->BeginBufferInvalidationSafepoint(ThreadState);
 +          HeldReuseSafepoint = true;
 +        }
-+        auto& InvalidationMutex = CTX->GetCodeInvalidationMutex();
-+        InvalidationMutex.unlock_shared();
 +        CTX->ClearCodeCache(ThreadState, false);
-+        InvalidationMutex.lock_shared();
 +#else
          CTX->ClearCodeCache(ThreadState);
 +#endif
        }
  
        CodeBuffers.LatestOffset = GetCursorOffset();
-@@ -1139,6 +1247,12 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1139,6 +1259,12 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
      CodeData.BlockBegin += Delta;
      for (auto& EntryPoint : CodeData.EntryPoints) {
        EntryPoint.second += Delta;
@@ -193,15 +205,21 @@ index b872b6ff..54176912 100644
      }
      CodeBegin += Delta;
  
-@@ -1151,11 +1265,33 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1151,11 +1277,39 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
      SetCursorOffset(CodeBuffers.LatestOffset + TempSize);
  
      CodeBuffers.LatestOffset = GetCursorOffset();
 +
 +    // Memory this compile reused is fully repopulated now -- safe for any thread paused above to
 +    // resume into. See the matching BeginBufferInvalidationSafepoint call and its comment, above.
++    // Release CodeInvalidationMutex (acquired exclusive, above, before the pause was opened) only
++    // after ending the pause, then restore this thread's own shared reference to it, matching the
++    // shared reference it held on entry to this reuse-in-place branch.
 +    if (HeldReuseSafepoint) {
 +      CTX->EndBufferInvalidationSafepoint(ThreadState);
++      auto& InvalidationMutex = CTX->GetCodeInvalidationMutex();
++      InvalidationMutex.unlock();
++      InvalidationMutex.lock_shared();
 +    }
    }
  
@@ -228,10 +246,10 @@ index b872b6ff..54176912 100644
  #ifdef VIXL_DISASSEMBLER
    if (Disassemble() & FEXCore::Config::Disassemble::STATS) {
 diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
-index b9aa7407..1409dd4c 100644
+index b9aa7407..c0214e43 100644
 --- a/FEXCore/Source/Interface/Core/Core.cpp
 +++ b/FEXCore/Source/Interface/Core/Core.cpp
-@@ -496,9 +496,57 @@ void ContextImpl::ClearCodeCache(FEXCore::Core::InternalThreadState* Thread, boo
+@@ -496,9 +496,63 @@ void ContextImpl::ClearCodeCache(FEXCore::Core::InternalThreadState* Thread, boo
      // Allocate new CodeBuffer + L3 LookupCache and clear L1+L2 caches
      Thread->CPUBackend->ClearCache();
    } else {
@@ -245,53 +263,59 @@ index b9aa7407..1409dd4c 100644
 +    // now (not just compiling into -- a thread running already-JIT'd code never touches
 +    // CodeInvalidationMutex at all) needs the same exclusion this codebase's existing code-
 +    // invalidation entry points (InvalidateCodeBuffersCodeRange, InvalidateThreadCachedCodeRange)
-+    // already rely on CodeInvalidationMutex for, so take it here too, unique/exclusive, for the
-+    // duration of the actual clear. The caller (Arm64JITCore::CompileCode, on the iOS-only path
-+    // that reaches this branch) is responsible for having already released its own shared lock
-+    // on this same mutex before calling in here and re-acquiring it after returning -- this
-+    // mutex doesn't support recursive/upgrade locking, so holding the shared lock across this
-+    // call would deadlock against the exclusive lock taken here.
-+    LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: begin, Thread={:#x}", reinterpret_cast<uintptr_t>(Thread));
-+    std::unique_lock inval_lock {CodeInvalidationMutex};
-+    LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: got CodeInvalidationMutex exclusive");
-+    // By this point no other thread can be mid-compile (that would require CodeInvalidationMutex
-+    // shared, which we now hold exclusively) -- but a thread executing already-JIT'd code never
-+    // touches this mutex at all, so it's still safe for one to be mid-execution of a direct
-+    // branch into memory we're about to invalidate.
++    // already rely on CodeInvalidationMutex for.
 +    //
-+    // NOTE: the actual pause (BeginBufferInvalidationSafepoint) is no longer taken here -- it now
-+    // has to be held by the *caller* (JIT.cpp's CompileCode, on the iOS reuse-in-place path),
-+    // spanning not just this metadata clear but the subsequent memcpy that overwrites the
-+    // buffer's bytes with newly compiled code. A thread paused mid-block (not at a link site) and
-+    // then resumed keeps executing forward through whatever bytes are physically there -- which
++    // Unlike those entry points, though, this function does NOT acquire that lock itself -- the
++    // caller (Arm64JITCore::CompileCode, on the iOS-only path that reaches this branch) must
++    // already hold it exclusive, AND must already have BeginBufferInvalidationSafepoint active,
++    // before calling in here. This used to be the other way around (acquire the mutex here, then
++    // pause other threads), which deadlocks: BeginBufferInvalidationSafepoint's pause signal can
++    // land on another guest thread at literally any point in its execution, including while that
++    // thread is mid-way through CompileBlock or ExitFunctionLink holding this same mutex *shared*
++    // (via GuardSignalDeferringSection) -- a signal handler can't run that thread's own unlock, so
++    // it stays frozen holding the shared reference until its pause is lifted, which can't happen
++    // until this function's caller finishes and calls EndBufferInvalidationSafepoint, which can't
++    // happen until this function returns, which can't happen until the exclusive lock is granted --
++    // a real, permanent deadlock, confirmed on-device as a "BACHATA_BUFFER_REUSE: begin" with no
++    // matching "got CodeInvalidationMutex exclusive" ever following it, session stuck indefinitely
++    // (CPU still busy from other threads, but zero further progress) despite the safepoint's own
++    // accounting showing all other threads successfully paused. Acquiring the mutex *before*
++    // signaling the pause avoids this by construction: a successful exclusive acquire already
++    // proves no thread currently holds it shared (ordinary mutex semantics guarantee that), so
++    // freezing every other thread afterward can never catch one mid-hold of it.
++    //
++    // The pause itself (BeginBufferInvalidationSafepoint/EndBufferInvalidationSafepoint) also has
++    // to span not just this metadata clear but the caller's subsequent memcpy that overwrites the
++    // buffer's bytes with newly compiled code -- a thread paused mid-block (not at a link site)
++    // and then resumed keeps executing forward through whatever bytes are physically there, which
 +    // are still the *original*, unchanged bytes immediately after this clear, since nothing has
 +    // overwritten them yet at this point. It's only unsafe once those bytes actually change, which
-+    // doesn't happen until that later memcpy. Ending the safepoint here, before that memcpy, was
-+    // confirmed on-device to still let a just-resumed thread race a concurrent compile's memcpy
-+    // into the exact bytes it was already executing -- two different guest threads faulting on
-+    // instruction-fetch at addresses only 0x80 apart, both landing in memory the LookupCache had
-+    // already forgotten about (a fresh block's bytes it never got to look up), is exactly the
-+    // signature of that race. This function must therefore only be reached from within a
-+    // safepoint the caller is already holding open across the whole clear+repopulate sequence --
-+    // see CompileCode's own comment for the matching Begin/End pair.
++    // doesn't happen until that later memcpy. Ending the safepoint before that memcpy was
++    // separately confirmed on-device to let a just-resumed thread race a concurrent compile's
++    // memcpy into the exact bytes it was already executing -- two different guest threads faulting
++    // on instruction-fetch at addresses only 0x80 apart, both landing in memory the LookupCache
++    // had already forgotten about, is exactly the signature of that race. See CompileCode's own
++    // comment (JIT.cpp) for the full Begin/lock -> clear -> memcpy -> End/unlock ordering.
++    LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: begin, Thread={:#x}", reinterpret_cast<uintptr_t>(Thread));
      auto lk = Thread->LookupCache->AcquireWriteLock();
 +    LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: got own LookupCache write lock, clearing");
      Thread->LookupCache->ClearCache(lk);
 +    LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: own cache cleared, invoking OnBufferReusedInPlace={}",
 +                      OnBufferReusedInPlace ? "set" : "unset");
-+    // Still inside the exclusive lock's window here, so any other thread that might attempt
++    // Still inside the caller's exclusive lock here, so any other thread that might attempt
 +    // to compile (and so update its own L1/L2 from this now-current L3 state) stays blocked
-+    // until this returns -- see OnBufferReusedInPlace's own comment (Context.h) for why other
-+    // threads' independent L1/L2 caches need to be reached at all.
++    // until the caller releases it (after its own subsequent memcpy) -- see OnBufferReusedInPlace's
++    // own comment (Context.h) for why other threads' independent L1/L2 caches need to be reached
++    // at all.
 +    if (OnBufferReusedInPlace) {
 +      OnBufferReusedInPlace(Thread, lk);
 +    }
-+    LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: end, releasing CodeInvalidationMutex");
++    LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: metadata clear done, returning to caller");
    }
    Allocator::VirtualDontNeed(Thread->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE);
  }
 diff --git a/FEXCore/Source/Interface/Context/Context.h b/FEXCore/Source/Interface/Context/Context.h
-index e374d857..83fb2de4 100644
+index e374d857..c428306a 100644
 --- a/FEXCore/Source/Interface/Context/Context.h
 +++ b/FEXCore/Source/Interface/Context/Context.h
 @@ -21,6 +21,7 @@
@@ -302,7 +326,7 @@ index e374d857..83fb2de4 100644
  #include <mutex>
  #include <optional>
  #include <shared_mutex>
-@@ -223,9 +224,74 @@ public:
+@@ -223,9 +224,88 @@ public:
      return CodeInvalidationMutex;
    }
  
@@ -366,6 +390,20 @@ index e374d857..83fb2de4 100644
 +  // before ClearCodeCache(..., false) and End only after that memcpy finishes, not just around
 +  // the clear itself. Ending it too early was confirmed on-device to still let a just-resumed
 +  // thread race that memcpy into the exact bytes it was already executing.
++  //
++  // Ordering relative to CodeInvalidationMutex matters too, and it's the opposite of what seems
++  // natural: the caller must acquire that mutex exclusively *before* calling Begin, not after.
++  // BeginBufferInvalidationSafepoint's pause signal can land on another guest thread at any point
++  // in its execution, including mid-way through CompileBlock or ExitFunctionLink while that thread
++  // holds this same mutex *shared* -- a signal handler can't run that thread's own unlock, so it
++  // stays frozen holding the shared reference for as long as the pause lasts. If the pausing
++  // thread then tries to acquire the mutex exclusively *after* pausing everyone, it can deadlock
++  // against exactly the thread it just froze mid-hold: confirmed on-device as a
++  // "BACHATA_BUFFER_REUSE: begin" with no matching completion ever following it, the session
++  // stuck indefinitely with zero further progress despite the safepoint's own accounting showing
++  // every other thread successfully paused. Acquiring the mutex first avoids this by construction
++  // -- a successful exclusive acquire already proves (via ordinary mutex semantics) that no thread
++  // currently holds it shared, so pausing everyone afterward can never catch one mid-hold of it.
 +  std::function<void(FEXCore::Core::InternalThreadState* CallingThread)> BeginBufferInvalidationSafepoint;
 +  std::function<void(FEXCore::Core::InternalThreadState* CallingThread)> EndBufferInvalidationSafepoint;
 +
