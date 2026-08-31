@@ -2432,7 +2432,12 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
       // See g_reuse_generation's own comment for what this closes and why it has to happen
       // here specifically: after the buffer's bytes are fully repopulated (this callback fires
       // after that memcpy -- see CompileCode, JIT.cpp), before any paused thread can resume.
-      g_reuse_generation.fetch_add(1, std::memory_order_release);
+      const auto new_generation = g_reuse_generation.fetch_add(1, std::memory_order_release) + 1;
+      // Deliberately unconditional: this whole mechanism (JITPointers::ReuseGenerationCounterAddress
+      // and its two live checks, JIT.cpp/Dispatcher.cpp) has no other visibility into whether it's
+      // actually wired up and firing -- a stale/never-incrementing counter would silently disable
+      // both checks with no other symptom.
+      LogMan::Msg::IFmt("BACHATA_REUSE_GENERATION: now {}", new_generation);
       g_safepoint_resume.store(true, std::memory_order_release);
     };
     static_cast<FEXCore::Context::ContextImpl*>(impl->Context.get())->ReuseGenerationCounter =
