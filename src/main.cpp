@@ -34,11 +34,17 @@
 #include <windows.h>
 #elif defined(__APPLE__)
 #include <sys/sysctl.h>
+#include <mach/arm/thread_status.h>
 #endif
 
 #include <signal.h>
 #include <unistd.h>
 #include <sys/syscall.h>
+#if defined(__APPLE__) && !defined(_XOPEN_SOURCE)
+// Recent macOS SDKs gate the (deprecated but still used here) ucontext_t routines behind
+// this feature-test macro; without it <ucontext.h> itself #errors out.
+#define _XOPEN_SOURCE
+#endif
 #include <ucontext.h>
 #include <cstdio>
 #include <cstring>
@@ -56,7 +62,15 @@ static void BachataSigsysHandler(int signo, siginfo_t* info, void* uctx) {
     ucontext_t* _ctx = reinterpret_cast<ucontext_t*>(uctx);
     uint64_t pc = 0, sp = 0, x8 = 0;
     uint64_t x0 = 0, x1 = 0, x2 = 0, x3 = 0, x4 = 0, x5 = 0, x29 = 0, x30 = 0;
-#ifdef __aarch64__
+    // SIGSYS is fundamentally a Linux seccomp-bpf concept (this whole handler realistically
+    // never fires on Darwin, which has no seccomp), but InstallBachataSigsysTrap() below
+    // registers it unconditionally on every platform, so this still has to compile
+    // correctly everywhere. ucontext_t's mcontext layout is NOT portable: glibc's aarch64
+    // mcontext_t exposes flat .pc/.sp/.regs[] fields (Linux branch below), but Darwin's is a
+    // pointer to an opaque arm_thread_state64_t with pointer-authentication-safe accessors
+    // (arm_thread_state64_get_pc/_sp/_fp/_lr) -- same pattern already used for the real,
+    // load-bearing signal handling in signals.cpp and fex_guest_engine.cpp.
+#if defined(__aarch64__) && !defined(__APPLE__)
     if (_ctx) {
         pc = _ctx->uc_mcontext.pc;
         sp = _ctx->uc_mcontext.sp;
@@ -70,6 +84,21 @@ static void BachataSigsysHandler(int signo, siginfo_t* info, void* uctx) {
         x29 = _ctx->uc_mcontext.regs[29];
         x30 = _ctx->uc_mcontext.regs[30];
     }
+#elif defined(__aarch64__) && defined(__APPLE__)
+    if (_ctx && _ctx->uc_mcontext) {
+        auto& ts = _ctx->uc_mcontext->__ss;
+        pc = arm_thread_state64_get_pc(ts);
+        sp = arm_thread_state64_get_sp(ts);
+        x8 = ts.__x[8];
+        x0 = ts.__x[0];
+        x1 = ts.__x[1];
+        x2 = ts.__x[2];
+        x3 = ts.__x[3];
+        x4 = ts.__x[4];
+        x5 = ts.__x[5];
+        x29 = arm_thread_state64_get_fp(ts);
+        x30 = arm_thread_state64_get_lr(ts);
+    }
 #endif
 
     // Best-effort guest RIP/syscall capture. On the FEX guest CPU path, mid-JIT
@@ -81,7 +110,21 @@ static void BachataSigsysHandler(int signo, siginfo_t* info, void* uctx) {
     uint64_t guest_syscall = 0;
     bool have_guest = false;
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-    have_guest = Core::Fex::BachataQueryGuestRipSyscall(&guest_rip, &guest_syscall);
+    have_guest = AetherPS4::Fex::BachataQueryGuestRipSyscall(&guest_rip, &guest_syscall);
+#endif
+
+    // si_syscall/si_arch/si_call_addr are Linux seccomp-bpf-specific siginfo_t fields --
+    // Darwin's siginfo_t has no equivalent (there's no seccomp there), so these stay at
+    // their "unavailable" sentinel values on Apple platforms.
+    int si_syscall_val = -1;
+    unsigned int si_arch_val = 0;
+    unsigned long si_call_addr_val = 0;
+#ifndef __APPLE__
+    if (info) {
+        si_syscall_val = info->si_syscall;
+        si_arch_val = info->si_arch;
+        si_call_addr_val = (unsigned long)(uintptr_t)info->si_call_addr;
+    }
 #endif
 
     char buf[1024];
@@ -100,9 +143,9 @@ static void BachataSigsysHandler(int signo, siginfo_t* info, void* uctx) {
         info ? info->si_signo : signo,
         info ? info->si_code : 0,
         info ? info->si_errno : 0,
-        info ? info->si_syscall : -1,
-        info ? info->si_arch : 0,
-        info ? (unsigned long)(uintptr_t)info->si_call_addr : 0UL,
+        si_syscall_val,
+        si_arch_val,
+        si_call_addr_val,
         (unsigned long)pc,
         (unsigned long)x8,
         (unsigned long)guest_rip,

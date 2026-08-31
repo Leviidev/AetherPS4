@@ -116,6 +116,14 @@ bool BachataDumpGuestRegisters(char* out_buf, std::size_t out_buf_size,
 // the variable-length x86 case. Returns false (out_buf untouched) outside iOS/FEX builds.
 bool BachataDumpHostCodeWords(void* fault_pc, char* out_buf, std::size_t out_buf_size) noexcept;
 
+// Crash-diagnostic only: reconstructs the *exact* guest RIP that was executing at fault_pc, using
+// FEXCore's own per-block RIP-entries side table (FEXCore::Context::Context::RestoreRIPFromHostPC)
+// rather than the last stale JIT/HLE checkpoint BachataQueryGuestRipSyscall reports. Needed for
+// faults that land deep inside a large, branch-free block, where the checkpoint RIP is just the
+// block's entry point, nowhere near the actual faulting instruction. Returns false (out_rip
+// untouched) if no FEX thread is active on the current host thread.
+bool BachataReconstructAccurateGuestRIP(void* fault_pc, uint64_t* out_rip) noexcept;
+
 // Diagnostic-only pair for one specific, known-deterministic guest block (see the matching call
 // in Core.cpp's ContextImpl::CompileBlock). Record stores a snapshot of the freshly compiled
 // bytes at compile time; Compare re-reads the same address later (from the crash path) and

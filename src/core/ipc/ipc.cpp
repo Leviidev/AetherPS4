@@ -18,7 +18,9 @@
 #include "core/libraries/audio/audioout.h"
 #include "input/input_handler.h"
 #include "sdl_window.h"
+#ifndef SHADPS4_DISABLE_USBD
 #include "src/core/libraries/usbd/usbd.h"
+#endif
 #include "video_core/renderer_vulkan/vk_presenter.h"
 
 extern std::unique_ptr<Vulkan::Presenter> presenter;
@@ -171,6 +173,7 @@ void IPC::InputLoop() {
                 presenter->GetFsrSettingsRef().rcas_attenuation =
                     static_cast<float>(value / 1000.0f);
             }
+#ifndef SHADPS4_DISABLE_USBD
         } else if (cmd == "USB_LOAD_FIGURE") {
             const auto ref = Libraries::Usbd::usb_backend->GetImplRef();
             if (ref) {
@@ -208,6 +211,7 @@ void IPC::InputLoop() {
                 const u8 index = next_u64();
                 ref->CancelRemoveFigure(index);
             }
+#endif
         } else if (cmd == "RELOAD_INPUTS") {
             std::string config = next_str();
             Input::ParseInputConfig(config);

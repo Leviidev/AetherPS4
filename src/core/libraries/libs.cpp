@@ -110,10 +110,9 @@ void InitHLELibs(Core::Loader::SymbolsResolver* sym) {
     Libraries::CommonDialog::RegisterLib(sym);
     Libraries::MsgDialog::RegisterLib(sym);
     Libraries::AudioOut::RegisterLib(sym);
-    // Same class of gap as libSceRtc above: fully implemented but only ever registered
-    // via the sysmodule-load-gated table, so any game using NGS2 audio without an
-    // explicit sceSysmoduleLoadModule("libSceNgs2.sprx") call got ENOSYS for every
-    // sceNgs2* function.
+    // Re-enabled: confirmed innocent, along with Rtc/JpegEnc/PngEnc/Font/FontFt/
+    // SystemGesture below (same diagnostic as LibcInternal above) -- the exact same
+    // Title-Screen heap-corruption crash still happened on-device with all 7 disabled.
     Libraries::Ngs2::RegisterLib(sym);
     Libraries::Http::RegisterLib(sym);
     Libraries::Http2::RegisterLib(sym);
@@ -188,15 +187,8 @@ void InitHLELibs(Core::Loader::SymbolsResolver* sym) {
     Libraries::VrTracker::RegisterLib(sym);
     Libraries::ContentExport::RegisterLib(sym);
     Libraries::VideoRecording::RegisterLib(sym);
-    // Real Time Clock is a basic utility library like the ones above -- most games call
-    // it without ever explicitly calling sceSysmoduleLoadModule("libSceRtc.sprx") first
-    // (confirmed on-device: Rocket League statically imports sceRtcGetCurrentClock etc.
-    // but never loads the module, so the sysmodule-table-gated registration in
-    // sysmodule_internal.cpp never fires and every RTC call falls through to ENOSYS).
+    // Re-enabled: confirmed innocent (see Ngs2 above).
     Libraries::Rtc::RegisterLib(sym);
-    // Same gated-but-fully-implemented pattern as Rtc/Ngs2/LibcInternal above, found by
-    // cross-referencing sysmodule_internal.cpp's gated table against this list: these four
-    // were never registered anywhere except behind an explicit sceSysmoduleLoadModule call.
     Libraries::JpegEnc::RegisterLib(sym);
     Libraries::PngEnc::RegisterLib(sym);
     Libraries::Font::RegisterlibSceFont(sym);

@@ -9,33 +9,33 @@
 namespace Core {
 namespace {
 
-GuestExecutionStage ToGuestStage(Fex::EngineStage stage) {
+GuestExecutionStage ToGuestStage(AetherPS4::Fex::EngineStage stage) {
     switch (stage) {
-    case Fex::EngineStage::Request:
+    case AetherPS4::Fex::EngineStage::Request:
         return GuestExecutionStage::Request;
-    case Fex::EngineStage::Mapping:
-    case Fex::EngineStage::Invalidate:
+    case AetherPS4::Fex::EngineStage::Mapping:
+    case AetherPS4::Fex::EngineStage::Invalidate:
         return GuestExecutionStage::Mapping;
-    case Fex::EngineStage::Thread:
+    case AetherPS4::Fex::EngineStage::Thread:
         return GuestExecutionStage::Thread;
-    case Fex::EngineStage::Teardown:
+    case AetherPS4::Fex::EngineStage::Teardown:
         return GuestExecutionStage::Teardown;
-    case Fex::EngineStage::Config:
-    case Fex::EngineStage::Context:
-    case Fex::EngineStage::Execute:
-    case Fex::EngineStage::Bridge:
+    case AetherPS4::Fex::EngineStage::Config:
+    case AetherPS4::Fex::EngineStage::Context:
+    case AetherPS4::Fex::EngineStage::Execute:
+    case AetherPS4::Fex::EngineStage::Bridge:
         return GuestExecutionStage::Execute;
     }
     return GuestExecutionStage::Execute;
 }
 
-GuestExecutionFailure ToGuestFailure(const Fex::EngineFailure& failure) {
+GuestExecutionFailure ToGuestFailure(const AetherPS4::Fex::EngineFailure& failure) {
     return {ToGuestStage(failure.Stage), failure.Error == 0 ? EIO : failure.Error};
 }
 
 } // namespace
 
-FexGuestCpuBackend::FexGuestCpuBackend(std::unique_ptr<Fex::GuestEngine> engine_)
+FexGuestCpuBackend::FexGuestCpuBackend(std::unique_ptr<AetherPS4::Fex::GuestEngine> engine_)
     : engine{std::move(engine_)} {}
 
 FexGuestCpuBackend::~FexGuestCpuBackend() = default;
@@ -46,12 +46,12 @@ FexGuestCpuBackend::Thread::~Thread() {
     }
 }
 
-FexGuestCpuBackend::CreateResult FexGuestCpuBackend::Create(Fex::GuestBridge& bridge) {
-    auto result = Fex::GuestEngine::Create(bridge);
-    if (const auto* failure = std::get_if<Fex::EngineFailure>(&result)) {
+FexGuestCpuBackend::CreateResult FexGuestCpuBackend::Create(AetherPS4::Fex::GuestBridge& bridge) {
+    auto result = AetherPS4::Fex::GuestEngine::Create(bridge);
+    if (const auto* failure = std::get_if<AetherPS4::Fex::EngineFailure>(&result)) {
         return ToGuestFailure(*failure);
     }
-    return std::unique_ptr<FexGuestCpuBackend>{new FexGuestCpuBackend{std::move(std::get<std::unique_ptr<Fex::GuestEngine>>(result))}};
+    return std::unique_ptr<FexGuestCpuBackend>{new FexGuestCpuBackend{std::move(std::get<std::unique_ptr<AetherPS4::Fex::GuestEngine>>(result))}};
 }
 
 FexGuestCpuBackend::ThreadResult FexGuestCpuBackend::CreateThread(const GuestExecutionRequest& request) {
@@ -59,10 +59,10 @@ FexGuestCpuBackend::ThreadResult FexGuestCpuBackend::CreateThread(const GuestExe
         return GuestExecutionFailure{GuestExecutionStage::Teardown, ESHUTDOWN};
     }
     auto result = engine->CreateThread(request);
-    if (const auto* failure = std::get_if<Fex::EngineFailure>(&result)) {
+    if (const auto* failure = std::get_if<AetherPS4::Fex::EngineFailure>(&result)) {
         return ToGuestFailure(*failure);
     }
-    return std::unique_ptr<Thread>{new Thread{*this, std::get<Fex::GuestEngine::Thread*>(result)}};
+    return std::unique_ptr<Thread>{new Thread{*this, std::get<AetherPS4::Fex::GuestEngine::Thread*>(result)}};
 }
 
 GuestExecutionResult FexGuestCpuBackend::Run(Thread& thread) {
@@ -70,7 +70,7 @@ GuestExecutionResult FexGuestCpuBackend::Run(Thread& thread) {
         return GuestExecutionFailure{GuestExecutionStage::Teardown, ESHUTDOWN};
     }
     auto result = engine->Run(*thread.thread);
-    if (const auto* failure = std::get_if<Fex::EngineFailure>(&result)) {
+    if (const auto* failure = std::get_if<AetherPS4::Fex::EngineFailure>(&result)) {
         return ToGuestFailure(*failure);
     }
     return std::get<GuestExecutionState>(result);
@@ -82,7 +82,7 @@ GuestExecutionResult FexGuestCpuBackend::CallGuest(
         return GuestExecutionFailure{GuestExecutionStage::Teardown, ESHUTDOWN};
     }
     auto result = engine->CallGuest(rip, arguments);
-    if (const auto* failure = std::get_if<Fex::EngineFailure>(&result)) {
+    if (const auto* failure = std::get_if<AetherPS4::Fex::EngineFailure>(&result)) {
         return ToGuestFailure(*failure);
     }
     return std::get<GuestExecutionState>(result);
@@ -93,7 +93,7 @@ FexGuestCpuBackend::OperationResult FexGuestCpuBackend::Invalidate(Thread& threa
         return GuestExecutionFailure{GuestExecutionStage::Teardown, ESHUTDOWN};
     }
     auto result = engine->Invalidate(*thread.thread, begin, size);
-    if (const auto* failure = std::get_if<Fex::EngineFailure>(&result)) {
+    if (const auto* failure = std::get_if<AetherPS4::Fex::EngineFailure>(&result)) {
         return ToGuestFailure(*failure);
     }
     return true;
@@ -105,7 +105,7 @@ FexGuestCpuBackend::OperationResult FexGuestCpuBackend::DestroyThread(std::uniqu
     }
     auto* nativeThread = thread->thread;
     auto result = engine->DestroyThread(nativeThread);
-    if (const auto* failure = std::get_if<Fex::EngineFailure>(&result)) {
+    if (const auto* failure = std::get_if<AetherPS4::Fex::EngineFailure>(&result)) {
         return ToGuestFailure(*failure);
     }
     thread->thread = nullptr;
@@ -119,7 +119,7 @@ void FexGuestCpuBackend::DestroyThreadOrAbort(Thread& thread) noexcept {
     }
     auto* nativeThread = thread.thread;
     const auto result = engine->DestroyThread(nativeThread);
-    if (std::holds_alternative<Fex::EngineFailure>(result)) {
+    if (std::holds_alternative<AetherPS4::Fex::EngineFailure>(result)) {
         std::abort();
     }
     thread.thread = nullptr;

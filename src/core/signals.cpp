@@ -246,6 +246,32 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                 }
             }
         }
+        // guest_rip above is only the last JIT/HLE checkpoint (Frame->State.rip), which FEX
+        // doesn't update on every instruction while running straight-line JIT code -- for a
+        // fault deep inside a large, branch-free block (confirmed to be this block's actual
+        // shape: ~25KB of compiled code with no internal branches at all) that checkpoint is
+        // just the block's entry point, not the faulting instruction, which could be thousands
+        // of bytes further in. This calls into FEXCore's own per-block RIP-entries side table
+        // (via the newly-fixed ContextImpl::RestoreRIPFromHostPC -- see its Core.cpp comment)
+        // using code_address, the actual host fault PC, to get the exact guest instruction.
+        uint64_t accurate_guest_rip = 0;
+        if (::AetherPS4::Fex::BachataReconstructAccurateGuestRIP(code_address, &accurate_guest_rip)) {
+            LOG_CRITICAL(Debug, "FEX accurate guest rip at fault (reconstructed from host pc): {:#x}",
+                         accurate_guest_rip);
+            if (auto* memory = Core::Memory::Instance()) {
+                ::Libraries::Kernel::OrbisVirtualQueryInfo rip_vma{};
+                if (memory->VirtualQuery(accurate_guest_rip, 0, &rip_vma) == 0) {
+                    const auto* bytes = reinterpret_cast<const volatile uint8_t*>(
+                        static_cast<uintptr_t>(accurate_guest_rip));
+                    char hex[64] = {};
+                    char* w = hex;
+                    for (int i = 0; i < 16; ++i) {
+                        w += std::snprintf(w, hex + sizeof(hex) - w, "%02x ", bytes[i]);
+                    }
+                    LOG_CRITICAL(Debug, "FEX guest instruction bytes at accurate rip: {}", hex);
+                }
+            }
+        }
         // rip/rax alone weren't enough to tell what a NULL-pointer guest write actually came
         // from (which pointer was null, what called into the code that dereferenced it) --
         // the rest of the GPRs are whatever arguments/locals were live at the fault, and RSP

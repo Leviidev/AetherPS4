@@ -259,7 +259,9 @@ void VideoOutDriver::Flip(const Request& req) {
 
     // Present the frame.
     presenter->Present(req.frame);
+#ifdef ENABLE_BACHATA_RUNTIME
     Platform::Bachata::ReportPresentedFrame();
+#endif
     if (present_traces.load(std::memory_order_relaxed) <= 32) {
         LOG_INFO(Lib_VideoOut, "BACHATA_FLIP_TRACE stage=present_returned index={} arg={}",
                  req.index, req.flip_arg);

@@ -80,10 +80,10 @@ public:
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
         for (;;) {
             if (sem.try_acquire_for(std::chrono::milliseconds{25})) {
-                Core::Fex::FlushPendingGuestOrbisSignal();
+                AetherPS4::Fex::FlushPendingGuestOrbisSignal();
                 return;
             }
-            Core::Fex::FlushPendingGuestOrbisSignal();
+            AetherPS4::Fex::FlushPendingGuestOrbisSignal();
         }
 #else
         sem.acquire();
@@ -132,24 +132,24 @@ public:
             const auto now = std::chrono::steady_clock::now();
             if (now >= deadline) {
                 const bool acquired = sem.try_acquire();
-                Core::Fex::FlushPendingGuestOrbisSignal();
+                AetherPS4::Fex::FlushPendingGuestOrbisSignal();
                 return acquired;
             }
         }
         for (;;) {
             const auto now = std::chrono::steady_clock::now();
             if (now >= deadline) {
-                Core::Fex::FlushPendingGuestOrbisSignal();
+                AetherPS4::Fex::FlushPendingGuestOrbisSignal();
                 return false;
             }
             auto remaining = std::chrono::duration_cast<std::chrono::nanoseconds>(deadline - now);
             auto slice = std::min(remaining,
                 std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::milliseconds{25}));
             if (sem.try_acquire_for(slice)) {
-                Core::Fex::FlushPendingGuestOrbisSignal();
+                AetherPS4::Fex::FlushPendingGuestOrbisSignal();
                 return true;
             }
-            Core::Fex::FlushPendingGuestOrbisSignal();
+            AetherPS4::Fex::FlushPendingGuestOrbisSignal();
         }
 #else
         return sem.try_acquire_for(rel_time);

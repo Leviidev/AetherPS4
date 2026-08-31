@@ -5,6 +5,7 @@
 #include "common/crash_reporter.h"
 #ifndef _WIN32
 #include <fcntl.h>
+#include <pthread.h>
 #include <signal.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -13,7 +14,19 @@
 #include <cstdlib>
 #include <cstring>
 
-#ifdef ARCH_X86_64
+#ifdef __APPLE__
+// Darwin's <ucontext.h> hard-errors on the deprecated getcontext/setcontext/swapcontext
+// declarations unless _XOPEN_SOURCE is defined; only the ucontext_t/mcontext_t *types*
+// are needed below, never those functions.
+#define _XOPEN_SOURCE 1
+#include <ucontext.h>
+// pc/sp/fp/lr accessor macros: on Apple Silicon these fields are pointer-authentication-
+// opaque and can't be read as plain integers, see <mach/arm/_structs.h>.
+#include <mach/arm/thread_status.h>
+#include <mach/mach.h>
+// <mach/mach_vm.h> was included but never used, and is unavailable on iOS's SDK
+// (the header itself #errors out there) -- dropped rather than ported.
+#elif defined(ARCH_X86_64)
 #include <sys/ucontext.h>
 #endif
 
@@ -21,6 +34,17 @@ namespace Common {
 namespace {
 
 static bool gCrashReporterEnabled = false;
+
+int get_tid() {
+#ifdef __APPLE__
+    // Darwin has no gettid(); pthread_threadid_np gives the same kind of kernel thread id.
+    uint64_t tid = 0;
+    pthread_threadid_np(nullptr, &tid);
+    return (int)tid;
+#else
+    return (int)gettid();
+#endif
+}
 
 void safe_write(int fd, const char* buf, size_t len) {
     for (size_t written = 0; written < len;) {
@@ -199,7 +223,7 @@ void ReportCrash(void* raw_context, int signum, void* siginfo_ptr) {
     // Thread identity
     char thread_name[16] = {};
     safe_write_str(fd, "\n[Bachata.Crash] tid=");
-    safe_write_dec(fd, (int)gettid());
+    safe_write_dec(fd, get_tid());
 
     // Signal info
     safe_write_str(fd, " signal=");
@@ -241,45 +265,64 @@ void ReportCrash(void* raw_context, int signum, void* siginfo_ptr) {
     safe_write_hex(fd, reinterpret_cast<uint64_t>(fault_addr));
     safe_write_str(fd, "\n");
 #elif defined(ARCH_ARM64)
-    auto* ctx = static_cast<const ucontext_t*>(raw_context);
     void* fault_addr = siginfo_ptr ? reinterpret_cast<siginfo_t*>(siginfo_ptr)->si_addr : nullptr;
     int sig_code = siginfo_ptr ? reinterpret_cast<const siginfo_t*>(siginfo_ptr)->si_code : 0;
 
+#ifdef __APPLE__
+    // Darwin's mcontext_t is itself a pointer (uc_mcontext is not an embedded struct like
+    // Linux), and pc/sp/fp/lr are pointer-authentication-opaque fields requiring the
+    // arm_thread_state64_get_* accessor macros rather than direct field access; x0-x28 are
+    // a plain contiguous array, unlike fp/lr which are separate fields.
+    auto* ctx = static_cast<const ucontext_t*>(raw_context);
+    const auto& ts = ctx->uc_mcontext->__ss;
+    uint64_t regs[31];
+    memcpy(regs, ts.__x, sizeof(ts.__x));
+    regs[29] = (uint64_t)arm_thread_state64_get_fp(ts);
+    regs[30] = (uint64_t)arm_thread_state64_get_lr(ts);
+    const uint64_t pc = (uint64_t)arm_thread_state64_get_pc(ts);
+    const uint64_t sp = (uint64_t)arm_thread_state64_get_sp(ts);
+#else
+    auto* ctx = static_cast<const ucontext_t*>(raw_context);
+    const uint64_t* regs = ctx->uc_mcontext.regs;
+    const uint64_t pc = (uint64_t)ctx->uc_mcontext.pc;
+    const uint64_t sp = (uint64_t)ctx->uc_mcontext.sp;
+#endif
+
     safe_write_str(fd, "\n[Bachata.Crash] tid=");
-    safe_write_dec(fd, (int)gettid());
+    safe_write_dec(fd, get_tid());
     safe_write_str(fd, " signal=");
     safe_write_dec(fd, signum);
     safe_write_str(fd, " code=");
     safe_write_dec(fd, sig_code);
 
     safe_write_str(fd, "\n[Bachata.Crash] pc=");
-    safe_write_hex(fd, (uint64_t)ctx->uc_mcontext.pc);
+    safe_write_hex(fd, pc);
     safe_write_str(fd, " sp=");
-    safe_write_hex(fd, (uint64_t)ctx->uc_mcontext.sp);
+    safe_write_hex(fd, sp);
     safe_write_str(fd, " fp=");
-    safe_write_hex(fd, ctx->uc_mcontext.regs[29]);
+    safe_write_hex(fd, regs[29]);
     safe_write_str(fd, " lr=");
-    safe_write_hex(fd, ctx->uc_mcontext.regs[30]);
+    safe_write_hex(fd, regs[30]);
 
     safe_write_str(fd, "\n[Bachata.Crash] x0=");
-    safe_write_hex(fd, ctx->uc_mcontext.regs[0]);
+    safe_write_hex(fd, regs[0]);
     safe_write_str(fd, " x1=");
-    safe_write_hex(fd, ctx->uc_mcontext.regs[1]);
+    safe_write_hex(fd, regs[1]);
     safe_write_str(fd, " x2=");
-    safe_write_hex(fd, ctx->uc_mcontext.regs[2]);
+    safe_write_hex(fd, regs[2]);
     safe_write_str(fd, " x3=");
-    safe_write_hex(fd, ctx->uc_mcontext.regs[3]);
+    safe_write_hex(fd, regs[3]);
 
     safe_write_str(fd, "\n[Bachata.Crash] x4=");
-    safe_write_hex(fd, ctx->uc_mcontext.regs[4]);
+    safe_write_hex(fd, regs[4]);
     safe_write_str(fd, " x5=");
-    safe_write_hex(fd, ctx->uc_mcontext.regs[5]);
+    safe_write_hex(fd, regs[5]);
     safe_write_str(fd, " x6=");
-    safe_write_hex(fd, ctx->uc_mcontext.regs[6]);
+    safe_write_hex(fd, regs[6]);
     safe_write_str(fd, " x7=");
-    safe_write_hex(fd, ctx->uc_mcontext.regs[7]);
+    safe_write_hex(fd, regs[7]);
     safe_write_str(fd, " x8=");
-    safe_write_hex(fd, ctx->uc_mcontext.regs[8]);
+    safe_write_hex(fd, regs[8]);
 
     safe_write_str(fd, " fault=");
     safe_write_hex(fd, reinterpret_cast<uint64_t>(fault_addr));
@@ -287,12 +330,12 @@ void ReportCrash(void* raw_context, int signum, void* siginfo_ptr) {
 
     // Dump callee-saved regs that BindVertexBuffers uses for dispatch lookup
     safe_write_str(fd, "[Bachata.Crash] x19=");
-    safe_write_hex(fd, ctx->uc_mcontext.regs[19]);
+    safe_write_hex(fd, regs[19]);
     safe_write_str(fd, " x26=");
-    safe_write_hex(fd, ctx->uc_mcontext.regs[26]);
+    safe_write_hex(fd, regs[26]);
     safe_write_str(fd, "\n");
 
-    if (signum == SIGSEGV && (uint64_t)ctx->uc_mcontext.pc == 0) {
+    if (signum == SIGSEGV && pc == 0) {
         dump_maps(fd);
     }
 #endif

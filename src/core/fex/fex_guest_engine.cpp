@@ -1536,6 +1536,36 @@ bool BachataDumpHostCodeWords(void* fault_pc, char* out_buf, std::size_t out_buf
 #endif
 }
 
+bool BachataReconstructAccurateGuestRIP(void* fault_pc, uint64_t* out_rip) noexcept {
+  // BachataQueryGuestRipSyscall only reports the last JIT/HLE checkpoint's Frame->State.rip --
+  // accurate at a syscall boundary, but stale mid-block, since FEX doesn't update it on every
+  // instruction while executing straight-line JIT code. For a fault that lands deep inside a
+  // large, branch-free block (the exact shape of the block chased for the Rocket League
+  // null-write crash: a single ~25KB compiled fragment with no internal branches at all), that
+  // stale RIP is just the block's entry point, not the actual faulting instruction -- nowhere
+  // near enough to identify which of hundreds of near-identical RIP-relative stores in the block
+  // is the one that goes wrong.
+  //
+  // FEXCore::Context::Context::RestoreRIPFromHostPC exists specifically to solve this: every
+  // compiled block carries a side-table (JITCodeTail's RIP entries, see JIT.cpp's emission of
+  // DebugData->GuestOpcodes) mapping host PC ranges back to exact guest RIPs, built for this
+  // exact purpose. It was never called anywhere in this codebase before now -- Core.cpp's
+  // GetFrameBlockInfo dereferenced the execute-only alias of InlineJITBlockHeader directly,
+  // which is the same iOS dual-mapped-JIT trap Arm64.cpp's SIGBUS handler already hit and fixed
+  // once (undeliverable second fault, silently kills the handling thread, zero further output).
+  // Fixed at the source (Core.cpp) rather than worked around here, since every caller of
+  // RestoreRIPFromHostPC benefits, not just this one diagnostic.
+  if (fault_pc == nullptr || out_rip == nullptr) {
+    return false;
+  }
+  const auto& exec = ActiveFexExecution;
+  if (exec.Context == nullptr || exec.Thread == nullptr || exec.Thread->CurrentFrame == nullptr) {
+    return false;
+  }
+  *out_rip = exec.Context->RestoreRIPFromHostPC(exec.Thread, reinterpret_cast<uint64_t>(fault_pc));
+  return true;
+}
+
 bool BachataDescribeHostFaultAddress(void* fault_addr, char* out_buf, std::size_t out_buf_size) noexcept {
 #if defined(__APPLE__) && TARGET_OS_IPHONE
   if (out_buf == nullptr || out_buf_size == 0) {

@@ -10,7 +10,7 @@
 
 namespace Core::GuestCpu {
 
-class HleGuestBridge final : public Fex::GuestBridge {
+class HleGuestBridge final : public AetherPS4::Fex::GuestBridge {
 public:
     using RangeValidator = bool (*)(void* context, std::uintptr_t address, std::size_t size,
                                     bool writable);
@@ -23,7 +23,7 @@ public:
                    ExecutableRangeQuery executable_query_ = nullptr,
                    void* executable_query_context_ = nullptr);
 
-    Fex::EngineResult<bool> Invoke(HleCallFrame& frame) override;
+    AetherPS4::Fex::EngineResult<bool> Invoke(HleCallFrame& frame) override;
     std::optional<GuestExecutionRange> QueryExecutableRange(std::uintptr_t address) override;
 
 private:

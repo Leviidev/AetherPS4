@@ -19,18 +19,18 @@ public:
     private:
         friend class FexGuestCpuBackend;
 
-        Thread(FexGuestCpuBackend& owner_, Fex::GuestEngine::Thread* thread_)
+        Thread(FexGuestCpuBackend& owner_, AetherPS4::Fex::GuestEngine::Thread* thread_)
             : owner{owner_}, thread{thread_} {}
 
         FexGuestCpuBackend& owner;
-        Fex::GuestEngine::Thread* thread{};
+        AetherPS4::Fex::GuestEngine::Thread* thread{};
     };
 
     using CreateResult = std::variant<std::unique_ptr<FexGuestCpuBackend>, GuestExecutionFailure>;
     using ThreadResult = std::variant<std::unique_ptr<Thread>, GuestExecutionFailure>;
     using OperationResult = std::variant<bool, GuestExecutionFailure>;
 
-    static CreateResult Create(Fex::GuestBridge& bridge);
+    static CreateResult Create(AetherPS4::Fex::GuestBridge& bridge);
 
     FexGuestCpuBackend(const FexGuestCpuBackend&) = delete;
     FexGuestCpuBackend& operator=(const FexGuestCpuBackend&) = delete;
@@ -48,10 +48,10 @@ public:
     GuestExecutionRange CallbackReturnRange() const;
 
 private:
-    explicit FexGuestCpuBackend(std::unique_ptr<Fex::GuestEngine> engine_);
+    explicit FexGuestCpuBackend(std::unique_ptr<AetherPS4::Fex::GuestEngine> engine_);
     void DestroyThreadOrAbort(Thread& thread) noexcept;
 
-    std::unique_ptr<Fex::GuestEngine> engine;
+    std::unique_ptr<AetherPS4::Fex::GuestEngine> engine;
 };
 
 } // namespace Core

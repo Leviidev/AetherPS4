@@ -22,8 +22,14 @@ typedef int socklen_t;
 typedef int net_socket;
 #endif
 #if defined(__APPLE__)
+#include <TargetConditionals.h>
 #include <net/if_dl.h>
+#if !TARGET_OS_IPHONE
+// <net/route.h>'s PF_ROUTE raw-socket routing-table API needs privileges iOS's app
+// sandbox doesn't grant; RetrieveDefaultGateway() falls back to reporting failure
+// there instead (see below), same as any other lookup-failed case on other platforms.
 #include <net/route.h>
+#endif
 #endif
 #if defined(__linux__) || defined(__FreeBSD__)
 #include <fstream>
@@ -164,6 +170,8 @@ bool NetUtilInternal::RetrieveDefaultGateway() {
         }
     }
 
+    return false;
+#elif defined(__APPLE__) && TARGET_OS_IPHONE
     return false;
 #elif defined(__APPLE__)
     // adapted from

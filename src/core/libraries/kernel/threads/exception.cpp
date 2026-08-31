@@ -285,7 +285,7 @@ void SigactionHandler(int native_signum, siginfo_t* inf, ucontext_t* raw_context
         // ARM64 host: guest handlers are x86 code. Deliver through FEX using guest VA.
         const auto orbis_sig = NativeToOrbisSignal(native_signum);
         const auto guest_handler = reinterpret_cast<std::uintptr_t>(handler);
-        if (Core::Fex::DeliverGuestOrbisSignal(orbis_sig, inf, raw_context, guest_handler)) {
+        if (AetherPS4::Fex::DeliverGuestOrbisSignal(orbis_sig, inf, raw_context, guest_handler)) {
             return;
         }
         LOG_ERROR(Lib_Kernel,
