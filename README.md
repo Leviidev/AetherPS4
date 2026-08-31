@@ -17,7 +17,7 @@ ongoing and most titles are untested.
 | --- | --- |
 | Sonic Mania | Playable |
 | Journey | Loads, but can't progress past its first chapter transition yet |
-| Minecraft: PlayStation®4 Edition | Currently being tested |
+| Rocket League | Currently being tested |
 
 ## File structure
 
