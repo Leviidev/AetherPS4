@@ -1017,7 +1017,7 @@ index d555e06..92d483e 100644
        ARMEmitter::ForwardLabel l_CallReturn;
        if (!Op->CallReturnBlock.IsInvalid()) {
 diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
-index b872b6f..a46d99b 100644
+index b872b6f..db7f0a1 100644
 --- a/FEXCore/Source/Interface/Core/JIT/JIT.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
 @@ -35,6 +35,7 @@ $end_info$
@@ -1110,7 +1110,7 @@ index b872b6f..a46d99b 100644
    // Lock here is necessary to prevent simultaneous linking and delinking
    auto lk = Thread->LookupCache->AcquireWriteLock();
  
-@@ -610,25 +661,63 @@ uint64_t Arm64JITCore::ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEX
+@@ -610,25 +661,79 @@ uint64_t Arm64JITCore::ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEX
          GuestRip, Record, [](FEXCore::Context::ExitFunctionLinkData* Record) { DirectBlockDelinker(Record, false); }, lk);
      }
  
@@ -1175,10 +1175,26 @@ index b872b6f..a46d99b 100644
 +      reinterpret_cast<std::atomic<uint64_t>*>(Frame->Pointers.ReuseGenerationCounterAddress)
 +        ->load(std::memory_order_acquire);
 +  }
++  // Diagnostic-only, gated to one known-deterministic guest RIP: chasing a 100%-reproducible
++  // "instruction-fetch fault, not inside any currently-live JIT allocation" crash that always
++  // resolves this exact GuestRIP. The reuse-generation check above (Dispatcher.cpp's
++  // ExitFunctionLinker) already confirmed no buffer-reuse cycle happens around the fault --
++  // live_gen matched ExitFunctionLinkValidatedGeneration exactly -- so the HostCode this
++  // function is about to return is either wrong from the moment it was computed (a genuine
++  // CompileBlock/FindBlock correctness bug for this specific guest function) or gets corrupted
++  // somewhere between this return and ExitFunctionLinker's own branch, outside the reuse
++  // mechanism entirely. Logging the exact value right here, at the one point closest to its
++  // computation, settles which.
++  if (GuestRip == 0x70007b9cf0ULL) {
++    LogMan::Msg::EFmt("BACHATA_EXITFUNCTIONLINK_TARGET: GuestRip={:#x} HostCode={:#x} TFSet={} "
++                      "IsAddressInCodeBuffer={}",
++                      GuestRip, HostCode, TFSet,
++                      HostCode != 0 ? static_cast<Context::ContextImpl*>(Thread->CTX)->IsAddressInCodeBuffer(Thread, HostCode) : false);
++  }
    return HostCode;
  }
  
-@@ -702,11 +791,30 @@ void Arm64JITCore::ClearCache() {
+@@ -702,11 +807,30 @@ void Arm64JITCore::ClearCache() {
    auto PrevCodeBuffer = CurrentCodeBuffer;
    auto lk = PrevCodeBuffer->LookupCache->AcquireWriteLock();
  
@@ -1209,7 +1225,7 @@ index b872b6f..a46d99b 100644
  }
  
  Arm64JITCore::~Arm64JITCore() {}
-@@ -1110,6 +1218,14 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1110,6 +1234,14 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
    {
      auto CodeBufferLock = std::unique_lock {CodeBuffers.CodeBufferWriteMutex};
  
@@ -1224,7 +1240,7 @@ index b872b6f..a46d99b 100644
      // Query size of generated code
      const auto TempSize = GetCursorOffset();
  
-@@ -1128,7 +1244,73 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1128,7 +1260,73 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
        SetCursorOffset(CodeBuffers.LatestOffset);
        Align16B();
        if ((GetCursorOffset() + TempSize) > CurrentCodeBuffer->UsableSize()) {
@@ -1298,7 +1314,7 @@ index b872b6f..a46d99b 100644
        }
  
        CodeBuffers.LatestOffset = GetCursorOffset();
-@@ -1139,6 +1321,12 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1139,6 +1337,12 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
      CodeData.BlockBegin += Delta;
      for (auto& EntryPoint : CodeData.EntryPoints) {
        EntryPoint.second += Delta;
@@ -1311,7 +1327,7 @@ index b872b6f..a46d99b 100644
      }
      CodeBegin += Delta;
  
-@@ -1151,11 +1339,39 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1151,11 +1355,39 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
      SetCursorOffset(CodeBuffers.LatestOffset + TempSize);
  
      CodeBuffers.LatestOffset = GetCursorOffset();
