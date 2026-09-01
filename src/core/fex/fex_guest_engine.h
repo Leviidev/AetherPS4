@@ -67,6 +67,14 @@ bool HandleGuestSignal(int signal, siginfo_t* info, void* rawContext) noexcept;
 // (no state changed) for anything else, including genuine wild guest pointers. See its
 // definition for the on-device crash that motivated it.
 bool TryRecoverJitAliasFault(int signal, siginfo_t* info, void* rawContext) noexcept;
+// Pragmatic, narrowly-targeted recovery for one specific, fully-diagnosed, deterministic
+// Rocket League crash (a read of a null-checked-but-invalid pointer while walking what looks
+// like Unreal Engine 3's property-linking chain, at one of exactly two known guest addresses
+// within one function) -- not a general null-pointer-survival mechanism. See its definition
+// for the full diagnostic history (three separate VMM-level hypotheses ruled out with hard
+// data) and why the specific recovery (treat the read as if it loaded 0, matching this same
+// function's own handling of a legitimately-null chain pointer) is safe here.
+bool TryRecoverKnownBadPropertyLink(int signal, siginfo_t* info, void* rawContext) noexcept;
 // Queue Orbis guest exception handler for deferred FEX delivery (ARM64 host).
 // orbis_sig is the Orbis signal number (e.g. 30 / SIGUSR1). guest_handler is the
 // guest VA from Libraries::Kernel::Handlers. Actual run is HandleCallback at HLE

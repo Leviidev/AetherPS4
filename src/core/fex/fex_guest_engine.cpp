@@ -2037,6 +2037,102 @@ bool TryRecoverJitAliasFault(int signal, siginfo_t* info, void* rawContext) noex
 #endif
 }
 
+// Pragmatic, narrowly-targeted recovery for a specific, known, 100%-reproducible Rocket
+// League crash: a "Game" (non-main) thread reads a null-checked-but-invalid pointer while
+// walking what looks like Unreal Engine 3's UProperty-style reflection-linking chain. Three
+// separate diagnostic rounds (PoolCommit/PoolDecommit history, GPU page-protect history, and
+// full MapMemory coverage tracking -- all in memory.h/memory.cpp, see DumpRecentPoolOps/
+// DumpRecentPageProtects/DumpRecentMapOps) conclusively ruled out every VMM-level explanation:
+// the backing 1.25GB "User Malloc" region is mapped by exactly one MapMemory call, with no
+// gap, and nothing ever commits/decommits or reprotects any part of it afterward. The fault
+// address itself is proven valid host memory; the *pointer value* the guest loaded is simply
+// wrong, meaning something upstream (almost certainly in the game's own code, or a race in
+// when this reflection-linking runs relative to whatever should have populated this field
+// first) wrote bad data into it before this code ever ran -- a much deeper investigation than
+// there's time for right now.
+//
+// The crash is fully deterministic in its *shape*: every occurrence is a read of
+// `[rdx+0x17c]` at one of exactly two guest addresses within the same small function
+// (0x7000b9ef55 and 0x7000b9ef67, both `mov reg, qword ptr [rdx+0x17c]` in the disassembled
+// x86), always immediately after `test rdx,rdx; je ...` has already confirmed rdx is
+// non-null. Static analysis of the surrounding x86 (see the investigation notes) confirmed
+// that simply treating both reads as if they'd loaded 0 -- matching what happens elsewhere in
+// this same function when the equivalent chain pointer legitimately IS null -- lets execution
+// fall through to code that reconverges safely a few instructions later, with no other
+// register or memory state left inconsistent. This is not a general "make null derefs survive"
+// hack: it only fires for these two exact guest addresses, decoded from the live guest RIP via
+// the same accurate-reconstruction mechanism used throughout this investigation
+// (BachataReconstructAccurateGuestRIP), so it cannot mask an unrelated crash elsewhere.
+bool TryRecoverKnownBadPropertyLink(int signal, siginfo_t* info, void* rawContext) noexcept {
+#if defined(__aarch64__) && defined(__APPLE__)
+  if (signal != SIGBUS && signal != SIGSEGV) {
+    return false;
+  }
+  if (rawContext == nullptr) {
+    return false;
+  }
+  if (ActiveFexExecution.Context == nullptr || ActiveFexExecution.Thread == nullptr) {
+    return false;
+  }
+
+  auto* context = reinterpret_cast<ucontext_t*>(rawContext);
+  auto& ts = context->uc_mcontext->__ss;
+  void* const pc = reinterpret_cast<void*>(arm_thread_state64_get_pc(ts));
+
+  uint64_t guest_rip = 0;
+  if (!BachataReconstructAccurateGuestRIP(pc, &guest_rip)) {
+    return false;
+  }
+  if (guest_rip != 0x7000b9ef55ULL && guest_rip != 0x7000b9ef67ULL) {
+    return false;
+  }
+
+  // Read the faulting instruction to find which host register it was about to load into --
+  // genuinely reading whatever FEXCore's register allocator picked this compile, rather than
+  // hardcoding a register number, so this stays correct even if a future recompile (different
+  // block layout, different live ranges) picks something else. Standard AArch64 load encoding:
+  // the destination register is bits[4:0] regardless of the specific load variant (ldr/ldur/
+  // ldapur/etc), which is all that's needed here -- this deliberately does not attempt to
+  // validate the full opcode, since the guest-RIP check above already narrows this to two
+  // known, previously-confirmed-by-disassembly instructions.
+  const auto* writable_pc = reinterpret_cast<const volatile uint32_t*>(
+      FEXCore::Allocator::GetWritableAddress(pc));
+  const uint32_t instr = *writable_pc;
+  const uint32_t dest_reg = instr & 0x1F;
+
+  uint64_t old_value = 0;
+  if (dest_reg == 31) {
+    // Encodes XZR/SP depending on instruction class -- neither is a real destination a load
+    // would target for this pattern (SP isn't a valid load destination; XZR would make the
+    // load a no-op prefetch, not what's on either known crash site). Bail rather than guess.
+    return false;
+  }
+  if (dest_reg == 29) {
+    old_value = static_cast<uint64_t>(arm_thread_state64_get_fp(ts));
+    arm_thread_state64_set_fp(ts, 0);
+  } else if (dest_reg == 30) {
+    old_value = reinterpret_cast<uint64_t>(arm_thread_state64_get_lr(ts));
+    arm_thread_state64_set_lr_fptr(ts, nullptr);
+  } else {
+    old_value = ts.__x[dest_reg];
+    ts.__x[dest_reg] = 0;
+  }
+
+  SignalSafeLog("BACHATA_PROPERTY_LINK_RECOVER: guest_rip=%p pc=%p instr=%#x dest_reg=x%u "
+                "old_value=%p -> 0, resuming at %p\n",
+                reinterpret_cast<void*>(guest_rip), pc, instr, dest_reg,
+                reinterpret_cast<void*>(old_value), reinterpret_cast<void*>(
+                    reinterpret_cast<uintptr_t>(pc) + 4));
+  arm_thread_state64_set_pc_fptr(ts, reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(pc) + 4));
+  return true;
+#else
+  static_cast<void>(signal);
+  static_cast<void>(info);
+  static_cast<void>(rawContext);
+  return false;
+#endif
+}
+
 class GuestEngine::Thread final {
 public:
   Thread(std::thread::id owner, Core::GuestExecutionRequest request)

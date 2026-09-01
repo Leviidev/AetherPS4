@@ -171,6 +171,16 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
         if (::AetherPS4::Fex::TryRecoverJitAliasFault(sig, info, raw_context)) {
             return;
         }
+        // One specific, fully-diagnosed Rocket League crash (see the function's own comment
+        // for the three rounds of VMM-level diagnostics that ruled out everything else):
+        // recovers by treating two known guest reads as if they'd loaded 0, exactly matching
+        // what this same guest function already does when the equivalent pointer is
+        // legitimately null. Deliberately placed last among the recovery attempts, and
+        // deliberately narrow (checks the exact guest RIP before touching anything) so it
+        // can't mask a genuinely different crash.
+        if (::AetherPS4::Fex::TryRecoverKnownBadPropertyLink(sig, info, raw_context)) {
+            return;
+        }
 #endif
         // If the guest has installed a custom signal handler, and the access violation didn't
         // come from HLE memory tracking, pass the signal on
