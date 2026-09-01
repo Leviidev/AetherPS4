@@ -451,6 +451,45 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
             }
             LOG_CRITICAL(Debug, "FEX host ARM64 registers at fault: {}",
                         std::string_view(host_regs, host_regs_len));
+            // A newly-seen crash shape: LR at fault pointed into the dispatcher's own
+            // ExitFunctionLinker assembly at the exact return site of its call into the native
+            // C++ ExitFunctionLink function -- i.e. this fault may be happening inside *native*
+            // code (ExitFunctionLink, or CompileBlock/CompileCode/IR emission that it calls on
+            // its slow path), not inside guest-JIT code at all, which the existing "not tracked
+            // JIT allocation" classification can't distinguish (native code is always
+            // "untracked" by that check, whether or not that's actually the bug). Standard
+            // AAPCS64 frames chain via [fp]=saved fp, [fp+8]=saved lr; walking it gives real
+            // native return addresses to symbolicate offline against this exact build's binary
+            // (matching dSYM/UUID from the shipped IPA), which settles definitively whether
+            // this is native call-stack corruption/a bad function pointer versus the familiar
+            // guest-JIT-branch-staleness class of bug.
+            uintptr_t frame_fp = static_cast<uintptr_t>(arm_thread_state64_get_fp(ts));
+            char native_bt[1024] = {};
+            int native_bt_len = 0;
+            for (int depth = 0; depth < 24 && frame_fp != 0 &&
+                 native_bt_len < static_cast<int>(sizeof(native_bt)) - 32;
+                 depth++) {
+                // fp must itself look like a plausible stack address before dereferencing it --
+                // a corrupted chain (which is exactly one of the hypotheses this is chasing)
+                // could easily hand back garbage, and this whole dump is diagnostic-only, not
+                // worth a second fault over.
+                if (frame_fp < 0x1000 || (frame_fp & 0x7) != 0) {
+                    break;
+                }
+                const auto* frame_words = reinterpret_cast<const volatile uintptr_t*>(frame_fp);
+                const uintptr_t saved_fp = frame_words[0];
+                const uintptr_t saved_lr = frame_words[1];
+                native_bt_len += std::snprintf(native_bt + native_bt_len,
+                                               sizeof(native_bt) - native_bt_len, "[%d]=%#llx ",
+                                               depth, static_cast<unsigned long long>(saved_lr));
+                if (saved_lr == 0 || saved_fp == frame_fp) {
+                    break;
+                }
+                frame_fp = saved_fp;
+            }
+            LOG_CRITICAL(Debug, "FEX native ARM64 call stack (walk [fp]/[fp+8], symbolicate "
+                                "offline against this build's binary): {}",
+                        std::string_view(native_bt, native_bt_len));
         }
 #endif
 #endif
