@@ -15,6 +15,7 @@
 #include "core/libraries/kernel/memory.h"
 #include "core/linker.h"
 #include "core/memory.h"
+#include "video_core/page_manager.h"
 #endif
 #include "emulator.h"
 
@@ -344,6 +345,17 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                 char pool_ops[8192] = {};
                 memory->DumpRecentPoolOps(guest_fault_addr, pool_ops, sizeof(pool_ops));
                 LOG_CRITICAL(Debug, "FEX recent pool commit/decommit history: {}", pool_ops);
+                // A second, separate possible source of desync: video_core's PageManager calls
+                // real mprotect() to write/read-protect GPU-tracked buffer pages, entirely
+                // independent of the VMM's own commit/decommit bookkeeping above. On Apple
+                // platforms that mprotect gets rounded out to the full 16KB host page (4 PS4
+                // pages), so protecting one GPU-tracked page can collaterally restrict an
+                // unrelated neighbor -- see page_manager.h's DumpRecentPageProtects comment.
+                char page_protects[8192] = {};
+                if (VideoCore::PageManager::DumpRecentPageProtects(
+                        guest_fault_addr, page_protects, sizeof(page_protects))) {
+                    LOG_CRITICAL(Debug, "FEX recent GPU page-protect history: {}", page_protects);
+                }
             } else {
                 LOG_CRITICAL(Debug,
                              "FEX guest fault address classification: VMM says NOT mapped "

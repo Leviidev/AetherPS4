@@ -53,6 +53,23 @@ public:
         return Common::AlignUp(addr + 1, PM_PAGE_SIZE);
     }
 
+    // Diagnostic-only: dumps the last 64 real Protect() calls (address, size, permission,
+    // thread) into out_buf, most recent first -- entries whose range overlaps fault_addr are
+    // marked. Added to chase a crash where a guest CPU thread reads through an ordinary heap
+    // pointer and the VMM's own bookkeeping says the address is mapped, yet the host read still
+    // faults. On Apple platforms a single Protect() call for one 4KB PS4 page gets rounded out
+    // by AddressSpace::Protect to the full enclosing 16KB host page (see Impl::Protect's
+    // Apple-specific sibling-permission-intersection logic) -- meaning a completely unrelated,
+    // untracked 4KB neighbor sharing that host page can have its real hardware permission
+    // collaterally changed by a GPU buffer's own tracking, with no update to its own watcher
+    // bookkeeping. This says whether that's what actually happened here, and whether it points
+    // at a live race or a permission that was never correctly restored. Returns false (out_buf
+    // untouched) if no PageManager instance is currently active. Static (not tied to any one
+    // PageManager instance) since the ring buffer it reads is itself process-wide, mirroring
+    // Impl::s_instance/GuestFaultSignalHandler's own existing pattern.
+    static bool DumpRecentPageProtects(VAddr fault_addr, char* out_buf,
+                                       std::size_t out_buf_size) noexcept;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl;

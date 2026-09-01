@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
+#include <array>
+#include <cstdio>
+#include <mutex>
 #include <boost/container/small_vector.hpp>
 #include "common/alignment.h"
 #include "common/assert.h"
@@ -14,6 +18,7 @@
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 
 #ifndef _WIN64
+#include <pthread.h>
 #include <sys/mman.h>
 #include "common/adaptive_mutex.h"
 #ifdef ENABLE_USERFAULTFD
@@ -184,6 +189,40 @@ struct PageManager::Impl {
 #else
     inline static Impl* s_instance = nullptr;
 
+    // Ring buffer of recent real Protect() calls -- see DumpRecentPageProtects' doc comment in
+    // page_manager.h for why this exists. A dedicated mutex, separate from `locks` (the
+    // per-region RangeLockGuard array): recording happens while a region lock may already be
+    // held, and this is only ever read afterward from the crash path, so there's no reason to
+    // risk any ordering interaction with the real tracking locks.
+    struct ProtectRecord {
+        u64 sequence{};
+        u64 thread_id{};
+        VAddr addr{};
+        size_t size{};
+        Core::MemoryPermission requested_perms{};
+        Core::MemoryPermission effective_perms{};
+    };
+    static constexpr size_t kProtectRingSize = 64;
+    std::mutex protect_ring_mutex{};
+    std::array<ProtectRecord, kProtectRingSize> protect_ring{};
+    u64 protect_sequence{};
+
+    void RecordProtect(VAddr addr, size_t size, Core::MemoryPermission requested,
+                       Core::MemoryPermission effective) {
+        std::scoped_lock lk{protect_ring_mutex};
+        auto& record = protect_ring[protect_sequence % kProtectRingSize];
+        record.sequence = protect_sequence++;
+#ifdef _WIN32
+        record.thread_id = static_cast<u64>(GetCurrentThreadId());
+#else
+        record.thread_id = reinterpret_cast<u64>(pthread_self());
+#endif
+        record.addr = addr;
+        record.size = size;
+        record.requested_perms = requested;
+        record.effective_perms = effective;
+    }
+
     Impl(Vulkan::Rasterizer* rasterizer_) {
         rasterizer = rasterizer_;
         s_instance = this;
@@ -214,6 +253,11 @@ struct PageManager::Impl {
         auto& impl = memory->GetAddressSpace();
         ASSERT_MSG(perms != Core::MemoryPermission::Write,
                    "Attempted to protect region as write-only which is not a valid permission");
+        // `perms` here is already whatever the caller (release_pending() in UpdatePageWatchers/
+        // UpdatePageWatchersForRegion) decided the real hardware permission should be -- on
+        // Apple that's already been through the sibling-intersection widening, so this is the
+        // actual value about to be applied, not a pre-widening request. See DumpRecentPageProtects.
+        RecordProtect(address, size, perms, perms);
         impl.Protect(address, size, perms);
     }
 
@@ -479,5 +523,52 @@ template void PageManager::UpdatePageWatchersForRegion<false, true>(VAddr base_a
                                                                     RegionBits& mask) const;
 template void PageManager::UpdatePageWatchersForRegion<false, false>(VAddr base_addr,
                                                                      RegionBits& mask) const;
+
+bool PageManager::DumpRecentPageProtects(VAddr fault_addr, char* out_buf,
+                                         std::size_t out_buf_size) noexcept {
+#ifndef ENABLE_USERFAULTFD
+    if (out_buf == nullptr || out_buf_size == 0 || Impl::s_instance == nullptr) {
+        return false;
+    }
+    auto* instance = Impl::s_instance;
+    std::array<Impl::ProtectRecord, Impl::kProtectRingSize> snapshot;
+    u64 sequence_snapshot;
+    {
+        std::scoped_lock lk{instance->protect_ring_mutex};
+        snapshot = instance->protect_ring;
+        sequence_snapshot = instance->protect_sequence;
+    }
+    const auto count = std::min<u64>(sequence_snapshot, Impl::kProtectRingSize);
+    char* w = out_buf;
+    char* const end = out_buf + out_buf_size;
+    for (u64 i = 0; i < count && w < end; ++i) {
+        const auto seq = sequence_snapshot - 1 - i;
+        const auto& rec = snapshot[seq % Impl::kProtectRingSize];
+        const bool overlaps = fault_addr >= rec.addr && fault_addr < rec.addr + rec.size;
+        const int written = std::snprintf(
+            w, static_cast<std::size_t>(end - w),
+            "[seq=%llu addr=%#llx size=%#llx perms=%#x thread=%#llx%s] ",
+            static_cast<unsigned long long>(rec.sequence),
+            static_cast<unsigned long long>(rec.addr), static_cast<unsigned long long>(rec.size),
+            static_cast<unsigned>(rec.effective_perms),
+            static_cast<unsigned long long>(rec.thread_id), overlaps ? " OVERLAPS_FAULT" : "");
+        if (written <= 0) {
+            break;
+        }
+        w += written;
+    }
+    if (w < end) {
+        *w = '\0';
+    } else if (out_buf_size > 0) {
+        out_buf[out_buf_size - 1] = '\0';
+    }
+    return true;
+#else
+    static_cast<void>(fault_addr);
+    static_cast<void>(out_buf);
+    static_cast<void>(out_buf_size);
+    return false;
+#endif
+}
 
 } // namespace VideoCore
