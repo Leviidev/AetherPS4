@@ -262,14 +262,29 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
             if (auto* memory = Core::Memory::Instance()) {
                 ::Libraries::Kernel::OrbisVirtualQueryInfo rip_vma{};
                 if (memory->VirtualQuery(accurate_guest_rip, 0, &rip_vma) == 0) {
+                    // Widened from a 16-byte peek to a 1KB window (512 before/after) to see the
+                    // whole containing function, not just the faulting instruction itself --
+                    // this same accurate RIP has now faulted identically across multiple runs
+                    // with a different (but always +0x17c off the fault address) RDX value each
+                    // time, meaning the crash isn't in this instruction's own decode/codegen at
+                    // all: something *earlier* in this function computed a bad pointer into
+                    // RDX, an SRA-persistent register (not a transient scratch like the x18 bug
+                    // was), and this is just the first place that dereferences it. Seeing the
+                    // full function is what's needed to find that earlier computation.
+                    constexpr uint64_t kWindowBefore = 512;
+                    constexpr uint64_t kWindowAfter = 512;
                     const auto* bytes = reinterpret_cast<const volatile uint8_t*>(
-                        static_cast<uintptr_t>(accurate_guest_rip));
-                    char hex[64] = {};
+                        static_cast<uintptr_t>(accurate_guest_rip - kWindowBefore));
+                    static char hex[2 * (kWindowBefore + kWindowAfter) + 1] = {};
                     char* w = hex;
-                    for (int i = 0; i < 16; ++i) {
-                        w += std::snprintf(w, hex + sizeof(hex) - w, "%02x ", bytes[i]);
+                    for (uint64_t i = 0; i < kWindowBefore + kWindowAfter; ++i) {
+                        w += std::snprintf(w, hex + sizeof(hex) - w, "%02x", bytes[i]);
                     }
-                    LOG_CRITICAL(Debug, "FEX guest instruction bytes at accurate rip: {}", hex);
+                    LOG_CRITICAL(Debug,
+                                 "FEX guest function window at accurate rip: rip={:#x} "
+                                 "window_start={:#x} before={:#x} bytes={}",
+                                 accurate_guest_rip, accurate_guest_rip - kWindowBefore,
+                                 kWindowBefore, hex);
                 }
             }
         }
