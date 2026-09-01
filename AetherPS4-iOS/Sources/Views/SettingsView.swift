@@ -39,6 +39,7 @@ struct SettingsView: View {
     @State private var neoMode = false
     @State private var devKitMode = false
     @State private var extraDmemMBytes = 0
+    @State private var showSplashScreen = false
 
     // Audio
     @State private var audioBackend = 0 // AudioBackend: SDL/OpenAL
@@ -91,10 +92,12 @@ struct SettingsView: View {
                     .onChange(of: devKitMode) { _, v in store.setBool("General", "dev_kit_mode", v) }
                 Stepper("Extra Flexible Memory: \(extraDmemMBytes) MB", value: $extraDmemMBytes, in: 0...2048, step: 128)
                     .onChange(of: extraDmemMBytes) { _, v in store.setInt("General", "extra_dmem_in_mbytes", v) }
+                Toggle("Show Splash Screen", isOn: $showSplashScreen)
+                    .onChange(of: showSplashScreen) { _, v in store.setBool("General", "show_splash", v) }
             } header: {
                 Text("Console")
             } footer: {
-                Text("PS4 Pro Mode reports the console as a Neo unit to games that support enhanced modes. Extra Flexible Memory raises the game's flexible-memory budget for titles that need more than the default allotment.")
+                Text("PS4 Pro Mode reports the console as a Neo unit to games that support enhanced modes. Extra Flexible Memory raises the game's flexible-memory budget for titles that need more than the default allotment. Show Splash Screen displays the game's own branding image while it loads, matching real PS4 hardware, before the game hides it itself.")
             }
 
             Section {
@@ -276,6 +279,7 @@ struct SettingsView: View {
         neoMode = store.bool("General", "neo_mode", default: false)
         devKitMode = store.bool("General", "dev_kit_mode", default: false)
         extraDmemMBytes = store.int("General", "extra_dmem_in_mbytes", default: 0)
+        showSplashScreen = store.bool("General", "show_splash", default: false)
 
         audioBackend = store.int("Audio", "audio_backend", default: 0)
     }
