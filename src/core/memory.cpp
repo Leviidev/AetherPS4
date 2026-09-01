@@ -682,6 +682,15 @@ s32 MemoryManager::MapMemory(void** out_addr, VAddr virtual_addr, u64 size, Memo
         mapping_mutation.Finish();
         lk2.unlock();
 
+        // Recorded after both the VMA bookkeeping and the real impl.Map() call (when this type
+        // needed one) completed -- see DumpRecentMapOps' doc comment in memory.h. Filtered to
+        // Direct mappings only (the type actually implicated in the crash this chases) since
+        // Stack/Code mappings happen far more often and would otherwise cycle the ring closed
+        // well before a crash that can take minutes of gameplay to reproduce.
+        if (type == VMAType::Direct) {
+            RecordMapOp(mapped_addr, size, type);
+        }
+
         // If this is not a reservation, then map to GPU and address space
         if (IsValidGpuMapping(mapped_addr, size)) {
             rasterizer->MapMemory(mapped_addr, size);
@@ -1219,6 +1228,42 @@ void MemoryManager::DumpRecentPoolOps(VAddr fault_addr, char* out_buf, std::size
         const int written = std::snprintf(
             w, static_cast<std::size_t>(end - w), "[seq=%llu %s addr=%#llx size=%#llx thread=%#llx%s] ",
             static_cast<unsigned long long>(rec.sequence), rec.is_commit ? "COMMIT" : "DECOMMIT",
+            static_cast<unsigned long long>(rec.addr), static_cast<unsigned long long>(rec.size),
+            static_cast<unsigned long long>(rec.thread_id), overlaps ? " OVERLAPS_FAULT" : "");
+        if (written <= 0) {
+            break;
+        }
+        w += written;
+    }
+    if (w < end) {
+        *w = '\0';
+    } else if (out_buf_size > 0) {
+        out_buf[out_buf_size - 1] = '\0';
+    }
+}
+
+void MemoryManager::DumpRecentMapOps(VAddr fault_addr, char* out_buf, std::size_t out_buf_size) const {
+    if (out_buf == nullptr || out_buf_size == 0) {
+        return;
+    }
+    std::array<MapOpRecord, kMapOpRingSize> snapshot;
+    u64 sequence_snapshot;
+    {
+        std::scoped_lock lk{map_op_ring_mutex};
+        snapshot = map_op_ring;
+        sequence_snapshot = map_op_sequence;
+    }
+    const auto count = std::min<u64>(sequence_snapshot, kMapOpRingSize);
+    char* w = out_buf;
+    char* const end = out_buf + out_buf_size;
+    for (u64 i = 0; i < count && w < end; ++i) {
+        const auto seq = sequence_snapshot - 1 - i;
+        const auto& rec = snapshot[seq % kMapOpRingSize];
+        const bool overlaps = fault_addr >= rec.addr && fault_addr < rec.addr + rec.size;
+        const int written = std::snprintf(
+            w, static_cast<std::size_t>(end - w),
+            "[seq=%llu type=%u addr=%#llx size=%#llx thread=%#llx%s] ",
+            static_cast<unsigned long long>(rec.sequence), static_cast<unsigned>(rec.type),
             static_cast<unsigned long long>(rec.addr), static_cast<unsigned long long>(rec.size),
             static_cast<unsigned long long>(rec.thread_id), overlaps ? " OVERLAPS_FAULT" : "");
         if (written <= 0) {

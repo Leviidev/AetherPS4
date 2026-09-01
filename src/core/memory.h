@@ -314,6 +314,20 @@ public:
     // post-ReportCrash diagnostics in signals.cpp.
     void DumpRecentPoolOps(VAddr fault_addr, char* out_buf, std::size_t out_buf_size) const;
 
+    // Diagnostic-only: dumps recent MapMemory calls (address, size, VMAType, thread, sequence),
+    // most recent first -- entries whose range overlaps fault_addr are marked. Added after
+    // DumpRecentPoolOps and DumpRecentPageProtects (video_core/page_manager.h) both came back
+    // completely empty across multiple crashes of the same "reads through a null-checked but
+    // still-unbacked pointer inside the User Malloc VMA" shape, ruling out both a
+    // commit/decommit race and a GPU page-protect collateral-restriction race. That VMA's
+    // 0x7045400000-0x7095400000 range, as reported by VirtualQuery, is a *merged* view --
+    // VMAType::Direct mappings coalesce adjacent VMAs (see MapMemory's MergeAdjacent call), so a
+    // single logical-looking VMA can actually be the union of many separate MapMemory calls made
+    // over time as the game's own allocator grows its heap. This says whether the exact faulting
+    // sub-range was ever covered by one of those calls at all, or whether it's a genuine gap in
+    // an otherwise-merged tracking entry.
+    void DumpRecentMapOps(VAddr fault_addr, char* out_buf, std::size_t out_buf_size) const;
+
 private:
     VMAHandle FindVMA(VAddr target) {
         return std::prev(vma_map.upper_bound(target));
@@ -397,6 +411,35 @@ private:
         record.addr = addr;
         record.size = size;
         record.is_commit = is_commit;
+    }
+
+    // See DumpRecentMapOps' doc comment above for why this exists -- a separate ring/mutex from
+    // pool_op_ring, same reasoning as that one's own comment (recording happens under `mutex`,
+    // reading only ever happens afterward from the crash path).
+    struct MapOpRecord {
+        u64 sequence{};
+        u64 thread_id{};
+        VAddr addr{};
+        u64 size{};
+        VMAType type{};
+    };
+    static constexpr std::size_t kMapOpRingSize = 256;
+    mutable std::mutex map_op_ring_mutex{};
+    std::array<MapOpRecord, kMapOpRingSize> map_op_ring{};
+    u64 map_op_sequence{};
+
+    void RecordMapOp(VAddr addr, u64 size, VMAType type) {
+        std::scoped_lock lk{map_op_ring_mutex};
+        auto& record = map_op_ring[map_op_sequence % kMapOpRingSize];
+        record.sequence = map_op_sequence++;
+#ifdef _WIN32
+        record.thread_id = static_cast<u64>(GetCurrentThreadId());
+#else
+        record.thread_id = reinterpret_cast<u64>(pthread_self());
+#endif
+        record.addr = addr;
+        record.size = size;
+        record.type = type;
     }
 
     struct PrtArea {

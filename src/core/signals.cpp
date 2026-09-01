@@ -371,6 +371,16 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                         guest_fault_addr, page_protects, sizeof(page_protects))) {
                     LOG_CRITICAL(Debug, "FEX recent GPU page-protect history: {}", page_protects);
                 }
+                // Both diagnostics above came back empty across multiple crashes of this same
+                // shape, ruling out both a commit/decommit race and a GPU page-protect
+                // collateral-restriction race. This VMA's range, as VirtualQuery reports it, is
+                // a *merged* view -- Direct-type VMAs coalesce adjacent MapMemory calls (see
+                // memory.h's DumpRecentMapOps comment) -- so this checks whether the exact
+                // faulting sub-range was ever actually covered by one of those calls, or whether
+                // it's a genuine gap inside an otherwise-merged tracking entry.
+                static char map_ops[16384] = {};
+                memory->DumpRecentMapOps(guest_fault_addr, map_ops, sizeof(map_ops));
+                LOG_CRITICAL(Debug, "FEX recent Direct MapMemory history: {}", map_ops);
             } else {
                 LOG_CRITICAL(Debug,
                              "FEX guest fault address classification: VMM says NOT mapped "
