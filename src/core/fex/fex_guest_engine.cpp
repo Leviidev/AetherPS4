@@ -2118,9 +2118,9 @@ bool TryRecoverKnownBadPropertyLink(int signal, siginfo_t* info, void* rawContex
     ts.__x[dest_reg] = 0;
   }
 
-  SignalSafeLog("BACHATA_PROPERTY_LINK_RECOVER: guest_rip=%p pc=%p instr=%#x dest_reg=x%u "
+  SignalSafeLog("BACHATA_PROPERTY_LINK_RECOVER: guest_rip=%p pc=%p instr=%#x dest_reg=x%d "
                 "old_value=%p -> 0, resuming at %p\n",
-                reinterpret_cast<void*>(guest_rip), pc, instr, dest_reg,
+                reinterpret_cast<void*>(guest_rip), pc, instr, static_cast<int>(dest_reg),
                 reinterpret_cast<void*>(old_value), reinterpret_cast<void*>(
                     reinterpret_cast<uintptr_t>(pc) + 4));
   arm_thread_state64_set_pc_fptr(ts, reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(pc) + 4));
