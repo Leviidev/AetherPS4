@@ -3,10 +3,14 @@
 
 #pragma once
 
+#include <array>
 #include <map>
 #include <mutex>
 #include <string>
 #include <string_view>
+#ifndef _WIN32
+#include <pthread.h>
+#endif
 #include "common/enum.h"
 #include "common/shared_first_mutex.h"
 #include "common/singleton.h"
@@ -296,6 +300,20 @@ public:
 
     void InvalidateMemory(VAddr addr, u64 size) const;
 
+    // Diagnostic-only: dumps recent PoolCommit/PoolDecommit calls (address, size, thread,
+    // sequence number) into out_buf, most recent first -- entries whose range overlaps
+    // fault_addr are marked. Added to chase a crash where a guest thread reads through a
+    // pointer into the "User Malloc" pool and the VMM's own bookkeeping says the address is
+    // committed (VirtualQuery's is_committed reflects the VMA's type, correctly synchronized
+    // under `mutex` -- see PoolCommit/VirtualQuery), yet the actual host memory access still
+    // faults. That combination points at a timing issue this ring buffer is meant to expose
+    // directly: either the fault genuinely raced a PoolDecommit of the same range moments
+    // earlier (a read-after-free, whether from the game's own code or from how we implement
+    // decommit), or it raced a PoolCommit still in flight on another thread. Call from the
+    // crash path only -- takes a lock, not async-signal-safe, same tier as the other
+    // post-ReportCrash diagnostics in signals.cpp.
+    void DumpRecentPoolOps(VAddr fault_addr, char* out_buf, std::size_t out_buf_size) const;
+
 private:
     VMAHandle FindVMA(VAddr target) {
         return std::prev(vma_map.upper_bound(target));
@@ -349,6 +367,37 @@ private:
     u64 pool_budget{};
     s32 sdk_version{};
     Vulkan::Rasterizer* rasterizer{};
+
+    // Ring buffer of recent PoolCommit/PoolDecommit calls -- see DumpRecentPoolOps above for
+    // why this exists. A separate, dedicated mutex rather than reusing `mutex`/`unmap_mutex`:
+    // recording here happens while already holding one or both of those, and this is only ever
+    // read from the crash path afterward, so there's no reason to widen either lock's critical
+    // section or risk any ordering interaction with them.
+    struct PoolOpRecord {
+        u64 sequence{};
+        u64 thread_id{};
+        VAddr addr{};
+        u64 size{};
+        bool is_commit{};
+    };
+    static constexpr std::size_t kPoolOpRingSize = 64;
+    mutable std::mutex pool_op_ring_mutex{};
+    std::array<PoolOpRecord, kPoolOpRingSize> pool_op_ring{};
+    u64 pool_op_sequence{};
+
+    void RecordPoolOp(VAddr addr, u64 size, bool is_commit) {
+        std::scoped_lock lk{pool_op_ring_mutex};
+        auto& record = pool_op_ring[pool_op_sequence % kPoolOpRingSize];
+        record.sequence = pool_op_sequence++;
+#ifdef _WIN32
+        record.thread_id = static_cast<u64>(GetCurrentThreadId());
+#else
+        record.thread_id = reinterpret_cast<u64>(pthread_self());
+#endif
+        record.addr = addr;
+        record.size = size;
+        record.is_commit = is_commit;
+    }
 
     struct PrtArea {
         VAddr start;

@@ -333,6 +333,17 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                              static_cast<int>(vma_info.is_stack),
                              static_cast<int>(vma_info.is_pooled),
                              static_cast<int>(vma_info.is_committed));
+                // "VMM says mapped, host still faulted" is exactly the signature of a race
+                // between this read and a PoolCommit/PoolDecommit of the same range on another
+                // thread -- VirtualQuery's own answer above is correctly synchronized against
+                // the VMM's bookkeeping (see memory.h's DumpRecentPoolOps comment), but that
+                // says nothing about what raced the *actual* host memory access, which goes
+                // through a raw pointer with no lock at all. This dumps the last 64
+                // commit/decommit calls so a recent one overlapping this exact address is
+                // visible directly instead of inferred.
+                char pool_ops[8192] = {};
+                memory->DumpRecentPoolOps(guest_fault_addr, pool_ops, sizeof(pool_ops));
+                LOG_CRITICAL(Debug, "FEX recent pool commit/decommit history: {}", pool_ops);
             } else {
                 LOG_CRITICAL(Debug,
                              "FEX guest fault address classification: VMM says NOT mapped "
