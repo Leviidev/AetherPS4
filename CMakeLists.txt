@@ -110,11 +110,24 @@ if (ENABLE_FEX_GUEST_CPU)
         "${FEXCORE_GUEST_CPU_BUILD_DIR}/External/SoftFloat-3e/libsoftfloat_3e.a"
         "${FEXCORE_GUEST_CPU_BUILD_DIR}/External/rpmalloc/librpmalloc.a"
     )
+    # libFEXCore.a is the one library every FEXCore checkout structure actually produces;
+    # the rest of this list matches the smoke-fex checkout's own External/ layout, which can
+    # differ slightly across FEXCore forks (e.g. fexcore-darwin doesn't produce a standalone
+    # xxhash.a -- it's folded elsewhere in that checkout's CMake graph). Filtering to files
+    # that actually exist, rather than hard-failing on the full fixed list, lets
+    # FEXCORE_GUEST_CPU_BUILD_DIR point at any FEXCore build with a similar-enough layout.
+    if (NOT EXISTS "${FEXCORE_GUEST_CPU_BUILD_DIR}/FEXCore/Source/libFEXCore.a")
+        message(FATAL_ERROR "FEXCore guest CPU library is missing: ${FEXCORE_GUEST_CPU_BUILD_DIR}/FEXCore/Source/libFEXCore.a. Run runtime/scripts/build-fexcore-smoke-aarch64.sh first.")
+    endif()
+    set(FEXCORE_GUEST_CPU_LIBRARIES_FILTERED)
     foreach(fex_library IN LISTS FEXCORE_GUEST_CPU_LIBRARIES)
-        if (NOT EXISTS "${fex_library}")
-            message(FATAL_ERROR "FEXCore guest CPU library is missing: ${fex_library}. Run runtime/scripts/build-fexcore-smoke-aarch64.sh first.")
+        if (EXISTS "${fex_library}")
+            list(APPEND FEXCORE_GUEST_CPU_LIBRARIES_FILTERED "${fex_library}")
+        else()
+            message(STATUS "FEXCore guest CPU library not present, skipping: ${fex_library}")
         endif()
     endforeach()
+    set(FEXCORE_GUEST_CPU_LIBRARIES "${FEXCORE_GUEST_CPU_LIBRARIES_FILTERED}")
 endif()
 
 cmake_host_system_information(RESULT PROC_INFO QUERY PROCESSOR_DESCRIPTION)
@@ -1332,7 +1345,13 @@ target_link_libraries(shadps4 PRIVATE stb::headers lfreist-hwinfo::hwinfo nlohma
 target_link_libraries(shadps4 PRIVATE Freetype::Freetype)
 
 if (ENABLE_FEX_GUEST_CPU)
-    target_compile_definitions(shadps4 PRIVATE SHADPS4_ENABLE_FEX_GUEST_CPU=1)
+    # ARCHITECTURE_arm64 gates FEXCore's own arch-specific code (e.g. SHMStats.h's cycle
+    # counter, which otherwise falls back to the x86-only __rdtscp intrinsic). FEXCore's own
+    # CMake project defines this for itself when it builds, but that's scoped to that separate
+    # CMake project -- files here only get fexcore-darwin's headers via -I, not its compile
+    # definitions, so this target needs to define it too. Safe unconditionally: this whole
+    # block is already gated on ARCHITECTURE STREQUAL "arm64" above.
+    target_compile_definitions(shadps4 PRIVATE SHADPS4_ENABLE_FEX_GUEST_CPU=1 ARCHITECTURE_arm64=1)
     target_include_directories(shadps4 PRIVATE
         "${FEXCORE_GUEST_CPU_BUILD_DIR}"
         "${FEXCORE_GUEST_CPU_SOURCE_DIR}"
