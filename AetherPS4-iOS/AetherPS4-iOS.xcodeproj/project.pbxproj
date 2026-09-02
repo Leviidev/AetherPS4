@@ -601,6 +601,7 @@
 					"$(inherited)",
 					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/src/platform/ios",
 					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/src/core/pkg_extract",
+					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/src/core/sysmodules_import",
 				);
 				INFOPLIST_FILE = Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
@@ -699,6 +700,7 @@
 					"$(inherited)",
 					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/src/platform/ios",
 					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/src/core/pkg_extract",
+					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/src/core/sysmodules_import",
 				);
 				INFOPLIST_FILE = Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;

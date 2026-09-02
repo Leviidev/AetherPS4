@@ -4,3 +4,4 @@
 // dlopen/dlsym needed; there is no separate libshadps4_ios.dylib to load.
 #import "shadps4_ios_api.h"
 #import "pkg_extractor.h"
+#import "sysmodules_import.h"

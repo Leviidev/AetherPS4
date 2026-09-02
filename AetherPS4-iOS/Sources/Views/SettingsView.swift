@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @AppStorage("showFpsCounter") private var showFpsCounter: Bool = true
@@ -50,6 +51,13 @@ struct SettingsView: View {
     // tool, not meant to stay long-term.
     @State private var installedGameDirs: [String] = []
     @State private var ebootExportMessage: String?
+
+    // System module import: lets the user supply real, dumped PS4 system modules (.sprx
+    // files -- Sony's own code, which shadPS4 can't ship and falls back to its own,
+    // incomplete HLE reimplementations of without them) as a ZIP, extracted directly into
+    // the directory the engine already scans before falling back to HLE.
+    @State private var isSysModulesImporterPresented = false
+    @State private var sysModulesImportMessage: String?
 
     private var versionLabel: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString")
@@ -232,6 +240,21 @@ struct SettingsView: View {
             }
 
             Section {
+                Button("Import System Modules…") {
+                    isSysModulesImporterPresented = true
+                }
+                if let sysModulesImportMessage {
+                    Text(sysModulesImportMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("System Modules")
+            } footer: {
+                Text("Some games depend on real PS4 system modules (.sprx files) that AetherPS4 can't include -- they must be dumped from your own, legally owned PlayStation 4 console. Import a ZIP of those files here to place them where the emulator looks for them.")
+            }
+
+            Section {
                 Link(destination: URL(string: "https://discord.gg/xApMHWAzkh")!) {
                     Label("Join the Discord", systemImage: "bubble.left.and.bubble.right")
                 }
@@ -248,6 +271,14 @@ struct SettingsView: View {
         .onAppear {
             loadFromStore()
             loadInstalledGameDirs()
+        }
+        .fileImporter(
+            isPresented: $isSysModulesImporterPresented,
+            allowedContentTypes: [.zip],
+            allowsMultipleSelection: false
+        ) { result in
+            guard case .success(let urls) = result, let url = urls.first else { return }
+            importSysModulesZip(from: url)
         }
     }
 
@@ -319,6 +350,37 @@ struct SettingsView: View {
             ebootExportMessage = "Exported to Files app as \(destination.lastPathComponent)"
         } catch {
             ebootExportMessage = "Failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func importSysModulesZip(from sourceURL: URL) {
+        let didStartAccess = sourceURL.startAccessingSecurityScopedResource()
+        defer { if didStartAccess { sourceURL.stopAccessingSecurityScopedResource() } }
+
+        guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        else {
+            sysModulesImportMessage = "Failed: could not resolve the app's Documents directory."
+            return
+        }
+        // Matches EmulatorSettings::GetSysModulesDir()'s default (Common::FS::PathType::
+        // SysModuleDir, path_util.cpp) -- user_dir/sys_modules, with user_dir set to this
+        // same Documents directory at shadps4_init (EmulatorProcess.swift).
+        let destDir = documents.appendingPathComponent("sys_modules", isDirectory: true)
+
+        var result = BachataSysModulesImportResult()
+        let status = sourceURL.path.withCString { zipPathPtr in
+            destDir.path.withCString { destPathPtr in
+                bachata_sysmodules_import_zip(zipPathPtr, destPathPtr, &result)
+            }
+        }
+        let message = withUnsafeBytes(of: result.message) { raw in
+            String(cString: raw.bindMemory(to: CChar.self).baseAddress!)
+        }
+
+        if status == 0 {
+            sysModulesImportMessage = "Imported \(result.files_extracted) file(s) into sys_modules."
+        } else {
+            sysModulesImportMessage = message.isEmpty ? "Import failed." : "Failed: \(message)"
         }
     }
 }
