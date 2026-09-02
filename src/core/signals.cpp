@@ -345,8 +345,14 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                             // (guest RIP 0x7000766630) -- unlike the RSP-scan's first hit, which
                             // turned out to be a stale, unrelated leftover. Dump its code window
                             // to see the real argument setup for the call that reaches this
-                            // destructor with a corrupted `this` (RBX=1).
-                            if (depth == 0) {
+                            // destructor with a corrupted `this` (RBX=1). Depth 0's own call site
+                            // (libc.prx+0x26731's caller, confirmed via disassembly) never
+                            // reassigns RDI before forwarding it onward -- RDI/RDX both carry
+                            // depth 0's *own* incoming RDI straight through to the callee. That
+                            // means whatever's wrong with `this` was already wrong before depth 0
+                            // even ran; dump depth 1 (its own caller) too, to find where RDI
+                            // actually gets set to something bad in the first place.
+                            if (depth == 0 || depth == 1) {
                                 constexpr uint64_t kCallerWindowBefore = 256;
                                 constexpr uint64_t kCallerWindowAfter = 64;
                                 const auto* caller_bytes = reinterpret_cast<const volatile uint8_t*>(
