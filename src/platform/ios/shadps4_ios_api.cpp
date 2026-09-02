@@ -63,11 +63,55 @@ extern "C" int shadps4_init(const ShadPS4Options* options) {
 
         // SetUserPath requires the directory to already exist (see path_util.cpp) --
         // std::filesystem::create_directories is a no-op if it's already there.
+        //
+        // path_util.cpp's UserPaths table is a static initializer: every PathType below
+        // (not just UserDir) is computed once, before shadps4_init ever runs, from a
+        // generic user_dir default (~/Library/Application Support/shadPS4). SetUserPath
+        // only overwrites the one PathType it's called with -- it never cascades to the
+        // others, so without this loop, SysModuleDir/ShaderDir/GameDataDir/etc. all stay
+        // permanently stuck at that generic default even after UserDir itself is
+        // correctly redirected to this app's Documents directory. Confirmed on-device: a
+        // .sprx placed via the app's own sys_modules import (which correctly targets
+        // Documents/sys_modules) was never found by the loader, because
+        // EmulatorSettings::GetSysModulesDir() -> GetUserPath(SysModuleDir) was still
+        // resolving to the stale default the whole time. Re-derive every dependent
+        // PathType here the same way the static initializer does, so all of them
+        // actually follow UserDir onto this sandboxed Documents directory.
         if (options && options->user_dir && options->user_dir[0] != '\0') {
             std::error_code ec;
             std::filesystem::create_directories(options->user_dir, ec);
             if (!ec) {
-                Common::FS::SetUserPath(Common::FS::PathType::UserDir, options->user_dir);
+                const std::filesystem::path user_dir(options->user_dir);
+                Common::FS::SetUserPath(Common::FS::PathType::UserDir, user_dir);
+
+                using Common::FS::PathType;
+                static const std::pair<PathType, const char*> kDependentPaths[] = {
+                    {PathType::LogDir, Common::FS::LOG_DIR},
+                    {PathType::ScreenshotsDir, Common::FS::SCREENSHOTS_DIR},
+                    {PathType::ShaderDir, Common::FS::SHADER_DIR},
+                    {PathType::TempDataDir, Common::FS::TEMPDATA_DIR},
+                    {PathType::GameDataDir, Common::FS::GAMEDATA_DIR},
+                    {PathType::SysModuleDir, Common::FS::SYSMODULES_DIR},
+                    {PathType::DownloadDir, Common::FS::DOWNLOAD_DIR},
+                    {PathType::CapturesDir, Common::FS::CAPTURES_DIR},
+                    {PathType::CheatsDir, Common::FS::CHEATS_DIR},
+                    {PathType::PatchesDir, Common::FS::PATCHES_DIR},
+                    {PathType::MetaDataDir, Common::FS::METADATA_DIR},
+                    {PathType::CustomTrophy, Common::FS::CUSTOM_TROPHY},
+                    {PathType::CustomConfigs, Common::FS::CUSTOM_CONFIGS},
+                    {PathType::CacheDir, Common::FS::CACHE_DIR},
+                    {PathType::FontsDir, Common::FS::FONTS_DIR},
+                    {PathType::HomeDir, Common::FS::HOME_DIR},
+                    {PathType::CustomModulesDir, Common::FS::CUSTOM_MODULES_DIR},
+                };
+                for (const auto& [path_type, subdir] : kDependentPaths) {
+                    const auto dependent_path = user_dir / subdir;
+                    std::error_code sub_ec;
+                    std::filesystem::create_directories(dependent_path, sub_ec);
+                    if (!sub_ec) {
+                        Common::FS::SetUserPath(path_type, dependent_path);
+                    }
+                }
             }
         }
 
