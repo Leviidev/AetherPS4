@@ -6,7 +6,7 @@
 
 Experimental PlayStation 4 emulation for iOS, built on [shadPS4](https://github.com/shadps4-emu/shadPS4)
 with an ARM64-ported [FEXCore](https://github.com/FEX-Emu/FEX) x86-64 → ARM64 JIT and a native
-SwiftUI front end. v1.0.0 targets external (MFi/Bluetooth) game controllers only.
+SwiftUI front end. 
 
 ## Supported games
 
