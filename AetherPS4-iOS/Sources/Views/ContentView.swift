@@ -18,13 +18,6 @@ struct ContentView: View {
             }
 
             NavigationStack {
-                ConsoleView()
-            }
-            .tabItem {
-                Label("Console", systemImage: "terminal")
-            }
-
-            NavigationStack {
                 GameStatusView()
             }
             .tabItem {

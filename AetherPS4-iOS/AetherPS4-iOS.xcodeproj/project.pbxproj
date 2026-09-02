@@ -48,7 +48,6 @@
 		6F1E736EAB570B6BA1A97C05 /* LoadingOverlayWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CDB6E0DD233E80F95E33E76 /* LoadingOverlayWindow.swift */; };
 		73D7FA494F3884A829491D44 /* libCommonTools.a in Frameworks */ = {isa = PBXBuildFile; fileRef = DCA2FB71631A273FE4B281BF /* libCommonTools.a */; };
 		73E53BFD91058612ABBCC0CD /* libhwinfo_gpu.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 1FBF0779B9C66982D4FA2DC1 /* libhwinfo_gpu.a */; };
-		74E99B7CE1752430C55A9F20 /* ConsoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07640945DC9035FCCA9AF822 /* ConsoleView.swift */; };
 		7AAAF29F41E3DD69ED3684A6 /* libz.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A399B17040F8452BCC6733B0 /* libz.a */; };
 		7D92A328E314AACE655EC771 /* TouchLayoutStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8340073449D7B311E35127E4 /* TouchLayoutStore.swift */; };
 		7DED3526731EB20BB90647B8 /* GameCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50804515E4537DA4766EAC99 /* GameCardView.swift */; };
@@ -114,7 +113,6 @@
 /* Begin PBXFileReference section */
 		01BBD4BECDF444DE8218732F /* ContentView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ContentView.swift; path = Views/ContentView.swift; sourceTree = "<group>"; };
 		048B77317D9AE78C96EE6954 /* AetherPS4-iOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "AetherPS4-iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		07640945DC9035FCCA9AF822 /* ConsoleView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ConsoleView.swift; path = Views/ConsoleView.swift; sourceTree = "<group>"; };
 		0AE54C349F9320F9974B3E46 /* libepoll-shim.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = "libepoll-shim.a"; path = "../runtime/build/shadps4-ios/externals/epoll-shim/src/libepoll-shim.a"; sourceTree = "<group>"; };
 		0ED656EF60BADCB2EBEB073E /* libcpp-optparse.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = "libcpp-optparse.a"; path = "../runtime/build/shadps4-ios/fexcore-ios-libs/libcpp-optparse.a"; sourceTree = "<group>"; };
 		136453DD4F3749B98EBF0BA6 /* GameDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GameDetailView.swift; path = Views/GameDetailView.swift; sourceTree = "<group>"; };
@@ -297,7 +295,6 @@
 				136453DD4F3749B98EBF0BA6 /* GameDetailView.swift */,
 				50804515E4537DA4766EAC99 /* GameCardView.swift */,
 				51A56855FFF5DA2D48453D01 /* GameStatusView.swift */,
-				07640945DC9035FCCA9AF822 /* ConsoleView.swift */,
 				7EBC701E8ED4ABFCACD84B7D /* LibraryView.swift */,
 				45ED9983CF60E773F982A993 /* TouchControlsLayoutEditorView.swift */,
 				01BBD4BECDF444DE8218732F /* ContentView.swift */,
@@ -514,7 +511,6 @@
 				41BD264C74DD09ECD16ABBC2 /* SetupCheckView.swift in Sources */,
 				489E3B8D3922E772DB7A2F57 /* GameDetailView.swift in Sources */,
 				7DED3526731EB20BB90647B8 /* GameCardView.swift in Sources */,
-				74E99B7CE1752430C55A9F20 /* ConsoleView.swift in Sources */,
 				18783C9AB5C0129697BEBDCF /* LibraryView.swift in Sources */,
 				BCE1C9134646D8FB2522EF0E /* TouchControlsLayoutEditorView.swift in Sources */,
 				E7F6B05C5A02097342A2B3AF /* ContentView.swift in Sources */,
