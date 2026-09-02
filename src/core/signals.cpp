@@ -331,6 +331,33 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                                          "(offset={:#x}), likely a return address",
                                          i * sizeof(uint64_t), word_value, module->name,
                                          word_value - module->GetBaseAddress());
+                            // Diagnostic only, gated to the one known-deterministic crash under
+                            // investigation (guest RIP 0x7000766630, a destructor faulting on a
+                            // corrupted `this` -- RBX=1 -- that survived both the allocator fix
+                            // and confirming zero HLE-boundary register clobbers this session).
+                            // The immediate caller (rsp+0x8, the first stack word actually
+                            // resolving into a module) is whoever invoked this destructor with a
+                            // bad `this` -- dumping its own code lets that call site's actual
+                            // argument setup be inspected directly, the same way the fault site
+                            // itself already gets dumped above, to see whether the bad value was
+                            // already wrong before the call or became wrong only afterward.
+                            if (accurate_guest_rip == 0x7000766630ULL && i == 1) {
+                                constexpr uint64_t kCallerWindowBefore = 256;
+                                constexpr uint64_t kCallerWindowAfter = 64;
+                                const auto* caller_bytes = reinterpret_cast<const volatile uint8_t*>(
+                                    static_cast<uintptr_t>(word_value - kCallerWindowBefore));
+                                static char caller_hex[2 * (kCallerWindowBefore + kCallerWindowAfter) + 1] = {};
+                                char* cw = caller_hex;
+                                for (uint64_t j = 0; j < kCallerWindowBefore + kCallerWindowAfter; ++j) {
+                                    cw += std::snprintf(cw, caller_hex + sizeof(caller_hex) - cw, "%02x",
+                                                        caller_bytes[j]);
+                                }
+                                LOG_CRITICAL(Debug,
+                                             "FEX caller function window: return_addr={:#x} "
+                                             "window_start={:#x} before={:#x} bytes={}",
+                                             word_value, word_value - kCallerWindowBefore,
+                                             kCallerWindowBefore, caller_hex);
+                            }
                         }
                     }
                 }
