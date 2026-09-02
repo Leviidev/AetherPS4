@@ -25,6 +25,13 @@ struct ContentView: View {
             }
 
             NavigationStack {
+                GameStatusView()
+            }
+            .tabItem {
+                Label("Game Status", systemImage: "checklist")
+            }
+
+            NavigationStack {
                 SettingsView()
             }
             .tabItem {

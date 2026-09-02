@@ -86,6 +86,8 @@
 		DE1F4D6B893BDE13CE39DFDE /* libFEXCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 43EE6086C55F6403FBAD7162 /* libFEXCore.a */; };
 		E0C77B0BB1AFB22CFBACEE68 /* libhwinfo_ram.a in Frameworks */ = {isa = PBXBuildFile; fileRef = EC67F581D6073F6C4E3B45FF /* libhwinfo_ram.a */; };
 		E3068F2CD9416795C58554C8 /* PlayTimeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7A51F3B4E6E9C88A1612510 /* PlayTimeStore.swift */; };
+		5395F3062D9B5F1E4214B942 /* GameStatusStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 668694E2C2175749F5B43919 /* GameStatusStore.swift */; };
+		3298D93791D1B652ACE2538F /* GameStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A56855FFF5DA2D48453D01 /* GameStatusView.swift */; };
 		E758FB0D9FFF6E4458B217BB /* libtiny-json.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 9355CEDF603E23975E5723D6 /* libtiny-json.a */; };
 		E7F6B05C5A02097342A2B3AF /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01BBD4BECDF444DE8218732F /* ContentView.swift */; };
 		ECC106482B8B14403EE11D70 /* libpng.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 35C9E4CA9C0E0C237646DBD0 /* libpng.a */; };
@@ -187,6 +189,8 @@
 		E37DE359CF44C88F90C5209F /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		E5678FD086376183104E2D92 /* libTracyClient.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libTracyClient.a; path = "../runtime/build/shadps4-ios/externals/tracy/libTracyClient.a"; sourceTree = "<group>"; };
 		E7A51F3B4E6E9C88A1612510 /* PlayTimeStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PlayTimeStore.swift; path = Models/PlayTimeStore.swift; sourceTree = "<group>"; };
+		668694E2C2175749F5B43919 /* GameStatusStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GameStatusStore.swift; path = Models/GameStatusStore.swift; sourceTree = "<group>"; };
+		51A56855FFF5DA2D48453D01 /* GameStatusView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GameStatusView.swift; path = Views/GameStatusView.swift; sourceTree = "<group>"; };
 		EAFCF6B318B8C80379B39026 /* libssl.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libssl.a; path = "../runtime/build/shadps4-ios/externals/libressl/ssl/libssl.a"; sourceTree = "<group>"; };
 		EB3F7FA4FE65734BE4DBC3ED /* libhwinfo_mainboard.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libhwinfo_mainboard.a; path = "../runtime/build/shadps4-ios/externals/hwinfo/src/libhwinfo_mainboard.a"; sourceTree = "<group>"; };
 		EC67F581D6073F6C4E3B45FF /* libhwinfo_ram.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libhwinfo_ram.a; path = "../runtime/build/shadps4-ios/externals/hwinfo/src/libhwinfo_ram.a"; sourceTree = "<group>"; };
@@ -283,6 +287,7 @@
 				8340073449D7B311E35127E4 /* TouchLayoutStore.swift */,
 				2BF7B645A25F0860E0122BE0 /* ConfigStore.swift */,
 				E7A51F3B4E6E9C88A1612510 /* PlayTimeStore.swift */,
+				668694E2C2175749F5B43919 /* GameStatusStore.swift */,
 				5A96E72013A981CB52FEF6D2 /* ParamSfoReader.swift */,
 				33DEFA9DCB93040378FB1B26 /* GameLibrary.swift */,
 				C5BDE0994301DBE06A8AA84F /* GameOverlay.swift */,
@@ -291,6 +296,7 @@
 				1CF69ADDFA7A500A568DEFF9 /* SetupCheckView.swift */,
 				136453DD4F3749B98EBF0BA6 /* GameDetailView.swift */,
 				50804515E4537DA4766EAC99 /* GameCardView.swift */,
+				51A56855FFF5DA2D48453D01 /* GameStatusView.swift */,
 				07640945DC9035FCCA9AF822 /* ConsoleView.swift */,
 				7EBC701E8ED4ABFCACD84B7D /* LibraryView.swift */,
 				45ED9983CF60E773F982A993 /* TouchControlsLayoutEditorView.swift */,
@@ -498,6 +504,8 @@
 				7D92A328E314AACE655EC771 /* TouchLayoutStore.swift in Sources */,
 				95F9BAA3350DDD4577CF978C /* ConfigStore.swift in Sources */,
 				E3068F2CD9416795C58554C8 /* PlayTimeStore.swift in Sources */,
+				5395F3062D9B5F1E4214B942 /* GameStatusStore.swift in Sources */,
+				3298D93791D1B652ACE2538F /* GameStatusView.swift in Sources */,
 				CA36312B7F44FC79ACA077EE /* ParamSfoReader.swift in Sources */,
 				2790D3A77254E5FB66614B5D /* GameLibrary.swift in Sources */,
 				D894E9724CD1DA6C7FD69AE5 /* GameOverlay.swift in Sources */,
