@@ -1198,7 +1198,7 @@ diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp Bac
        if (!Op->CallReturnBlock.IsInvalid()) {
 diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/JIT/JIT.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/JIT/JIT.cpp
 --- FEXCore-Darwin/FEXCore/Source/Interface/Core/JIT/JIT.cpp	2026-09-01 21:28:03
-+++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/JIT/JIT.cpp	2026-09-01 19:42:41
++++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/JIT/JIT.cpp	2026-09-02 18:20:14
 @@ -35,6 +35,7 @@
  #include <FEXCore/Utils/TypeDefines.h>
  #include <FEXCore/HLE/SyscallHandler.h>
@@ -1419,7 +1419,7 @@ diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/JIT/JIT.cpp Bachata-S
      // Query size of generated code
      const auto TempSize = GetCursorOffset();
  
-@@ -1128,7 +1260,73 @@
+@@ -1128,7 +1260,90 @@
        SetCursorOffset(CodeBuffers.LatestOffset);
        Align16B();
        if ((GetCursorOffset() + TempSize) > CurrentCodeBuffer->UsableSize()) {
@@ -1487,13 +1487,30 @@ diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/JIT/JIT.cpp Bachata-S
 +          HeldReuseSafepoint = true;
 +        }
 +        CTX->ClearCodeCache(ThreadState, false);
++        // ClearCodeCache(..., false) only clears the LookupCache's metadata (BlockList/
++        // BlockLinks) -- it never touches this Emitter's own write cursor, which is still
++        // sitting wherever it was when the overflow check above fired (at/near the buffer's
++        // usable end -- that's *why* the overflow fired). Left alone, this compile's memcpy
++        // below writes starting from that same near-end offset, past the buffer's actual
++        // bounds, and CodeBuffers.LatestOffset just below records that same out-of-bounds
++        // position as the new "latest" -- so every subsequent compile re-triggers this branch
++        // and drifts the offset even further past the allocation with each cycle. Downstream,
++        // the resulting EntryPoint (rebased via Delta below onto this already-out-of-range
++        // cursor) sits outside the buffer's tracked RW range, so GetExecutableAddress's table
++        // lookup (AllocatorHooks.h) falls back to returning it untranslated -- an RW-side value
++        // masquerading as the cached HostCode, which then fails every IsAddressInCodeBuffer
++        // check downstream. This is the root cause behind the "not inside any currently-live
++        // JIT allocation" crash chased across this whole investigation. SetBuffer resets the
++        // cursor to the buffer's start, matching what the NewCodeBuffer=true path already does
++        // via its own SetBuffer call inside Arm64JITCore::ClearCache() after allocating fresh.
++        SetBuffer(CurrentCodeBuffer->Ptr, CurrentCodeBuffer->AllocatedSize);
 +#else
          CTX->ClearCodeCache(ThreadState);
 +#endif
        }
  
        CodeBuffers.LatestOffset = GetCursorOffset();
-@@ -1139,6 +1337,12 @@
+@@ -1139,6 +1354,12 @@
      CodeData.BlockBegin += Delta;
      for (auto& EntryPoint : CodeData.EntryPoints) {
        EntryPoint.second += Delta;
@@ -1506,7 +1523,7 @@ diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/JIT/JIT.cpp Bachata-S
      }
      CodeBegin += Delta;
  
-@@ -1151,11 +1355,39 @@
+@@ -1151,11 +1372,39 @@
      SetCursorOffset(CodeBuffers.LatestOffset + TempSize);
  
      CodeBuffers.LatestOffset = GetCursorOffset();
