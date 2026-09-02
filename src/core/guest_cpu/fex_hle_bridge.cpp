@@ -3,6 +3,7 @@
 #include "fex_hle_bridge.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
@@ -86,8 +87,35 @@ AetherPS4::Fex::EngineResult<bool> HleGuestBridge::Invoke(HleCallFrame& frame) {
     frame.publish_host_range = PublishHostRange;
     frame.revoke_host_range = RevokeHostRange;
     frame.host_range_context = this;
+    // Diagnostic only: RBX/RBP/R12-R15 are callee-saved in x86-64 SysV and no HLE adapter
+    // legitimately returns a value through anything but gpr[0] (RAX) -- see EncodeReturn/
+    // InvokeVoid, hle_call_adapter.h. If any of them change across this call, either an
+    // adapter is writing somewhere it shouldn't, or the underlying native call this bridges to
+    // isn't preserving guest register state the way the boundary assumes. Chasing a
+    // deterministic guest crash (write through a corrupted `this`, guest RBX=1) that survived
+    // a completely unrelated allocator fix -- narrowing whether the corruption happens right
+    // here, at the one guest<->host register boundary in this whole call path.
+    constexpr std::array<int, 5> calleeSaved{3, 5, 12, 13, 14}; // RBX, RBP, R12, R13, R14 (X86Enums.h indices)
+    const auto beforeCalleeSaved = [&] {
+        std::array<u64, calleeSaved.size()> values{};
+        for (std::size_t i = 0; i < calleeSaved.size(); ++i) {
+            values[i] = frame.gpr[calleeSaved[i]];
+        }
+        return values;
+    }();
     const ActiveHleCallScope active_frame{frame};
     const auto result = adapter->Invoke(frame);
+    for (std::size_t i = 0; i < calleeSaved.size(); ++i) {
+        if (frame.gpr[calleeSaved[i]] != beforeCalleeSaved[i]) {
+            std::fprintf(stderr,
+                         "BACHATA_HLE_CALLEESAVED_CLOBBER operation=%llu name=%.*s reg_index=%d "
+                         "before=%#llx after=%#llx\n",
+                         static_cast<unsigned long long>(frame.operation),
+                         static_cast<int>(adapter->Name().size()), adapter->Name().data(),
+                         calleeSaved[i], static_cast<unsigned long long>(beforeCalleeSaved[i]),
+                         static_cast<unsigned long long>(frame.gpr[calleeSaved[i]]));
+        }
+    }
     if (const auto* failure = std::get_if<HleCallFailure>(&result)) {
         if (trace) {
             std::fprintf(stderr, "BACHATA_FEX_HLE_END operation=%llu name=%.*s error=%d\n",
