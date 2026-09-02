@@ -1,7 +1,6 @@
-diff --git a/FEXCore/Source/Interface/Context/Context.cpp b/FEXCore/Source/Interface/Context/Context.cpp
-index de8415b..6190889 100644
---- a/FEXCore/Source/Interface/Context/Context.cpp
-+++ b/FEXCore/Source/Interface/Context/Context.cpp
+diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Context/Context.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Context/Context.cpp
+--- FEXCore-Darwin/FEXCore/Source/Interface/Context/Context.cpp	2026-09-01 21:28:03
++++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Context/Context.cpp	2026-09-01 19:34:39
 @@ -14,6 +14,8 @@
  #include <FEXCore/Core/Thunks.h>
  #include "FEXCore/Debug/InternalThreadState.h"
@@ -11,10 +10,11 @@ index de8415b..6190889 100644
  namespace FEXCore::Context {
  fextl::unique_ptr<FEXCore::Context::Context> FEXCore::Context::Context::CreateNewContext(const FEXCore::HostFeatures& Features) {
    return fextl::make_unique<FEXCore::Context::ContextImpl>(Features);
-@@ -55,4 +57,56 @@ FEXCore::CPUID::FunctionResults FEXCore::Context::ContextImpl::RunCPUIDFunctionN
+@@ -54,5 +56,57 @@
+ 
  bool FEXCore::Context::ContextImpl::IsAddressInCodeBuffer(FEXCore::Core::InternalThreadState* Thread, uintptr_t Address) const {
    return Thread->CPUBackend->IsAddressInCodeBuffer(Address) || CodeCache.IsAddressInMappedCodeBuffer(Address);
- }
++}
 +
 +bool FEXCore::Context::ContextImpl::DumpDispatcherStateForDiagnostics(FEXCore::Core::InternalThreadState* Thread, char* OutBuf,
 +                                                                       size_t OutBufSize) const {
@@ -66,12 +66,11 @@ index de8415b..6190889 100644
 +    static_cast<unsigned long long>(LiveGenValue),
 +    static_cast<unsigned long long>(Thread->CurrentFrame->ExitFunctionLinkValidatedGeneration));
 +  return Written > 0;
-+}
+ }
  } // namespace FEXCore::Context
-diff --git a/FEXCore/Source/Interface/Context/Context.h b/FEXCore/Source/Interface/Context/Context.h
-index e374d85..0764d29 100644
---- a/FEXCore/Source/Interface/Context/Context.h
-+++ b/FEXCore/Source/Interface/Context/Context.h
+diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Context/Context.h Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Context/Context.h
+--- FEXCore-Darwin/FEXCore/Source/Interface/Context/Context.h	2026-09-01 21:28:03
++++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Context/Context.h	2026-08-30 22:28:58
 @@ -21,6 +21,7 @@
  #include <atomic>
  #include <cstddef>
@@ -80,7 +79,7 @@ index e374d85..0764d29 100644
  #include <mutex>
  #include <optional>
  #include <shared_mutex>
-@@ -223,9 +224,102 @@ public:
+@@ -223,9 +224,102 @@
      return CodeInvalidationMutex;
    }
  
@@ -183,11 +182,10 @@ index e374d85..0764d29 100644
  
    // returns false if a handler was already registered
    std::optional<CustomIRResult>
-diff --git a/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp b/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp
-index 8856b44..73fb0e9 100644
---- a/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp
-+++ b/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp
-@@ -73,11 +73,33 @@ namespace x64 {
+diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp
+--- FEXCore-Darwin/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp	2026-09-01 21:28:03
++++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp	2026-08-31 19:40:02
+@@ -73,11 +73,33 @@
      ARMEmitter::Reg::r8, ARMEmitter::Reg::r16, ARMEmitter::Reg::r17,
    };
  
@@ -221,11 +219,10 @@ index 8856b44..73fb0e9 100644
  
    constexpr unsigned RAPairs = 4;
  
-diff --git a/FEXCore/Source/Interface/Core/CPUBackend.cpp b/FEXCore/Source/Interface/Core/CPUBackend.cpp
-index d38a4f4..38b11e6 100644
---- a/FEXCore/Source/Interface/Core/CPUBackend.cpp
-+++ b/FEXCore/Source/Interface/Core/CPUBackend.cpp
-@@ -21,8 +21,24 @@ namespace FEXCore {
+diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/CPUBackend.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/CPUBackend.cpp
+--- FEXCore-Darwin/FEXCore/Source/Interface/Core/CPUBackend.cpp	2026-09-01 21:28:03
++++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/CPUBackend.cpp	2026-08-29 10:32:09
+@@ -21,8 +21,24 @@
  namespace CPU {
  
    static constexpr size_t INITIAL_CODE_SIZE = 1024 * 1024 * 16;
@@ -250,7 +247,7 @@ index d38a4f4..38b11e6 100644
  
    constexpr static uint64_t NamedVectorConstants[FEXCore::IR::NamedVectorConstant::NAMED_VECTOR_CONST_POOL_MAX][2] = {
      {0x0003'0002'0001'0000ULL, 0x0007'0006'0005'0004ULL}, // NAMED_VECTOR_INCREMENTAL_U16_INDEX
-@@ -335,7 +351,29 @@ namespace CPU {
+@@ -335,7 +351,29 @@
        // Keep a reference to the old code buffer to delay deallocation
        SignalHandlerCodeBuffers.push_back(std::move(CodeBuffer));
      } else {
@@ -280,7 +277,7 @@ index d38a4f4..38b11e6 100644
      }
    }
  
-@@ -354,7 +392,7 @@ namespace CPU {
+@@ -354,7 +392,7 @@
  
    CodeBuffer::CodeBuffer(size_t Size)
      : AllocatedSize(Size) {
@@ -289,7 +286,7 @@ index d38a4f4..38b11e6 100644
      // Two Darwin MAP_JIT restrictions rule out a trailing guard page here entirely (both
      // confirmed empirically): (1) mprotect() refuses to change protection on a sub-range of
      // an existing MAP_JIT mapping (EACCES) -- so the guard can't be carved out of the code
-@@ -377,7 +415,23 @@ namespace CPU {
+@@ -377,7 +415,23 @@
      }
  #else
      Ptr = static_cast<uint8_t*>(FEXCore::Allocator::VirtualAlloc(Size, true));
@@ -314,7 +311,7 @@ index d38a4f4..38b11e6 100644
  
      // Protect the last page of the allocated buffer to trigger SIGSEGV on write access.
      uintptr_t LastPageAddr = AlignDown(reinterpret_cast<uintptr_t>(Ptr) + Size - 1, FEXCore::Utils::FEX_PAGE_SIZE);
-@@ -462,10 +516,18 @@ namespace CPU {
+@@ -462,10 +516,18 @@
  
    bool CPUBackend::IsAddressInCodeBuffer(uintptr_t Address) const {
      auto CheckCodeBuffer = [](CodeBuffer& Buffer, uintptr_t Address) {
@@ -335,10 +332,9 @@ index d38a4f4..38b11e6 100644
      };
  
      if (CheckCodeBuffer(*CurrentCodeBuffer, Address)) {
-diff --git a/FEXCore/Source/Interface/Core/CodeCache.cpp b/FEXCore/Source/Interface/Core/CodeCache.cpp
-index 83fe20f..74509b0 100644
---- a/FEXCore/Source/Interface/Core/CodeCache.cpp
-+++ b/FEXCore/Source/Interface/Core/CodeCache.cpp
+diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/CodeCache.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/CodeCache.cpp
+--- FEXCore-Darwin/FEXCore/Source/Interface/Core/CodeCache.cpp	2026-09-01 21:28:03
++++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/CodeCache.cpp	2026-08-19 18:37:01
 @@ -28,10 +28,18 @@
  #include <xxhash.h>
  
@@ -358,7 +354,7 @@ index 83fe20f..74509b0 100644
  
  #include <FEXCore/Utils/AllocatorHooks.h>
  
-@@ -410,6 +418,13 @@ void CodeCache::Validate(const ExecutableFileSectionInfo& Section, fextl::set<ui
+@@ -410,6 +418,13 @@
      if (!ValidationCTX->InitCore()) {
        ERROR_AND_DIE_FMT("Failed to create cache load validation context");
      }
@@ -372,7 +368,7 @@ index 83fe20f..74509b0 100644
  
      ValidationThread.reset(ValidationCTX->CreateThread(0, 0, nullptr));
  
-@@ -850,7 +865,15 @@ void CodeCache::FinalizeCodePages(MappedCodeCacheFile& Code, std::span<std::byte
+@@ -850,7 +865,15 @@
  
    FEXCORE_PROFILE_SCOPED("FinalizeCodePages");
  
@@ -389,11 +385,10 @@ index 83fe20f..74509b0 100644
    // Atomicity is critical when making the finalized code data visible.
    // We ensure this by remapping a temporary buffer onto the PROT_NONE
    // placeholder page in CodeBuffer. Some constraints to keep in mind are:
-diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
-index b9aa740..dba3057 100644
---- a/FEXCore/Source/Interface/Core/Core.cpp
-+++ b/FEXCore/Source/Interface/Core/Core.cpp
-@@ -110,11 +110,22 @@ struct GetFrameBlockInfoResult {
+diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/Core.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/Core.cpp
+--- FEXCore-Darwin/FEXCore/Source/Interface/Core/Core.cpp	2026-09-01 21:28:03
++++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/Core.cpp	2026-09-02 18:03:10
+@@ -110,11 +110,22 @@
    const CPU::CPUBackend::JITCodeTail* InlineTail;
  };
  static GetFrameBlockInfoResult GetFrameBlockInfo(FEXCore::Core::CpuStateFrame* Frame) {
@@ -418,7 +413,7 @@ index b9aa740..dba3057 100644
      return {InlineHeader, InlineTail};
    }
  
-@@ -138,6 +149,12 @@ uint64_t ContextImpl::GetGuestBlockEntry(FEXCore::Core::InternalThreadState* Thr
+@@ -138,6 +149,12 @@
  
  uint64_t ContextImpl::RestoreRIPFromHostPC(FEXCore::Core::InternalThreadState* Thread, uint64_t HostPC) {
    const auto Frame = Thread->CurrentFrame;
@@ -431,7 +426,7 @@ index b9aa740..dba3057 100644
    const uint64_t BlockBegin = Frame->State.InlineJITBlockHeader;
    auto [InlineHeader, InlineTail] = GetFrameBlockInfo(Thread->CurrentFrame);
  
-@@ -147,8 +164,12 @@ uint64_t ContextImpl::RestoreRIPFromHostPC(FEXCore::Core::InternalThreadState* T
+@@ -147,8 +164,12 @@
      // This is currently as close as FEX can get RIP reconstructions.
      if (HostPC >= reinterpret_cast<uint64_t>(BlockBegin) && HostPC < reinterpret_cast<uint64_t>(BlockBegin + InlineTail->Size)) {
  
@@ -446,7 +441,7 @@ index b9aa740..dba3057 100644
  
        // Reconstruct RIP from JIT entries for this block.
        uint64_t StartingHostPC = BlockBegin;
-@@ -496,9 +517,63 @@ void ContextImpl::ClearCodeCache(FEXCore::Core::InternalThreadState* Thread, boo
+@@ -496,9 +517,63 @@
      // Allocate new CodeBuffer + L3 LookupCache and clear L1+L2 caches
      Thread->CPUBackend->ClearCache();
    } else {
@@ -511,7 +506,7 @@ index b9aa740..dba3057 100644
    }
    Allocator::VirtualDontNeed(Thread->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE);
  }
-@@ -830,6 +905,24 @@ ContextImpl::CompileCodeResult ContextImpl::CompileCode(FEXCore::Core::InternalT
+@@ -830,6 +905,24 @@
    };
  }
  
@@ -536,7 +531,7 @@ index b9aa740..dba3057 100644
  uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_t GuestRIP, uint64_t MaxInst) {
    if constexpr (BLOCK_DEBUGGING) {
      // Block debugging logic is hand-written and needs to be handled with care.
-@@ -862,6 +955,70 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
+@@ -862,6 +955,70 @@
  
    auto [CompiledCode, DebugData, StartAddr, Length, NeedsAddGuestCodeRanges] = CompileCode(Thread, GuestRIP, MaxInst);
    auto CodePtr = CompiledCode.EntryPoints[GuestRIP];
@@ -607,7 +602,27 @@ index b9aa740..dba3057 100644
    if (CodePtr == nullptr) {
      return 0;
    } else if (!DebugData) {
-@@ -968,6 +1125,14 @@ uintptr_t ContextImpl::CompileSingleStep(FEXCore::Core::CpuStateFrame* Frame, ui
+@@ -931,6 +1088,19 @@
+   // Insert to lookup cache
+ 
+   for (auto [GuestAddr, HostAddr] : CompiledCode.EntryPoints) {
++    // Diagnostic only, gated to one known-deterministic guest RIP under investigation (see
++    // JIT.cpp's BACHATA_EXITFUNCTIONLINK_TARGET, which already proved a bad HostCode is sitting
++    // in the cache by the time it's read back, not corrupted between read and use). This is the
++    // one and only site that ever writes this guest address's entry (AddBlockMapping), so logging
++    // exactly what gets stored here -- and whether it's already invalid at the moment of storage
++    // -- settles whether the bug is in what CompileCode computed, or something overwriting the
++    // BlockList entry afterward.
++    if (GuestAddr == 0x70007b9cf0ULL) {
++      LogMan::Msg::EFmt("BACHATA_ADDBLOCKMAPPING: GuestAddr={:#x} HostAddr={:#x} Thread={:#x} "
++                        "IsAddressInCodeBuffer={}",
++                        GuestAddr, reinterpret_cast<uint64_t>(HostAddr), reinterpret_cast<uintptr_t>(Thread),
++                        IsAddressInCodeBuffer(Thread, reinterpret_cast<uintptr_t>(HostAddr)));
++    }
+     Thread->LookupCache->AddBlockMapping(Thread, GuestAddr, CodePages, HostAddr);
+   }
+ 
+@@ -968,6 +1138,14 @@
  void ContextImpl::InvalidateCodeBuffersCodeRange(uint64_t Start, uint64_t Length) {
    FEXCORE_PROFILE_SCOPED("InvalidateCodeBuffersCodeRange");
  
@@ -622,7 +637,7 @@ index b9aa740..dba3057 100644
    LOGMAN_THROW_A_FMT(CodeInvalidationMutex.try_lock() == false, "CodeInvalidationMutex needs to be unique_locked here");
    std::scoped_lock lk {CodeBufferListLock};
    auto it = CodeBufferList.begin();
-@@ -982,6 +1147,11 @@ void ContextImpl::InvalidateCodeBuffersCodeRange(uint64_t Start, uint64_t Length
+@@ -982,6 +1160,11 @@
  }
  
  void ContextImpl::InvalidateThreadCachedCodeRange(FEXCore::Core::InternalThreadState* Thread, uint64_t Start, uint64_t Length) {
@@ -634,11 +649,10 @@ index b9aa740..dba3057 100644
    LOGMAN_THROW_A_FMT(CodeInvalidationMutex.try_lock() == false, "CodeInvalidationMutex needs to be unique_locked here");
  
    // Ensures now-modified mappings aren't cached as being in their previous non-executable state.
-diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
-index 19719c2..c422199 100644
---- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
-+++ b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
-@@ -64,7 +64,15 @@ void Dispatcher::EmitDispatcher() {
+diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
+--- FEXCore-Darwin/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp	2026-09-01 21:28:03
++++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp	2026-08-30 23:08:26
+@@ -64,7 +64,15 @@
    const auto DisasmBegin = GetCursorAddress<const vixl::aarch64::Instruction*>();
  #endif
  
@@ -655,7 +669,7 @@ index 19719c2..c422199 100644
  
    // while (true) {
    //    Ptr = FindBlock(RIP)
-@@ -212,6 +220,28 @@ void Dispatcher::EmitDispatcher() {
+@@ -212,6 +220,28 @@
        // Shift the offset by the size of the block cache entry
        add(TMP1, TMP1, TMP2, ARMEmitter::ShiftType::LSL, FEXCore::ilog2(sizeof(LookupCache::LookupCacheEntry)));
  
@@ -684,7 +698,7 @@ index 19719c2..c422199 100644
        // The the full LookupCacheEntry with a single LDP.
        // Check the guest address first to ensure it maps to the address we are currently at.
        // This fixes aliasing problems
-@@ -236,12 +266,46 @@ void Dispatcher::EmitDispatcher() {
+@@ -236,12 +266,46 @@
  
          stp<ARMEmitter::IndexType::OFFSET>(TMP4, RipReg, TMP1);
  
@@ -731,7 +745,7 @@ index 19719c2..c422199 100644
    {
      ThreadStopHandlerAddressSpillSRA = GetCursorAddress<uint64_t>();
      SpillStaticRegs(TMP1);
-@@ -309,7 +373,52 @@ void Dispatcher::EmitDispatcher() {
+@@ -309,7 +373,52 @@
        FillStaticRegs();
      });
  
@@ -784,7 +798,7 @@ index 19719c2..c422199 100644
    }
  
    // Need to create the block
-@@ -343,7 +452,10 @@ void Dispatcher::EmitDispatcher() {
+@@ -343,7 +452,10 @@
        FillStaticRegs();
      });
  
@@ -796,7 +810,7 @@ index 19719c2..c422199 100644
      br(TMP1);
    }
  
-@@ -376,7 +488,9 @@ void Dispatcher::EmitDispatcher() {
+@@ -376,7 +488,9 @@
        FillStaticRegs();
      });
  
@@ -807,7 +821,7 @@ index 19719c2..c422199 100644
      br(TMP1);
    }
  
-@@ -477,7 +591,11 @@ void Dispatcher::EmitDispatcher() {
+@@ -477,7 +591,11 @@
      // On return to the thunk, the thunk can get whatever its return value is from the thread context depending on ABI handling on its end
      // When the thunk itself returns, it'll do its regular return logic there
      // void ReentrantCallback(FEXCore::Core::InternalThreadState *Thread, uint64_t RIP);
@@ -820,7 +834,7 @@ index 19719c2..c422199 100644
  
      // We expect the thunk to have previously pushed the registers it was using
      PushCalleeSavedRegisters();
-@@ -605,7 +723,18 @@ void Dispatcher::EmitDispatcher() {
+@@ -605,7 +723,18 @@
    dc64(PMFCompileSingleStep.GetConvertedPointer());
  
    Start = reinterpret_cast<uint64_t>(DispatchPtr);
@@ -840,7 +854,7 @@ index 19719c2..c422199 100644
    ClearICache(reinterpret_cast<void*>(DispatchPtr), End - reinterpret_cast<uint64_t>(DispatchPtr));
  
    if (CTX->Config.BlockJITNaming()) {
-@@ -2611,7 +2740,24 @@ uint64_t Dispatcher::GenerateABICall(FallbackABI ABI) {
+@@ -2611,7 +2740,24 @@
    // Return to JIT
    ret();
  
@@ -866,7 +880,7 @@ index 19719c2..c422199 100644
  }
  
  void Dispatcher::InitThreadPointers(FEXCore::Core::InternalThreadState* Thread) {
-@@ -2619,36 +2765,90 @@ void Dispatcher::InitThreadPointers(FEXCore::Core::InternalThreadState* Thread)
+@@ -2619,36 +2765,90 @@
    {
      auto& Ptrs = Thread->CurrentFrame->Pointers;
  
@@ -981,7 +995,7 @@ index 19719c2..c422199 100644
  SignalDelegatorConfig Dispatcher::MakeSignalDelegatorConfig() const {
    // PF/AF are the final two SRA registers. We only want GPRs
    const auto GPRCount = uint16_t(StaticRegisters.size() - 2);
-@@ -2670,22 +2870,30 @@ SignalDelegatorConfig Dispatcher::MakeSignalDelegatorConfig() const {
+@@ -2670,22 +2870,30 @@
      return Mapping;
    };
  
@@ -1021,11 +1035,10 @@ index 19719c2..c422199 100644
  
      // SRA information.
      .SRAGPRCount = GPRCount,
-diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h
-index b0f3d7a..a5e1be4 100644
---- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h
-+++ b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h
-@@ -55,9 +55,35 @@ public:
+diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h
+--- FEXCore-Darwin/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h	2026-09-01 21:28:03
++++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h	2026-08-30 21:21:50
+@@ -55,10 +55,36 @@
    }
  #endif
  
@@ -1040,7 +1053,7 @@ index b0f3d7a..a5e1be4 100644
 +  // other escaping absolute pointer here -- ExitFunctionLinkerAddress itself is the raw
 +  // write-side value captured via GetCursorAddress() during EmitDispatcher().
 +  uint64_t GetExitFunctionLinkerAddress() const;
-+
+ 
 +  // Crash-diagnostic only: the dispatcher's own known-good, already-RX-translated entry
 +  // addresses, for direct comparison against whatever is actually stored in a live thread's
 +  // CpuStateFrame::Pointers at the moment of a crash (see BachataDumpDispatcherState in
@@ -1061,10 +1074,11 @@ index b0f3d7a..a5e1be4 100644
 +    uint64_t DispatcherLoopTopAddress;
 +  };
 +  DiagnosticAddresses GetDiagnosticAddresses() const;
- 
++
    SignalDelegatorConfig MakeSignalDelegatorConfig() const;
  
-@@ -76,12 +102,16 @@ private:
+ protected:
+@@ -76,12 +102,16 @@
    uint64_t ThreadStopHandlerAddress {};
    uint64_t ThreadStopHandlerAddressSpillSRA {};
    uint64_t AbsoluteLoopTopAddress {};
@@ -1081,11 +1095,10 @@ index b0f3d7a..a5e1be4 100644
    uint64_t SignalHandlerReturnAddress {};
    uint64_t SignalHandlerReturnAddressRT {};
    uint64_t GuestSignal_SIGILL {};
-diff --git a/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp b/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp
-index 7946ccd..9eb443d 100644
---- a/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp
-+++ b/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp
-@@ -11,6 +11,8 @@ $end_info$
+diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp
+--- FEXCore-Darwin/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp	2026-09-01 21:28:03
++++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp	2026-08-31 00:35:21
+@@ -11,6 +11,8 @@
  #include "Interface/Core/JIT/JITClass.h"
  #include "Interface/IR/Passes/RegisterAllocationPass.h"
  
@@ -1094,10 +1107,12 @@ index 7946ccd..9eb443d 100644
  namespace FEXCore::CPU {
  
  #define DEF_BINOP_WITH_CONSTANT(FEXOp, VarOp, ConstOp)                                    \
-@@ -61,6 +63,20 @@ DEF_OP(EntrypointOffset) {
+@@ -59,6 +61,20 @@
+   const auto OpSize = IROp->Size;
+   if (OpSize == IR::OpSize::i32Bit) {
      Mask = 0xFFFF'FFFFULL;
-   }
- 
++  }
++
 +  // A RIP-relative guest memory operand (the overwhelmingly common use of this IR op) resolving
 +  // to exactly 0 is never legitimate -- no real module is ever loaded at guest address 0, so a
 +  // real game's own RIP-relative reference can never actually target it. Flagging this
@@ -1110,16 +1125,13 @@ index 7946ccd..9eb443d 100644
 +    LogMan::Msg::EFmt("BACHATA_ENTRYPOINT_OFFSET_ZERO: Entry={:#x} Offset={:#x} OpSize={} -> "
 +                      "Constant=0 (suspicious -- no real guest address should ever resolve here)",
 +                      Entry, Op->Offset, static_cast<int>(OpSize));
-+  }
-+
-   InsertGuestRIPMove(GetReg(Node), Constant & Mask);
- }
+   }
  
-diff --git a/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp b/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
-index d555e06..92d483e 100644
---- a/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
-+++ b/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
-@@ -189,6 +189,33 @@ DEF_OP(ExitFunction) {
+   InsertGuestRIPMove(GetReg(Node), Constant & Mask);
+diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
+--- FEXCore-Darwin/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp	2026-09-01 21:28:03
++++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp	2026-08-30 23:08:57
+@@ -189,6 +189,33 @@
      ARMEmitter::ForwardLabel SkipFullLookup;
      auto RipReg = GetReg(Op->NewRIP);
  
@@ -1153,7 +1165,7 @@ index d555e06..92d483e 100644
      if (Op->Hint == IR::BranchHint::Return) {
        // First try to pop from the call-ret stack, otherwise follow the normal path (but ending in a ret)
        ldp<ARMEmitter::IndexType::POST>(TMP1, TMP2, REG_CALLRET_SP, 0x10);
-@@ -213,6 +240,30 @@ DEF_OP(ExitFunction) {
+@@ -213,6 +240,30 @@
      str(RipReg.X(), STATE, offsetof(FEXCore::Core::CpuStateFrame, State.rip));
  
      (void)Bind(&SkipFullLookup);
@@ -1184,11 +1196,10 @@ index d555e06..92d483e 100644
      if (Op->Hint == IR::BranchHint::Call) {
        ARMEmitter::ForwardLabel l_CallReturn;
        if (!Op->CallReturnBlock.IsInvalid()) {
-diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
-index b872b6f..db7f0a1 100644
---- a/FEXCore/Source/Interface/Core/JIT/JIT.cpp
-+++ b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
-@@ -35,6 +35,7 @@ $end_info$
+diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/JIT/JIT.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/JIT/JIT.cpp
+--- FEXCore-Darwin/FEXCore/Source/Interface/Core/JIT/JIT.cpp	2026-09-01 21:28:03
++++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/JIT/JIT.cpp	2026-09-01 19:42:41
+@@ -35,6 +35,7 @@
  #include <FEXCore/Utils/TypeDefines.h>
  #include <FEXCore/HLE/SyscallHandler.h>
  
@@ -1196,7 +1207,7 @@ index b872b6f..db7f0a1 100644
  #include <cstdio>
  #include <cstring>
  #include <unistd.h>
-@@ -519,7 +520,15 @@ static void DirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record,
+@@ -519,7 +520,15 @@
      BranchEmit.b(BranchOffset);
    }
  
@@ -1213,7 +1224,7 @@ index b872b6f..db7f0a1 100644
    ARMEmitter::Emitter::ClearICache(reinterpret_cast<void*>(CallerAddress), 4);
  }
  
-@@ -533,7 +542,12 @@ static void IndirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record
+@@ -533,7 +542,12 @@
    // Restore branch +2 instructions to jump to the linker block
    BranchEmit.b(0x2);
  
@@ -1227,7 +1238,7 @@ index b872b6f..db7f0a1 100644
    ARMEmitter::Emitter::ClearICache(reinterpret_cast<void*>(JumpThunkStartAddress), 4);
  
    // No need to reset HostCode here as the exit linker pointer is stored separately, and if the block is relinked it will be updated.
-@@ -561,6 +575,19 @@ uint64_t Arm64JITCore::ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEX
+@@ -561,6 +575,19 @@
        auto CodeBuffer = static_cast<Arm64JITCore*>(Thread->CPUBackend.get())->CurrentCodeBuffer;
        HostCode = static_cast<Context::ContextImpl*>(Thread->CTX)->CompileBlock(Frame, GuestRip, 0);
        if (Thread->LookupCache->Shared != CodeBuffer->LookupCache.get()) {
@@ -1247,7 +1258,7 @@ index b872b6f..db7f0a1 100644
          return HostCode;
        }
      }
-@@ -588,6 +615,30 @@ uint64_t Arm64JITCore::ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEX
+@@ -588,6 +615,30 @@
    // Guard the LookupCache lock with the code invalidation mutex, to avoid issues with forking
    auto lk_inval = GuardSignalDeferringSection<std::shared_lock>(static_cast<Context::ContextImpl*>(Thread->CTX)->CodeInvalidationMutex, Thread);
  
@@ -1278,7 +1289,7 @@ index b872b6f..db7f0a1 100644
    // Lock here is necessary to prevent simultaneous linking and delinking
    auto lk = Thread->LookupCache->AcquireWriteLock();
  
-@@ -610,25 +661,79 @@ uint64_t Arm64JITCore::ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEX
+@@ -610,25 +661,79 @@
          GuestRip, Record, [](FEXCore::Context::ExitFunctionLinkData* Record) { DirectBlockDelinker(Record, false); }, lk);
      }
  
@@ -1362,7 +1373,7 @@ index b872b6f..db7f0a1 100644
    return HostCode;
  }
  
-@@ -702,11 +807,30 @@ void Arm64JITCore::ClearCache() {
+@@ -702,11 +807,30 @@
    auto PrevCodeBuffer = CurrentCodeBuffer;
    auto lk = PrevCodeBuffer->LookupCache->AcquireWriteLock();
  
@@ -1393,7 +1404,7 @@ index b872b6f..db7f0a1 100644
  }
  
  Arm64JITCore::~Arm64JITCore() {}
-@@ -1110,6 +1234,14 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1110,6 +1234,14 @@
    {
      auto CodeBufferLock = std::unique_lock {CodeBuffers.CodeBufferWriteMutex};
  
@@ -1408,7 +1419,7 @@ index b872b6f..db7f0a1 100644
      // Query size of generated code
      const auto TempSize = GetCursorOffset();
  
-@@ -1128,7 +1260,73 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1128,7 +1260,73 @@
        SetCursorOffset(CodeBuffers.LatestOffset);
        Align16B();
        if ((GetCursorOffset() + TempSize) > CurrentCodeBuffer->UsableSize()) {
@@ -1482,7 +1493,7 @@ index b872b6f..db7f0a1 100644
        }
  
        CodeBuffers.LatestOffset = GetCursorOffset();
-@@ -1139,6 +1337,12 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1139,6 +1337,12 @@
      CodeData.BlockBegin += Delta;
      for (auto& EntryPoint : CodeData.EntryPoints) {
        EntryPoint.second += Delta;
@@ -1495,7 +1506,7 @@ index b872b6f..db7f0a1 100644
      }
      CodeBegin += Delta;
  
-@@ -1151,11 +1355,39 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1151,11 +1355,39 @@
      SetCursorOffset(CodeBuffers.LatestOffset + TempSize);
  
      CodeBuffers.LatestOffset = GetCursorOffset();
@@ -1535,11 +1546,10 @@ index b872b6f..db7f0a1 100644
  
  #ifdef VIXL_DISASSEMBLER
    if (Disassemble() & FEXCore::Config::Disassemble::STATS) {
-diff --git a/FEXCore/Source/Interface/Core/LookupCache.cpp b/FEXCore/Source/Interface/Core/LookupCache.cpp
-index 0b23030..06c2ff5 100644
---- a/FEXCore/Source/Interface/Core/LookupCache.cpp
-+++ b/FEXCore/Source/Interface/Core/LookupCache.cpp
-@@ -102,6 +102,27 @@ void LookupCache::ClearCache(const LookupCacheWriteLockToken& lk) {
+diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/LookupCache.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/LookupCache.cpp
+--- FEXCore-Darwin/FEXCore/Source/Interface/Core/LookupCache.cpp	2026-09-01 21:28:03
++++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/LookupCache.cpp	2026-08-22 07:58:43
+@@ -102,6 +102,27 @@
  }
  
  void GuestToHostMap::ClearCache(const LookupCacheWriteLockToken&) {
@@ -1567,10 +1577,9 @@ index 0b23030..06c2ff5 100644
    // Allocate a new pointer from the BlockLinks pma again.
    BlockLinks = BlockLinks_pma->new_object<BlockLinksMapType>();
    // All code is gone, clear the block list
-diff --git a/FEXCore/Source/Interface/Core/LookupCache.h b/FEXCore/Source/Interface/Core/LookupCache.h
-index bf958d8..55b6a33 100644
---- a/FEXCore/Source/Interface/Core/LookupCache.h
-+++ b/FEXCore/Source/Interface/Core/LookupCache.h
+diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/LookupCache.h Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/LookupCache.h
+--- FEXCore-Darwin/FEXCore/Source/Interface/Core/LookupCache.h	2026-09-01 21:28:03
++++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/LookupCache.h	2026-09-01 20:40:59
 @@ -12,6 +12,7 @@
  #include <FEXCore/fextl/vector.h>
  #include <FEXCore/fextl/memory_resource.h>
@@ -1579,7 +1588,7 @@ index bf958d8..55b6a33 100644
  #include <cstdint>
  #include <stddef.h>
  #include <utility>
-@@ -25,12 +26,21 @@ protected:
+@@ -25,12 +26,21 @@
  };
  
  struct LookupCacheWriteLockToken : public LookupCacheBaseLockToken {
@@ -1602,7 +1611,7 @@ index bf958d8..55b6a33 100644
  };
  
  struct LookupCacheReadLockToken : public LookupCacheBaseLockToken {
-@@ -50,6 +60,22 @@ struct GuestToHostMap {
+@@ -50,7 +60,23 @@
      return LookupCacheWriteLockToken {Lock};
    }
  
@@ -1617,15 +1626,16 @@ index bf958d8..55b6a33 100644
 +  // boot indefinitely with zero further progress. Skipping a thread here just leaves its L1/L2
 +  // stale for one more compile cycle -- the same (already-handled) class of fault as a
 +  // still-tracked-but-stale address, not a hang.
-+  [[nodiscard]]
+   [[nodiscard]]
 +  LookupCacheWriteLockToken TryAcquireWriteLock() {
 +    return LookupCacheWriteLockToken {Lock, std::try_to_lock};
 +  }
 +
-   [[nodiscard]]
++  [[nodiscard]]
    LookupCacheReadLockToken AcquireReadLock() {
      return LookupCacheReadLockToken {Lock};
-@@ -202,9 +228,19 @@ public:
+   }
+@@ -202,9 +228,19 @@
            auto BlockPointers = reinterpret_cast<LookupCacheEntry*>(LocalPagePointer);
  
            if (BlockPointers[PageOffset].GuestCode == Address) {
@@ -1647,7 +1657,7 @@ index bf958d8..55b6a33 100644
            }
          }
        }
-@@ -379,6 +415,12 @@ public:
+@@ -379,6 +415,12 @@
      return Shared->AcquireWriteLock();
    }
  
@@ -1660,7 +1670,7 @@ index bf958d8..55b6a33 100644
  private:
    void CacheBlockMapping(uint64_t Address, const GuestToHostMap::BlockEntry& Entry, bool L1Only, const LookupCacheBaseLockToken& lk) {
      for (const auto& CodePage : Entry.CodePages) {
-@@ -387,8 +429,11 @@ private:
+@@ -387,8 +429,11 @@
  
      // Do L1
      auto& L1Entry = reinterpret_cast<LookupCacheEntry*>(L1Pointer)[Address & L1PointerMask];
@@ -1673,10 +1683,40 @@ index bf958d8..55b6a33 100644
  
      if (!DisableL2Cache() && !L1Only) {
        // Do ful map
-diff --git a/FEXCore/Source/Utils/Allocator.cpp b/FEXCore/Source/Utils/Allocator.cpp
-index e07527e..bf712d4 100644
---- a/FEXCore/Source/Utils/Allocator.cpp
-+++ b/FEXCore/Source/Utils/Allocator.cpp
+diff -ru --ex FEXCore-Darwin/FEXCore/Source/Utils/Allocator/64BitAllocator.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Utils/Allocator/64BitAllocator.cpp
+--- FEXCore-Darwin/FEXCore/Source/Utils/Allocator/64BitAllocator.cpp	2026-09-01 21:28:03
++++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Utils/Allocator/64BitAllocator.cpp	2026-08-18 20:44:22
+@@ -24,7 +24,11 @@
+ #include <new>
+ #include <sys/mman.h>
+ #include <sys/utsname.h>
++// Unused (FEXCore::Utils::FEX_PAGE_SIZE is used throughout instead) -- present on macOS's SDK
++// but not iOS's, same as IntrusiveArenaAllocator.h's identical unused include.
++#ifndef __APPLE__
+ #include <sys/user.h>
++#endif
+ #include <type_traits>
+ #include <utility>
+ 
+diff -ru --ex FEXCore-Darwin/FEXCore/Source/Utils/Allocator/IntrusiveArenaAllocator.h Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Utils/Allocator/IntrusiveArenaAllocator.h
+--- FEXCore-Darwin/FEXCore/Source/Utils/Allocator/IntrusiveArenaAllocator.h	2026-09-01 21:28:03
++++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Utils/Allocator/IntrusiveArenaAllocator.h	2026-08-18 20:43:52
+@@ -11,7 +11,12 @@
+ #include <cstddef>
+ #include <memory_resource>
+ namespace fex_pmr = std::pmr;
++// Unused in this file (no PAGE_SIZE/struct user reference below -- FEXCore::Utils::FEX_PAGE_SIZE
++// is used instead throughout). Present on macOS's SDK but not iOS's, unlike Allocator.cpp's own
++// sys/mman.h-adjacent include of this same header, which already excludes __APPLE__ entirely.
++#ifndef __APPLE__
+ #include <sys/user.h>
++#endif
+ 
+ #include <mutex>
+ 
+diff -ru --ex FEXCore-Darwin/FEXCore/Source/Utils/Allocator.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Utils/Allocator.cpp
+--- FEXCore-Darwin/FEXCore/Source/Utils/Allocator.cpp	2026-09-01 21:28:03
++++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Utils/Allocator.cpp	2026-08-20 18:04:21
 @@ -27,6 +27,19 @@
  #include <sys/user.h>
  #endif
@@ -1697,7 +1737,7 @@ index e07527e..bf712d4 100644
  
  #ifndef MADV_DONTDUMP
  // No Darwin equivalent (core-dump exclusion works differently there, via a separate
-@@ -329,5 +342,218 @@ void SetupHooks(size_t PageSize, HookPtrs Ptrs) {
+@@ -329,5 +342,218 @@
    VirtualTHPControl = Ptrs.VirtualTHPControl;
  }
  
@@ -1916,43 +1956,9 @@ index e07527e..bf712d4 100644
 +}
  #endif
  } // namespace FEXCore::Allocator
-diff --git a/FEXCore/Source/Utils/Allocator/64BitAllocator.cpp b/FEXCore/Source/Utils/Allocator/64BitAllocator.cpp
-index f5f92fa..8191bc8 100644
---- a/FEXCore/Source/Utils/Allocator/64BitAllocator.cpp
-+++ b/FEXCore/Source/Utils/Allocator/64BitAllocator.cpp
-@@ -24,7 +24,11 @@
- #include <new>
- #include <sys/mman.h>
- #include <sys/utsname.h>
-+// Unused (FEXCore::Utils::FEX_PAGE_SIZE is used throughout instead) -- present on macOS's SDK
-+// but not iOS's, same as IntrusiveArenaAllocator.h's identical unused include.
-+#ifndef __APPLE__
- #include <sys/user.h>
-+#endif
- #include <type_traits>
- #include <utility>
- 
-diff --git a/FEXCore/Source/Utils/Allocator/IntrusiveArenaAllocator.h b/FEXCore/Source/Utils/Allocator/IntrusiveArenaAllocator.h
-index e29595a..6137c13 100644
---- a/FEXCore/Source/Utils/Allocator/IntrusiveArenaAllocator.h
-+++ b/FEXCore/Source/Utils/Allocator/IntrusiveArenaAllocator.h
-@@ -11,7 +11,12 @@
- #include <cstddef>
- #include <memory_resource>
- namespace fex_pmr = std::pmr;
-+// Unused in this file (no PAGE_SIZE/struct user reference below -- FEXCore::Utils::FEX_PAGE_SIZE
-+// is used instead throughout). Present on macOS's SDK but not iOS's, unlike Allocator.cpp's own
-+// sys/mman.h-adjacent include of this same header, which already excludes __APPLE__ entirely.
-+#ifndef __APPLE__
- #include <sys/user.h>
-+#endif
- 
- #include <mutex>
- 
-diff --git a/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp b/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp
-index 01e5bb2..7ae3971 100644
---- a/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp
-+++ b/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp
+diff -ru --ex FEXCore-Darwin/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp
+--- FEXCore-Darwin/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp	2026-09-01 21:28:03
++++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp	2026-08-21 20:32:15
 @@ -5,6 +5,7 @@
  #include <FEXCore/Utils/SpinWaitLock.h>
  
@@ -1961,7 +1967,7 @@ index 01e5bb2..7ae3971 100644
  #include <FEXCore/Utils/EnumUtils.h>
  #include <FEXCore/Utils/LogManager.h>
  #include <FEXCore/Utils/Telemetry.h>
-@@ -2046,9 +2047,25 @@ std::optional<int32_t> HandleUnalignedAccess(FEXCore::Core::InternalThreadState*
+@@ -2046,9 +2047,25 @@
    }
  
    const auto Frame = Thread->CurrentFrame;
@@ -1989,15 +1995,13 @@ index 01e5bb2..7ae3971 100644
  
    // Check some instructions first that don't do any backpatching.
    if ((Instr & ArchHelpers::Arm64::CASPAL_MASK) == ArchHelpers::Arm64::CASPAL_INST) { // CASPAL
-diff --git a/FEXCore/include/FEXCore/Core/Context.h b/FEXCore/include/FEXCore/Core/Context.h
-index ec61b90..fdc12ba 100644
---- a/FEXCore/include/FEXCore/Core/Context.h
-+++ b/FEXCore/include/FEXCore/Core/Context.h
-@@ -159,6 +159,23 @@ public:
-    */
+diff -ru --ex FEXCore-Darwin/FEXCore/include/FEXCore/Core/Context.h Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/include/FEXCore/Core/Context.h
+--- FEXCore-Darwin/FEXCore/include/FEXCore/Core/Context.h	2026-09-01 21:28:03
++++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/include/FEXCore/Core/Context.h	2026-08-19 18:44:59
+@@ -160,6 +160,23 @@
    FEX_DEFAULT_VISIBILITY virtual bool IsAddressInCodeBuffer(FEXCore::Core::InternalThreadState* Thread, uintptr_t Address) const = 0;
  
-+  /**
+   /**
 +   * @brief Crash-diagnostic only: writes a human-readable dump of the dispatcher's own
 +   * known-good entry addresses alongside what the given thread's live CpuStateFrame::Pointers
 +   * actually holds for the same fields, flagging any mismatches. Added for the iOS port to
@@ -2014,14 +2018,14 @@ index ec61b90..fdc12ba 100644
 +  FEX_DEFAULT_VISIBILITY virtual bool DumpDispatcherStateForDiagnostics(FEXCore::Core::InternalThreadState* Thread, char* OutBuf,
 +                                                                        size_t OutBufSize) const = 0;
 +
-   /**
++  /**
     * @brief Informs the context if hardware TSO is supported.
     * Once hardware TSO is enabled, then TSO emulation through atomics is disabled and relies on the hardware.
-diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
-index 7c64dd8..8e109a0 100644
---- a/FEXCore/include/FEXCore/Core/CoreState.h
-+++ b/FEXCore/include/FEXCore/Core/CoreState.h
-@@ -364,10 +364,33 @@ struct JITPointers {
+    *
+diff -ru --ex FEXCore-Darwin/FEXCore/include/FEXCore/Core/CoreState.h Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/include/FEXCore/Core/CoreState.h
+--- FEXCore-Darwin/FEXCore/include/FEXCore/Core/CoreState.h	2026-09-01 21:28:03
++++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/include/FEXCore/Core/CoreState.h	2026-08-30 22:28:41
+@@ -364,10 +364,33 @@
     * @name Dispatcher pointers
     * @{ */
    uint64_t DispatcherLoopTop {};
@@ -2055,10 +2059,11 @@ index 7c64dd8..8e109a0 100644
    uint64_t ThreadStopHandlerSpillSRA {};
    uint64_t ThreadPauseHandlerSpillSRA {};
    uint64_t GuestSignal_SIGILL {};
-@@ -427,6 +450,23 @@ struct CpuStateFrame {
+@@ -426,6 +449,23 @@
+   } SynchronousFaultData;
  
    InternalThreadState* Thread;
- 
++
 +  // Set by ExitFunctionLink (JIT.cpp) right before every return, to the JIT-buffer-reuse
 +  // generation counter's value at the moment it validated the HostCode it's returning.
 +  // ExitFunctionLinker (Dispatcher.cpp) re-reads the live counter right before branching to
@@ -2075,14 +2080,12 @@ index 7c64dd8..8e109a0 100644
 +  // actual remaining source of the "instruction-fetch fault, not inside any currently-live JIT
 +  // allocation" crash even with the signal-based redirect already in place for this same range.
 +  uint64_t ExitFunctionLinkValidatedGeneration {};
-+
+ 
  #ifdef ARCHITECTURE_arm64ec
    // Set by the kernel on ARM64EC whenever the JIT should cooperatively suspend running guest code.
-   uint32_t SuspendDoorbell {};
-diff --git a/FEXCore/include/FEXCore/Utils/AllocatorHooks.h b/FEXCore/include/FEXCore/Utils/AllocatorHooks.h
-index e3501dc..5445abf 100644
---- a/FEXCore/include/FEXCore/Utils/AllocatorHooks.h
-+++ b/FEXCore/include/FEXCore/Utils/AllocatorHooks.h
+diff -ru --ex FEXCore-Darwin/FEXCore/include/FEXCore/Utils/AllocatorHooks.h Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/include/FEXCore/Utils/AllocatorHooks.h
+--- FEXCore-Darwin/FEXCore/include/FEXCore/Utils/AllocatorHooks.h	2026-09-01 21:28:03
++++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/include/FEXCore/Utils/AllocatorHooks.h	2026-08-20 18:00:22
 @@ -14,6 +14,7 @@
  #include <sys/mman.h>
  #ifdef __APPLE__
@@ -2091,7 +2094,7 @@ index e3501dc..5445abf 100644
  #endif
  #else
  #define NTDDI_VERSION 0x0A000005
-@@ -120,7 +121,64 @@ FEX_DEFAULT_VISIBILITY extern void VirtualName(const char* Name, void* Ptr, size
+@@ -120,7 +121,64 @@
  
  // All commit parameters are ignored here, they are unnecessary as Linux supports overcommit
  
@@ -2157,7 +2160,7 @@ index e3501dc..5445abf 100644
  // Apple Silicon rejects PROT_EXEC on a plain mmap outright (EACCES) -- confirmed empirically.
  // Any executable allocation must carry MAP_JIT, and writing to it afterward requires each
  // writing thread to toggle pthread_jit_write_protect_np(0) first (per-thread W^X state, not
-@@ -155,17 +213,57 @@ public:
+@@ -155,17 +213,57 @@
  constexpr int PlatformExecuteFlag = 0;
  #endif
  
