@@ -221,6 +221,174 @@ index 8856b44..73fb0e9 100644
  
    constexpr unsigned RAPairs = 4;
  
+diff --git a/FEXCore/Source/Interface/Core/CPUBackend.cpp b/FEXCore/Source/Interface/Core/CPUBackend.cpp
+index d38a4f4..38b11e6 100644
+--- a/FEXCore/Source/Interface/Core/CPUBackend.cpp
++++ b/FEXCore/Source/Interface/Core/CPUBackend.cpp
+@@ -21,8 +21,24 @@ namespace FEXCore {
+ namespace CPU {
+ 
+   static constexpr size_t INITIAL_CODE_SIZE = 1024 * 1024 * 16;
++#if defined(__APPLE__) && TARGET_OS_IPHONE
++  // Every JIT allocation on iOS has to be individually granted execute permission by
++  // StikDebug's external BreakpointJIT mechanism (a slow, page-by-page GDB-remote-mediated
++  // protocol -- see AllocatorHooks.h's iOS section). Confirmed on-device: the initial 16MB
++  // buffer (INITIAL_CODE_SIZE above) allocates fine, but the first *growth* step -- doubling
++  // to 32MB once that fills up, which only a heavier title's larger codebase (Minecraft; a
++  // lighter title never filled the first 16MB buffer at all) ever actually exercised for the
++  // first time this whole port -- crashed inside that external call before it could even
++  // return, never reaching this file's own success/failure logging. Capping growth at the
++  // already-proven-working 16MB (StartLargerCodeBuffer's std::min(latest*2, MAX_CODE_SIZE)
++  // then always returns the same 16MB every time, i.e. growth is disabled rather than
++  // guessing at some other untested larger size) trades more frequent ClearCodeCache
++  // evictions (some re-JIT overhead) for allocations that actually succeed.
++  static constexpr size_t MAX_CODE_SIZE = INITIAL_CODE_SIZE;
++#else
+   // We don't want to move above 128MB atm because that means we will have to encode longer jumps
+   static constexpr size_t MAX_CODE_SIZE = 1024 * 1024 * 128;
++#endif
+ 
+   constexpr static uint64_t NamedVectorConstants[FEXCore::IR::NamedVectorConstant::NAMED_VECTOR_CONST_POOL_MAX][2] = {
+     {0x0003'0002'0001'0000ULL, 0x0007'0006'0005'0004ULL}, // NAMED_VECTOR_INCREMENTAL_U16_INDEX
+@@ -335,7 +351,29 @@ namespace CPU {
+       // Keep a reference to the old code buffer to delay deallocation
+       SignalHandlerCodeBuffers.push_back(std::move(CodeBuffer));
+     } else {
++#if defined(__APPLE__) && TARGET_OS_IPHONE
++      // Dropping CodeBuffer here (the caller's only remaining reference, since CurrentCodeBuffer
++      // already points at the new buffer) runs its destructor immediately, unmapping the
++      // physical pages -- vs. on other platforms, correctly assuming that once
++      // SignalHandlerRefCounter is 0 nothing else could still reference this buffer. That
++      // assumption doesn't hold here: on iOS every guest thread shares this one
++      // StikDebug-count-limited JIT buffer (see this file's own MAX_CODE_SIZE comment above),
++      // so another thread can be mid-execution of a direct branch into memory this same instant
++      // decides to evict, with no barrier forcing it to have already observed the delink this
++      // eviction just performed (ClearCache/JIT.cpp) before the unmap actually happens.
++      // Confirmed on-device: a crash with exactly that signature (jump to an address the
++      // allocator's own tracking table no longer recognizes at all, "not tracked -- not inside
++      // any currently-live JIT allocation") persisted even after delinking + full cross-thread
++      // cache invalidation were both verified working correctly. Keep a short grace-period
++      // history instead of freeing on the spot -- bounded, so this doesn't grow forever.
++      static constexpr size_t kRetainedBufferCount = 3;
++      SignalHandlerCodeBuffers.push_back(std::move(CodeBuffer));
++      while (SignalHandlerCodeBuffers.size() > kRetainedBufferCount) {
++        SignalHandlerCodeBuffers.erase(SignalHandlerCodeBuffers.begin());
++      }
++#else
+       SignalHandlerCodeBuffers.clear();
++#endif
+     }
+   }
+ 
+@@ -354,7 +392,7 @@ namespace CPU {
+ 
+   CodeBuffer::CodeBuffer(size_t Size)
+     : AllocatedSize(Size) {
+-#ifdef __APPLE__
++#if defined(__APPLE__) && !TARGET_OS_IPHONE
+     // Two Darwin MAP_JIT restrictions rule out a trailing guard page here entirely (both
+     // confirmed empirically): (1) mprotect() refuses to change protection on a sub-range of
+     // an existing MAP_JIT mapping (EACCES) -- so the guard can't be carved out of the code
+@@ -377,7 +415,23 @@ namespace CPU {
+     }
+ #else
+     Ptr = static_cast<uint8_t*>(FEXCore::Allocator::VirtualAlloc(Size, true));
+-    LOGMAN_THROW_A_FMT(!!Ptr, "Couldn't allocate code buffer");
++    // LOGMAN_THROW_A_FMT compiles to a complete no-op ((void)(pred);) unless
++    // ASSERTIONS_ENABLED, which this build doesn't set -- so a failed VirtualAlloc here
++    // previously went entirely unnoticed: no log, no crash, execution just continued with
++    // Ptr == nullptr as the base address of a brand new JIT code buffer, and every guest
++    // instruction subsequently "compiled" into it got written to whatever real memory
++    // happened to sit near address zero (or wherever null-pointer arithmetic landed),
++    // silently corrupting it instead of failing cleanly. Confirmed as a real, reachable
++    // failure mode on-device: on iOS, VirtualAlloc(Execute=true) routes through
++    // iOSJITAlloc(), which depends on StikDebug (an external process) servicing a signal-
++    // trap handshake for every request -- and a captured system log showed StikDebug
++    // getting killed by the OS mid-session for violating a background wake-rate limit,
++    // after which every subsequent request of this kind fails. ERROR_AND_DIE_FMT
++    // (unconditional, matching the macOS branch just above) turns that into an immediate,
++    // attributable failure instead.
++    if (Ptr == nullptr) {
++      ERROR_AND_DIE_FMT("Couldn't allocate code buffer");
++    }
+ 
+     // Protect the last page of the allocated buffer to trigger SIGSEGV on write access.
+     uintptr_t LastPageAddr = AlignDown(reinterpret_cast<uintptr_t>(Ptr) + Size - 1, FEXCore::Utils::FEX_PAGE_SIZE);
+@@ -462,10 +516,18 @@ namespace CPU {
+ 
+   bool CPUBackend::IsAddressInCodeBuffer(uintptr_t Address) const {
+     auto CheckCodeBuffer = [](CodeBuffer& Buffer, uintptr_t Address) {
++      // Address here is always a live PC -- i.e. the EXECUTABLE side of the buffer -- while
++      // Buffer.Ptr is what VirtualAlloc(..., true) returned, which on iOS is the WRITABLE side
++      // of a genuinely separate dual-mapped alias (see AllocatorHooks.h's iOS section). Translate
++      // before comparing, or this always returns false on iOS regardless of Address, silently
++      // breaking every caller (JIT-vs-non-JIT signal classification, self-modifying-code
++      // tracking, single-step handling) -- identity everywhere else, so harmless there.
++      const uintptr_t BufferExecBase =
++        reinterpret_cast<uintptr_t>(FEXCore::Allocator::GetExecutableAddress(Buffer.Ptr));
+       // The last page of the code buffer is protected, so we need to exclude it from the valid range
+       // when checking if the address is in the code buffer.
+-      uintptr_t LastPageAddr = AlignDown(reinterpret_cast<uintptr_t>(Buffer.Ptr) + Buffer.AllocatedSize - 1, FEXCore::Utils::FEX_PAGE_SIZE);
+-      return (Address >= reinterpret_cast<uintptr_t>(Buffer.Ptr) && Address < LastPageAddr);
++      uintptr_t LastPageAddr = AlignDown(BufferExecBase + Buffer.AllocatedSize - 1, FEXCore::Utils::FEX_PAGE_SIZE);
++      return (Address >= BufferExecBase && Address < LastPageAddr);
+     };
+ 
+     if (CheckCodeBuffer(*CurrentCodeBuffer, Address)) {
+diff --git a/FEXCore/Source/Interface/Core/CodeCache.cpp b/FEXCore/Source/Interface/Core/CodeCache.cpp
+index 83fe20f..74509b0 100644
+--- a/FEXCore/Source/Interface/Core/CodeCache.cpp
++++ b/FEXCore/Source/Interface/Core/CodeCache.cpp
+@@ -28,10 +28,18 @@
+ #include <xxhash.h>
+ 
+ #ifdef __APPLE__
++#include <TargetConditionals.h>
+ #include <libkern/OSCacheControl.h>
++#if !TARGET_OS_IPHONE
++// iOS's SDK hard-blocks mach_vm.h (#error mach_vm.h unsupported.) -- not a portability gap,
++// a deliberate platform restriction. FinalizeCodePages()'s use of it below is part of the
++// persistent disk code-cache feature only (an optional load/save-JIT'd-code acceleration, not
++// required for JIT compilation/execution itself), so this is scoped out for iOS below rather
++// than reimplemented; see FinalizeCodePages' own __APPLE__/TARGET_OS_IPHONE split.
+ #include <mach/mach.h>
+ #include <mach/mach_vm.h>
+ #endif
++#endif
+ 
+ #include <FEXCore/Utils/AllocatorHooks.h>
+ 
+@@ -410,6 +418,13 @@ void CodeCache::Validate(const ExecutableFileSectionInfo& Section, fextl::set<ui
+     if (!ValidationCTX->InitCore()) {
+       ERROR_AND_DIE_FMT("Failed to create cache load validation context");
+     }
++    // ValidationCTX->InitCore() just called SignalDelegation->SetConfig() with the addresses
++    // of ITS OWN, separate Dispatcher/JIT buffer -- but SignalDelegation (set a few lines up)
++    // is the *same* SignalDelegator instance the real, currently-running context uses. Left
++    // as-is, any signal later delivered to a live guest thread would get resumed using PC
++    // values belonging to this validation context's buffer instead of the real one's. Restore
++    // the real context's own config immediately.
++    CTX.SignalDelegation->SetConfig(CTX.Dispatcher->MakeSignalDelegatorConfig());
+ 
+     ValidationThread.reset(ValidationCTX->CreateThread(0, 0, nullptr));
+ 
+@@ -850,7 +865,15 @@ void CodeCache::FinalizeCodePages(MappedCodeCacheFile& Code, std::span<std::byte
+ 
+   FEXCORE_PROFILE_SCOPED("FinalizeCodePages");
+ 
+-#ifndef _WIN32
++#if defined(__APPLE__) && TARGET_OS_IPHONE
++  // The persistent disk code cache isn't supported on iOS: iOS's SDK hard-blocks mach_vm.h
++  // entirely (a deliberate platform restriction, not a portability gap), and the whole
++  // remap-onto-a-PROT_NONE-placeholder scheme below relies on it. This is an optional
++  // load/save-JIT'd-code acceleration feature, not required for JIT compilation/execution
++  // itself -- ERROR_AND_DIE_FMT (ends the process) rather than silently misbehaving if this
++  // ever gets reached, which requires the feature to be enabled elsewhere first.
++  ERROR_AND_DIE_FMT("{}: the persistent disk code cache isn't supported on iOS", __FUNCTION__);
++#elif !defined(_WIN32)
+   // Atomicity is critical when making the finalized code data visible.
+   // We ensure this by remapping a temporary buffer onto the PROT_NONE
+   // placeholder page in CodeBuffer. Some constraints to keep in mind are:
 diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
 index b9aa740..dba3057 100644
 --- a/FEXCore/Source/Interface/Core/Core.cpp
@@ -1400,10 +1568,18 @@ index 0b23030..06c2ff5 100644
    BlockLinks = BlockLinks_pma->new_object<BlockLinksMapType>();
    // All code is gone, clear the block list
 diff --git a/FEXCore/Source/Interface/Core/LookupCache.h b/FEXCore/Source/Interface/Core/LookupCache.h
-index bf958d8..68cef7d 100644
+index bf958d8..55b6a33 100644
 --- a/FEXCore/Source/Interface/Core/LookupCache.h
 +++ b/FEXCore/Source/Interface/Core/LookupCache.h
-@@ -25,12 +25,21 @@ protected:
+@@ -12,6 +12,7 @@
+ #include <FEXCore/fextl/vector.h>
+ #include <FEXCore/fextl/memory_resource.h>
+ 
++#include <atomic>
+ #include <cstdint>
+ #include <stddef.h>
+ #include <utility>
+@@ -25,12 +26,21 @@ protected:
  };
  
  struct LookupCacheWriteLockToken : public LookupCacheBaseLockToken {
@@ -1426,7 +1602,7 @@ index bf958d8..68cef7d 100644
  };
  
  struct LookupCacheReadLockToken : public LookupCacheBaseLockToken {
-@@ -50,6 +59,22 @@ struct GuestToHostMap {
+@@ -50,6 +60,22 @@ struct GuestToHostMap {
      return LookupCacheWriteLockToken {Lock};
    }
  
@@ -1449,7 +1625,29 @@ index bf958d8..68cef7d 100644
    [[nodiscard]]
    LookupCacheReadLockToken AcquireReadLock() {
      return LookupCacheReadLockToken {Lock};
-@@ -379,6 +404,12 @@ public:
+@@ -202,9 +228,19 @@ public:
+           auto BlockPointers = reinterpret_cast<LookupCacheEntry*>(LocalPagePointer);
+ 
+           if (BlockPointers[PageOffset].GuestCode == Address) {
++            // Data before tag, with a compiler barrier holding that order: this L1 slot is read
++            // lock-free (FindBlock's "no lock needed" L1 check, above) and this same thread can be
++            // interrupted by a signal between these two stores. Tag-then-data (the order this used
++            // to be written in) lets an interrupting reentrant lookup observe GuestCode already
++            // matching Address while HostCode still holds this slot's previous (possibly stale/
++            // freed, hash-collision-unrelated) occupant -- a torn read that looks fully valid to
++            // FindBlock's caller. Confirmed on-device: ExitFunctionLink returning a HostCode for
++            // GuestRip=0x70007b9cf0 that pointed completely outside every current code buffer,
++            // for a GuestRip that had resolved correctly moments earlier in the same session.
++            HostPtr = BlockPointers[PageOffset].HostCode;
++            L1Entry.HostCode = HostPtr;
++            std::atomic_signal_fence(std::memory_order_seq_cst);
+             L1Entry.GuestCode = Address;
+-            L1Entry.HostCode = BlockPointers[PageOffset].HostCode;
+-            HostPtr = L1Entry.HostCode;
+           }
+         }
+       }
+@@ -379,6 +415,12 @@ public:
      return Shared->AcquireWriteLock();
    }
  
@@ -1462,6 +1660,363 @@ index bf958d8..68cef7d 100644
  private:
    void CacheBlockMapping(uint64_t Address, const GuestToHostMap::BlockEntry& Entry, bool L1Only, const LookupCacheBaseLockToken& lk) {
      for (const auto& CodePage : Entry.CodePages) {
+@@ -387,8 +429,11 @@ private:
+ 
+     // Do L1
+     auto& L1Entry = reinterpret_cast<LookupCacheEntry*>(L1Pointer)[Address & L1PointerMask];
+-    L1Entry.GuestCode = Address;
++    // Data before tag -- see the matching comment in FindBlock's L2-promotion write above for why
++    // this order (and the fence holding it) is required, not just style.
+     L1Entry.HostCode = Entry.HostCode;
++    std::atomic_signal_fence(std::memory_order_seq_cst);
++    L1Entry.GuestCode = Address;
+ 
+     if (!DisableL2Cache() && !L1Only) {
+       // Do ful map
+diff --git a/FEXCore/Source/Utils/Allocator.cpp b/FEXCore/Source/Utils/Allocator.cpp
+index e07527e..bf712d4 100644
+--- a/FEXCore/Source/Utils/Allocator.cpp
++++ b/FEXCore/Source/Utils/Allocator.cpp
+@@ -27,6 +27,19 @@
+ #include <sys/user.h>
+ #endif
+ #endif
++#ifdef __APPLE__
++#include <TargetConditionals.h>
++#if TARGET_OS_IPHONE
++#include <atomic>
++#include <dlfcn.h>
++#include <mach/mach.h>
++#include <mach/vm_map.h>
++#include <map>
++#include <mutex>
++#include <unistd.h>
++#include <utility>
++#endif
++#endif
+ 
+ #ifndef MADV_DONTDUMP
+ // No Darwin equivalent (core-dump exclusion works differently there, via a separate
+@@ -329,5 +342,218 @@ void SetupHooks(size_t PageSize, HookPtrs Ptrs) {
+   VirtualTHPControl = Ptrs.VirtualTHPControl;
+ }
+ 
++#endif
++
++#if defined(__APPLE__) && TARGET_OS_IPHONE
++// iOS JIT allocation: no MAP_JIT-equivalent is available to a sideloaded/free-provisioned
++// app, so executable memory instead comes from an externally-attached StikDebug session
++// servicing the same BRK #0xf00d protocol as src/core/ios/ios_jit_allocator.cpp in the
++// embedding app (Bachata-S4). Duplicated here rather than shared, since FEXCore-Darwin builds
++// as its own standalone static library with no dependency on Bachata-S4's own Core::
++// namespace.
++//
++// Ground truth, confirmed on-device the hard way (read from StikDebug's own source,
++// github.com/StikDebug/StikDebug, plus two rounds of on-device crash evidence):
++// BreakGetJITMapping(addr, len) has two branches. addr != nullptr grants execute permission on
++// the caller's own pre-existing address in place -- the call returns successfully, but the
++// memory never actually becomes executable (confirmed via raw GDB-remote wire capture: the
++// grant call completes, yet every subsequent branch into that memory faults, forever, with zero
++// memory-write packets ever sent for it). addr == nullptr instead makes the debugger allocate a
++// brand-new region itself (GDB-remote "_M<len>,rx") before granting it execute permission --
++// that memory genuinely IS executable, but it is NOT writable from this process's own store
++// instructions (confirmed via crash log: a plain write to the returned address SIGSEGVs from
++// ordinary host C++ code, nowhere near guest execution -- the "rx" in "_M<len>,rx" turns out to
++// be literal). So a real dual-mapped scheme is required: get the executable address from the
++// addr == nullptr branch, then locally `mach_vm_remap` a second, writable virtual alias of
++// those same physical pages -- remapping within one's own task needs no debugger help or
++// special entitlement, only the execute side did. This matches the pattern Ryujinx/AetherX's
++// DualMappedJitAllocator uses against the same protocol, and this codebase's own
++// shader-recompiler JIT (src/core/ios/ios_jit_allocator.cpp) uses the identical scheme.
++namespace {
++using BreakGetJITMappingFn = void* (*)(void*, size_t);
++using BreakJITDetachFn = void (*)();
++
++struct BreakpointJITSymbols {
++  BreakGetJITMappingFn get_jit_mapping = nullptr;
++  BreakJITDetachFn jit_detach = nullptr;
++};
++
++const BreakpointJITSymbols& GetBreakpointJITSymbols() noexcept {
++  static const BreakpointJITSymbols symbols = [] {
++    BreakpointJITSymbols s;
++    void* handle =
++      dlopen("@executable_path/Frameworks/BreakpointJIT.framework/BreakpointJIT", RTLD_NOW | RTLD_LOCAL);
++    if (handle == nullptr) {
++      return s;
++    }
++    s.get_jit_mapping = reinterpret_cast<BreakGetJITMappingFn>(dlsym(handle, "BreakGetJITMapping"));
++    s.jit_detach = reinterpret_cast<BreakJITDetachFn>(dlsym(handle, "BreakJITDetach"));
++    return s;
++  }();
++  return symbols;
++}
++
++// One dual-mapped allocation: WriteBase is the mach_vm_remap'd writable alias, ExecBase is the
++// address BreakGetJITMapping actually granted -- two different addresses backed by the same
++// physical pages. Tracked both ways (keyed by base address -> {other side's base, size}) so
++// GetExecutableAddress/GetWritableAddress can translate in either direction, and so an address
++// *within* a region (not just its exact base) can still be classified/translated correctly.
++// std::map (not unordered_map) specifically so upper_bound gives an ordered range lookup.
++struct MappedRegion {
++  uintptr_t OtherBase;
++  size_t Size;
++};
++
++struct JITMappingTable {
++  std::mutex Mutex;
++  std::map<uintptr_t, MappedRegion> WriteToExec;
++  std::map<uintptr_t, MappedRegion> ExecToWrite;
++};
++
++JITMappingTable& GetJITMappingTable() {
++  static JITMappingTable Table;
++  return Table;
++}
++
++// Caller must hold Table.Mutex. Returns Addr translated to the other side of the mapping it
++// falls within, offset-preserving, or Addr unchanged if it isn't inside any tracked region
++// (defensive fallback only -- every Execute=true allocation on iOS goes through iOSJITAlloc, so
++// in practice every real call here should hit).
++void* TranslateAddressLocked(const std::map<uintptr_t, MappedRegion>& Table, void* Addr) {
++  if (Addr == nullptr) {
++    return nullptr;
++  }
++  const auto A = reinterpret_cast<uintptr_t>(Addr);
++  auto It = Table.upper_bound(A);
++  if (It == Table.begin()) {
++    return Addr;
++  }
++  --It;
++  const auto& [Base, Region] = *It;
++  if (A >= Base && A < Base + Region.Size) {
++    return reinterpret_cast<void*>(Region.OtherBase + (A - Base));
++  }
++  return Addr;
++}
++} // namespace
++
++void* GetExecutableAddress(void* WriteAddr) {
++  auto& Table = GetJITMappingTable();
++  std::lock_guard<std::mutex> Lock(Table.Mutex);
++  return TranslateAddressLocked(Table.WriteToExec, WriteAddr);
++}
++
++void* GetWritableAddress(void* ExecAddr) {
++  auto& Table = GetJITMappingTable();
++  std::lock_guard<std::mutex> Lock(Table.Mutex);
++  return TranslateAddressLocked(Table.ExecToWrite, ExecAddr);
++}
++
++// Counts every BreakGetJITMapping call made through iOSJITAlloc, in order, so a crash log can
++// be correlated against exactly how many prior requests StikDebug had already serviced --
++// distinguishing "dies after N requests" from "flaky from the start" from "always the very
++// first one". Deliberately logged for every call, not just failures: a silent server-side
++// failure to actually grant execute permission looks identical to success from here (see this
++// file's top comment), so the request/response timeline itself is the only signal available
++// short of StikDebug's own logs.
++std::atomic<uint64_t> AllocationCounter{0};
++
++void* iOSJITAlloc(size_t Size) {
++  const uint64_t RequestNumber = AllocationCounter.fetch_add(1, std::memory_order_relaxed) + 1;
++  const auto& Symbols = GetBreakpointJITSymbols();
++  if (Symbols.get_jit_mapping == nullptr) {
++    LogMan::Msg::EFmt("iOSJITAlloc #{}: BreakpointJIT symbols unavailable", RequestNumber);
++    return nullptr;
++  }
++
++  LogMan::Msg::IFmt("iOSJITAlloc #{}: requesting fresh execute-capable region (size={})",
++                    RequestNumber, Size);
++  void* ExecAddr = Symbols.get_jit_mapping(nullptr, Size);
++  if (ExecAddr == nullptr) {
++    LogMan::Msg::EFmt("iOSJITAlloc #{}: BreakGetJITMapping(nullptr, {}) returned nullptr -- StikDebug "
++                      "with the Universal JIT Script must be attached before this point, or its "
++                      "session has stopped responding.",
++                      RequestNumber, Size);
++    return nullptr;
++  }
++  LogMan::Msg::IFmt("iOSJITAlloc #{}: BreakGetJITMapping returned {} (execute-side)", RequestNumber,
++                    ExecAddr);
++
++  // Remap a second, writable virtual alias of the SAME physical pages, purely locally -- see
++  // this file's top comment for why this half doesn't need the debugger at all. mach_vm.h's
++  // 64-bit-explicit API (mach_vm_remap et al.) isn't available on iOS ("mach_vm.h unsupported"
++  // from the SDK itself) -- vm_map.h's classic API works the same way here since vm_address_t
++  // is pointer-width on 64-bit Darwin.
++  vm_address_t WriteAddr = 0;
++  vm_prot_t CurProt = VM_PROT_NONE, MaxProt = VM_PROT_NONE;
++  kern_return_t Kr = vm_remap(mach_task_self(), &WriteAddr, static_cast<vm_size_t>(Size), /*mask=*/0,
++                               VM_FLAGS_ANYWHERE, mach_task_self(), reinterpret_cast<vm_address_t>(ExecAddr),
++                               /*copy=*/FALSE, &CurProt, &MaxProt, VM_INHERIT_NONE);
++  if (Kr != KERN_SUCCESS) {
++    LogMan::Msg::EFmt("iOSJITAlloc #{}: vm_remap failed for execute-side {} (size={}): "
++                      "kern_return_t {} ({})",
++                      RequestNumber, ExecAddr, Size, static_cast<int>(Kr), mach_error_string(Kr));
++    return nullptr;
++  }
++  Kr = vm_protect(mach_task_self(), WriteAddr, static_cast<vm_size_t>(Size), /*set_maximum=*/FALSE,
++                   VM_PROT_READ | VM_PROT_WRITE);
++  if (Kr != KERN_SUCCESS) {
++    LogMan::Msg::EFmt("iOSJITAlloc #{}: vm_protect(RW) failed for remapped {} (size={}): "
++                      "kern_return_t {} ({})",
++                      RequestNumber, reinterpret_cast<void*>(WriteAddr), Size, static_cast<int>(Kr),
++                      mach_error_string(Kr));
++    vm_deallocate(mach_task_self(), WriteAddr, static_cast<vm_size_t>(Size));
++    return nullptr;
++  }
++  LogMan::Msg::IFmt("iOSJITAlloc #{}: remapped writable alias {} (execute-side {})", RequestNumber,
++                    reinterpret_cast<void*>(WriteAddr), ExecAddr);
++
++  auto& Table = GetJITMappingTable();
++  std::lock_guard<std::mutex> Lock(Table.Mutex);
++  Table.WriteToExec[static_cast<uintptr_t>(WriteAddr)] = MappedRegion{reinterpret_cast<uintptr_t>(ExecAddr), Size};
++  Table.ExecToWrite[reinterpret_cast<uintptr_t>(ExecAddr)] = MappedRegion{static_cast<uintptr_t>(WriteAddr), Size};
++  return reinterpret_cast<void*>(WriteAddr);
++}
++
++bool iOSJITFreeIfOwned(void* WriteAddr, size_t Size) {
++  auto& Table = GetJITMappingTable();
++  std::lock_guard<std::mutex> Lock(Table.Mutex);
++  const auto It = Table.WriteToExec.find(reinterpret_cast<uintptr_t>(WriteAddr));
++  if (It == Table.WriteToExec.end()) {
++    return false;
++  }
++  const auto ExecBase = It->second.OtherBase;
++  Table.WriteToExec.erase(It);
++  Table.ExecToWrite.erase(ExecBase);
++  vm_deallocate(mach_task_self(), reinterpret_cast<vm_address_t>(WriteAddr), static_cast<vm_size_t>(Size));
++  vm_deallocate(mach_task_self(), static_cast<vm_address_t>(ExecBase), static_cast<vm_size_t>(Size));
++  return true;
++}
++
++// Crash-diagnostic only: classifies an arbitrary host address against the live-allocation
++// tables (checking both the write-side and execute-side, since a fault address could land on
++// either) so a SIGSEGV/SIGBUS handler can log what it actually was, rather than just its raw
++// bytes.
++iOSJITAddressKind iOSJITDescribeAddress(void* Addr, uintptr_t* OutRegionBase, size_t* OutOffset, size_t* OutSize) {
++  auto& Table = GetJITMappingTable();
++  std::lock_guard<std::mutex> Lock(Table.Mutex);
++  const auto A = reinterpret_cast<uintptr_t>(Addr);
++
++  for (const auto* Side : {&Table.WriteToExec, &Table.ExecToWrite}) {
++    auto It = Side->upper_bound(A);
++    if (It == Side->begin()) {
++      continue;
++    }
++    --It;
++    const auto& [Base, Region] = *It;
++    if (A >= Base && A < Base + Region.Size) {
++      if (OutRegionBase) *OutRegionBase = Base;
++      if (OutOffset) *OutOffset = A - Base;
++      if (OutSize) *OutSize = Region.Size;
++      return iOSJITAddressKind::LiveAllocation;
++    }
++  }
++  return iOSJITAddressKind::NotTracked;
++}
+ #endif
+ } // namespace FEXCore::Allocator
+diff --git a/FEXCore/Source/Utils/Allocator/64BitAllocator.cpp b/FEXCore/Source/Utils/Allocator/64BitAllocator.cpp
+index f5f92fa..8191bc8 100644
+--- a/FEXCore/Source/Utils/Allocator/64BitAllocator.cpp
++++ b/FEXCore/Source/Utils/Allocator/64BitAllocator.cpp
+@@ -24,7 +24,11 @@
+ #include <new>
+ #include <sys/mman.h>
+ #include <sys/utsname.h>
++// Unused (FEXCore::Utils::FEX_PAGE_SIZE is used throughout instead) -- present on macOS's SDK
++// but not iOS's, same as IntrusiveArenaAllocator.h's identical unused include.
++#ifndef __APPLE__
+ #include <sys/user.h>
++#endif
+ #include <type_traits>
+ #include <utility>
+ 
+diff --git a/FEXCore/Source/Utils/Allocator/IntrusiveArenaAllocator.h b/FEXCore/Source/Utils/Allocator/IntrusiveArenaAllocator.h
+index e29595a..6137c13 100644
+--- a/FEXCore/Source/Utils/Allocator/IntrusiveArenaAllocator.h
++++ b/FEXCore/Source/Utils/Allocator/IntrusiveArenaAllocator.h
+@@ -11,7 +11,12 @@
+ #include <cstddef>
+ #include <memory_resource>
+ namespace fex_pmr = std::pmr;
++// Unused in this file (no PAGE_SIZE/struct user reference below -- FEXCore::Utils::FEX_PAGE_SIZE
++// is used instead throughout). Present on macOS's SDK but not iOS's, unlike Allocator.cpp's own
++// sys/mman.h-adjacent include of this same header, which already excludes __APPLE__ entirely.
++#ifndef __APPLE__
+ #include <sys/user.h>
++#endif
+ 
+ #include <mutex>
+ 
+diff --git a/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp b/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp
+index 01e5bb2..7ae3971 100644
+--- a/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp
++++ b/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp
+@@ -5,6 +5,7 @@
+ #include <FEXCore/Utils/SpinWaitLock.h>
+ 
+ #include <FEXCore/Debug/InternalThreadState.h>
++#include <FEXCore/Utils/AllocatorHooks.h>
+ #include <FEXCore/Utils/EnumUtils.h>
+ #include <FEXCore/Utils/LogManager.h>
+ #include <FEXCore/Utils/Telemetry.h>
+@@ -2046,9 +2047,25 @@ std::optional<int32_t> HandleUnalignedAccess(FEXCore::Core::InternalThreadState*
+   }
+ 
+   const auto Frame = Thread->CurrentFrame;
+-  const uint64_t BlockBegin = Frame->State.InlineJITBlockHeader;
++  // InlineJITBlockHeader is a PC-relative (adr-computed) address written by the JIT's own
++  // generated entry-point code (Arm64JITCore::EmitEntryPoint: `adr TMP1, HeaderLabel`), so
++  // it always points at the EXECUTABLE-side alias of the code buffer -- the same alias
++  // this function's own `ProgramCounter` parameter must already be translated away from
++  // by the caller on iOS's dual-mapped JIT memory (see fex_guest_engine.cpp's
++  // HandleGuestSignal). The executable alias there is not guaranteed readable, and
++  // dereferencing it here -- while already inside a signal handler for an unrelated fault
++  // -- previously caused a second, undeliverable fault that silently killed the handling
++  // thread outright: no crash report, no further log output on any path past this point,
++  // yet the rest of the process kept running unaffected. That matched exactly what was
++  // observed on-device, and was confirmed by an atomic checkpoint counter (touches no I/O,
++  // can't itself hang or fault) showing execution reaching the call into this function and
++  // never advancing past it. Translate to the writable alias first; the header/tail layout
++  // and offsets are address-independent (same physical page), so this is a no-op on every
++  // platform except iOS, where GetWritableAddress does a real translation.
++  const uint64_t BlockBegin = reinterpret_cast<uint64_t>(FEXCore::Allocator::GetWritableAddress(
++      reinterpret_cast<void*>(Frame->State.InlineJITBlockHeader)));
+   auto InlineHeader = reinterpret_cast<const CPU::CPUBackend::JITCodeHeader*>(BlockBegin);
+-  auto InlineTail = reinterpret_cast<CPU::CPUBackend::JITCodeTail*>(Frame->State.InlineJITBlockHeader + InlineHeader->OffsetToBlockTail);
++  auto InlineTail = reinterpret_cast<CPU::CPUBackend::JITCodeTail*>(BlockBegin + InlineHeader->OffsetToBlockTail);
+ 
+   // Check some instructions first that don't do any backpatching.
+   if ((Instr & ArchHelpers::Arm64::CASPAL_MASK) == ArchHelpers::Arm64::CASPAL_INST) { // CASPAL
+diff --git a/FEXCore/include/FEXCore/Core/Context.h b/FEXCore/include/FEXCore/Core/Context.h
+index ec61b90..fdc12ba 100644
+--- a/FEXCore/include/FEXCore/Core/Context.h
++++ b/FEXCore/include/FEXCore/Core/Context.h
+@@ -159,6 +159,23 @@ public:
+    */
+   FEX_DEFAULT_VISIBILITY virtual bool IsAddressInCodeBuffer(FEXCore::Core::InternalThreadState* Thread, uintptr_t Address) const = 0;
+ 
++  /**
++   * @brief Crash-diagnostic only: writes a human-readable dump of the dispatcher's own
++   * known-good entry addresses alongside what the given thread's live CpuStateFrame::Pointers
++   * actually holds for the same fields, flagging any mismatches. Added for the iOS port to
++   * pin down a dual-mapped-JIT (RW vs RX) address-translation bug: a mismatch here means a
++   * corrupted/stale/never-updated per-thread pointer, whereas a match with the *fault*
++   * address itself would point at a dispatcher-level translation gap instead.
++   *
++   * @param Thread Which thread's Pointers to dump and compare.
++   * @param OutBuf Destination buffer; always null-terminated if OutBufSize > 0.
++   * @param OutBufSize Size of OutBuf.
++   *
++   * @return true if the dump was written (false if Thread/OutBuf are invalid).
++   */
++  FEX_DEFAULT_VISIBILITY virtual bool DumpDispatcherStateForDiagnostics(FEXCore::Core::InternalThreadState* Thread, char* OutBuf,
++                                                                        size_t OutBufSize) const = 0;
++
+   /**
+    * @brief Informs the context if hardware TSO is supported.
+    * Once hardware TSO is enabled, then TSO emulation through atomics is disabled and relies on the hardware.
 diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
 index 7c64dd8..8e109a0 100644
 --- a/FEXCore/include/FEXCore/Core/CoreState.h
@@ -1524,3 +2079,139 @@ index 7c64dd8..8e109a0 100644
  #ifdef ARCHITECTURE_arm64ec
    // Set by the kernel on ARM64EC whenever the JIT should cooperatively suspend running guest code.
    uint32_t SuspendDoorbell {};
+diff --git a/FEXCore/include/FEXCore/Utils/AllocatorHooks.h b/FEXCore/include/FEXCore/Utils/AllocatorHooks.h
+index e3501dc..5445abf 100644
+--- a/FEXCore/include/FEXCore/Utils/AllocatorHooks.h
++++ b/FEXCore/include/FEXCore/Utils/AllocatorHooks.h
+@@ -14,6 +14,7 @@
+ #include <sys/mman.h>
+ #ifdef __APPLE__
+ #include <pthread.h>
++#include <TargetConditionals.h>
+ #endif
+ #else
+ #define NTDDI_VERSION 0x0A000005
+@@ -120,7 +121,64 @@ FEX_DEFAULT_VISIBILITY extern void VirtualName(const char* Name, void* Ptr, size
+ 
+ // All commit parameters are ignored here, they are unnecessary as Linux supports overcommit
+ 
+-#ifdef __APPLE__
++#if defined(__APPLE__) && TARGET_OS_IPHONE
++// iOS has no MAP_JIT-equivalent available to a sideloaded/free-provisioned app (no
++// dynamic-codesigning entitlement). Executable allocations here instead go through Bachata's
++// StikDebug BreakpointJIT protocol (see iOSJITAlloc/iOSJITFreeIfOwned below, implemented in
++// Allocator.cpp).
++//
++// Ground truth, confirmed on-device the hard way: BreakGetJITMapping's two branches are each
++// broken in a complementary way for a single-address model. Requesting a grant on an address
++// this process already owns (addr != nullptr) returns success but the memory never actually
++// becomes executable (confirmed via raw GDB-remote wire capture -- the call completes, yet
++// every subsequent branch into that memory faults, forever). Requesting a fresh allocation
++// (addr == nullptr) DOES return real executable memory, but that memory is not writable from
++// this process's own store instructions (confirmed via crash log: a plain write to the
++// returned address SIGSEGVs from ordinary host C++ code, nowhere near guest execution). So a
++// real dual-mapped scheme is required after all: get the executable address from
++// BreakGetJITMapping(nullptr, ...), then locally `mach_vm_remap` a second, writable virtual
++// alias of those same physical pages (no debugger involvement needed for that half -- remapping
++// within one's own task is an ordinary VM operation). This matches the pattern
++// Ryujinx/AetherX's DualMappedJitAllocator uses against the same protocol. GetExecutableAddress/
++// GetWritableAddress below translate between the two sides via the table iOSJITAlloc populates.
++// No special mmap flag is needed, so this stays 0 rather than MAP_JIT.
++constexpr int PlatformExecuteFlag = 0;
++
++// Returns the WRITABLE address of a fresh dual-mapped JIT region (write code through this
++// pointer; use GetExecutableAddress() on it to get the address to branch/call into).
++void* iOSJITAlloc(size_t Size);
++// Returns true (and fully handles the free, both mappings) if WriteAddr is a tracked JIT
++// allocation; returns false and does nothing otherwise, leaving the caller to fall through to
++// an ordinary munmap.
++bool iOSJITFreeIfOwned(void* WriteAddr, size_t Size);
++
++// Real translation on iOS (unlike the identity definitions used by every other platform below):
++// looks up WriteAddr/ExecAddr in the table iOSJITAlloc populates and returns the corresponding
++// address on the other side of the mapping, offset-preserving (so an address partway into a
++// region, e.g. a cursor mid-buffer, translates correctly, not just exact region bases). Falls
++// back to identity for anything not tracked (defensive only -- every Execute=true allocation on
++// iOS goes through iOSJITAlloc, so in practice every real call here should hit).
++void* GetExecutableAddress(void* WriteAddr);
++void* GetWritableAddress(void* ExecAddr);
++
++enum class iOSJITAddressKind {
++  NotTracked, // Not inside any currently-live JIT allocation.
++  LiveAllocation,
++};
++// Crash-diagnostic only -- see Allocator.cpp's definition for what each result means.
++iOSJITAddressKind iOSJITDescribeAddress(void* Addr, uintptr_t* OutRegionBase, size_t* OutOffset, size_t* OutSize);
++
++// On iOS the RW half of a dual-mapped allocation is ordinary (remapped) memory -- always
++// writable, no per-thread W^X state to toggle (that's a MAP_JIT-specific concept; see the
++// macOS branch below). Writes go straight through the RW address at all times, so this guard
++// is a no-op here.
++class ScopedJITWriteProtect final {
++public:
++  ScopedJITWriteProtect() = default;
++  ScopedJITWriteProtect(const ScopedJITWriteProtect&) = delete;
++  ScopedJITWriteProtect& operator=(const ScopedJITWriteProtect&) = delete;
++};
++#elif defined(__APPLE__)
+ // Apple Silicon rejects PROT_EXEC on a plain mmap outright (EACCES) -- confirmed empirically.
+ // Any executable allocation must carry MAP_JIT, and writing to it afterward requires each
+ // writing thread to toggle pthread_jit_write_protect_np(0) first (per-thread W^X state, not
+@@ -155,17 +213,57 @@ public:
+ constexpr int PlatformExecuteFlag = 0;
+ #endif
+ 
++#if !(defined(__APPLE__) && TARGET_OS_IPHONE)
++// Identity on every platform except iOS, which has a real dual-mapped RW/RX split -- see this
++// file's iOS section above, which declares real (non-identity) versions of both functions
++// instead of these. Kept as a named function (rather than removing every call site) so a
++// JIT-buffer address that escapes as a branch target or C function pointer -- e.g. Dispatcher's
++// DispatchPtr, or a compiled block's entry point before it goes into the lookup cache -- stays
++// visibly marked as such at the call site on platforms where it's currently a no-op too.
++inline void* GetExecutableAddress(void* WriteAddr) {
++  return WriteAddr;
++}
++
++// See GetExecutableAddress.
++inline void* GetWritableAddress(void* ExecAddr) {
++  return ExecAddr;
++}
++#endif
++
+ inline void* VirtualAlloc(size_t Size, bool Execute = false, bool Commit = true) {
++#if defined(__APPLE__) && TARGET_OS_IPHONE
++  // A plain executable mmap is rejected outright on iOS too (EACCES), same as macOS, just
++  // without a MAP_JIT to reach for -- this must never fall through to the mmap below.
++  if (Execute) {
++    return iOSJITAlloc(Size);
++  }
++#endif
+   return FEXCore::Allocator::mmap(nullptr, Size, PROT_READ | PROT_WRITE | (Execute ? PROT_EXEC : 0),
+                                    MAP_PRIVATE | MAP_ANONYMOUS | (Execute ? PlatformExecuteFlag : 0), -1, 0);
+ }
+ 
+ inline void* VirtualAlloc(void* Base, size_t Size, bool Execute = false, bool Commit = true) {
++#if defined(__APPLE__) && TARGET_OS_IPHONE
++  if (Execute) {
++    // None of this build's Execute=true callers pass a real fixed Base (verified: all either
++    // omit it or pass nullptr) -- MAP_FIXED was never requested by the mmap call below either,
++    // so Base was always just a hint. Safe to ignore here the same way.
++    return iOSJITAlloc(Size);
++  }
++#endif
+   return FEXCore::Allocator::mmap(Base, Size, PROT_READ | PROT_WRITE | (Execute ? PROT_EXEC : 0),
+                                    MAP_PRIVATE | MAP_ANONYMOUS | (Execute ? PlatformExecuteFlag : 0), -1, 0);
+ }
+ 
+ inline void VirtualFree(void* Ptr, size_t Size) {
++#if defined(__APPLE__) && TARGET_OS_IPHONE
++  // iOSJITFree recognizes and fully handles (munmaps) its own RW allocations, returning false
++  // for anything else so the caller falls through to the ordinary munmap below -- callers here
++  // don't track which VirtualAlloc path an address originally came from.
++  if (iOSJITFreeIfOwned(Ptr, Size)) {
++    return;
++  }
++#endif
+   FEXCore::Allocator::munmap(Ptr, Size);
+ }
+ inline void VirtualDontNeed(void* Ptr, size_t Size, bool Recommit = true) {
