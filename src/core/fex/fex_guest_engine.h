@@ -111,8 +111,12 @@ bool BachataDumpDispatcherState(char* out_buf, std::size_t out_buf_size) noexcep
 // guest stack words (return addresses into eboot.bin) for a poor-man's backtrace without
 // needing guest debug symbols. Returns false (out_buf/out_rsp untouched) if no FEX thread is
 // active on the current host thread.
-bool BachataDumpGuestRegisters(char* out_buf, std::size_t out_buf_size,
-                                uint64_t* out_rsp = nullptr) noexcept;
+// out_rbp (optional) additionally receives RBP as a raw value, the same way out_rsp does --
+// lets a caller with its own VMM access do a real [rbp]/[rbp+8] frame-pointer walk instead of
+// the RSP-scan heuristic above, for functions (confirmed via disassembly to push rbp; mov rbp,
+// rsp at entry) that actually maintain one.
+bool BachataDumpGuestRegisters(char* out_buf, std::size_t out_buf_size, uint64_t* out_rsp = nullptr,
+                                uint64_t* out_rbp = nullptr) noexcept;
 
 // Crash-diagnostic only: dumps the raw ARM64 32-bit words surrounding fault_pc (8 before, the
 // faulting word itself bracketed in [], 8 after) as hex, reading through the same

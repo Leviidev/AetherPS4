@@ -304,8 +304,55 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
         // (returned separately below) lets the guest's own return-address chain be read out.
         char guest_regs[384] = {};
         uint64_t guest_rsp = 0;
-        if (::AetherPS4::Fex::BachataDumpGuestRegisters(guest_regs, sizeof(guest_regs), &guest_rsp)) {
+        uint64_t guest_rbp = 0;
+        if (::AetherPS4::Fex::BachataDumpGuestRegisters(guest_regs, sizeof(guest_regs), &guest_rsp,
+                                                        &guest_rbp)) {
             LOG_CRITICAL(Debug, "FEX guest registers at fault: {}", guest_regs);
+        }
+        // Diagnostic only, gated to the one known-deterministic crash under investigation (guest
+        // RIP 0x7000766630). The RSP-scan "poor-man's backtrace" below is explicitly unverified
+        // -- confirmed unreliable here on-device: its first hit (rsp+0x8, into libc.prx) turned
+        // out to be a stale leftover from an unrelated, already-returned call (disassembling that
+        // call site showed a completely ordinary, unrelated argument setup, nothing pointing at
+        // this destructor at all). This function's own disassembly confirms it maintains a real
+        // frame (push rbp; mov rbp, rsp at entry), so a genuine [rbp]/[rbp+8] walk should recover
+        // the *actual* caller chain instead of guessing from whatever's left on the stack.
+        if (accurate_guest_rip == 0x7000766630ULL && guest_rbp != 0) {
+            if (auto* memory = Core::Memory::Instance()) {
+                if (auto* linker = Common::Singleton<Core::Linker>::Instance()) {
+                    uint64_t frame_ptr = guest_rbp;
+                    for (int depth = 0; depth < 8; ++depth) {
+                        ::Libraries::Kernel::OrbisVirtualQueryInfo saved_rbp_vma{};
+                        ::Libraries::Kernel::OrbisVirtualQueryInfo ret_addr_vma{};
+                        if (memory->VirtualQuery(frame_ptr, 0, &saved_rbp_vma) != 0 ||
+                            memory->VirtualQuery(frame_ptr + 8, 0, &ret_addr_vma) != 0) {
+                            LOG_CRITICAL(Debug, "FEX rbp-chain[{}]: frame_ptr={:#x} not mapped, stopping",
+                                         depth, frame_ptr);
+                            break;
+                        }
+                        const auto saved_rbp =
+                            *reinterpret_cast<volatile uint64_t*>(static_cast<uintptr_t>(frame_ptr));
+                        const auto ret_addr = *reinterpret_cast<volatile uint64_t*>(
+                            static_cast<uintptr_t>(frame_ptr + 8));
+                        if (auto* module = linker->FindByAddress(ret_addr)) {
+                            LOG_CRITICAL(Debug,
+                                         "FEX rbp-chain[{}]: frame_ptr={:#x} saved_rbp={:#x} "
+                                         "return_addr={:#x} -- inside module '{}' (offset={:#x})",
+                                         depth, frame_ptr, saved_rbp, ret_addr, module->name,
+                                         ret_addr - module->GetBaseAddress());
+                        } else {
+                            LOG_CRITICAL(Debug,
+                                         "FEX rbp-chain[{}]: frame_ptr={:#x} saved_rbp={:#x} "
+                                         "return_addr={:#x} -- no module match",
+                                         depth, frame_ptr, saved_rbp, ret_addr);
+                        }
+                        if (saved_rbp == 0 || saved_rbp <= frame_ptr) {
+                            break;
+                        }
+                        frame_ptr = saved_rbp;
+                    }
+                }
+            }
         }
         // Poor-man's guest backtrace: walk raw QWORDs upward from RSP and log whichever ones
         // land inside a loaded module's code range, on the (unverified but common for x86-64

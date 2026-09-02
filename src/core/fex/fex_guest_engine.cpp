@@ -1374,7 +1374,8 @@ bool BachataQueryGuestRipSyscall(uint64_t* out_rip, uint64_t* out_syscall) noexc
   return true;
 }
 
-bool BachataDumpGuestRegisters(char* out_buf, std::size_t out_buf_size, uint64_t* out_rsp) noexcept {
+bool BachataDumpGuestRegisters(char* out_buf, std::size_t out_buf_size, uint64_t* out_rsp,
+                                uint64_t* out_rbp) noexcept {
   if (out_buf == nullptr || out_buf_size == 0) {
     return false;
   }
@@ -1386,6 +1387,9 @@ bool BachataDumpGuestRegisters(char* out_buf, std::size_t out_buf_size, uint64_t
   using namespace FEXCore::X86State;
   if (out_rsp != nullptr) {
     *out_rsp = gregs[REG_RSP];
+  }
+  if (out_rbp != nullptr) {
+    *out_rbp = gregs[REG_RBP];
   }
   std::snprintf(
       out_buf, out_buf_size,
