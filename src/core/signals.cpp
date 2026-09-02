@@ -340,6 +340,29 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                                          "return_addr={:#x} -- inside module '{}' (offset={:#x})",
                                          depth, frame_ptr, saved_rbp, ret_addr, module->name,
                                          ret_addr - module->GetBaseAddress());
+                            // Diagnostic only: depth 0 here is the *actual*, frame-pointer-
+                            // verified immediate caller of the destructor under investigation
+                            // (guest RIP 0x7000766630) -- unlike the RSP-scan's first hit, which
+                            // turned out to be a stale, unrelated leftover. Dump its code window
+                            // to see the real argument setup for the call that reaches this
+                            // destructor with a corrupted `this` (RBX=1).
+                            if (depth == 0) {
+                                constexpr uint64_t kCallerWindowBefore = 256;
+                                constexpr uint64_t kCallerWindowAfter = 64;
+                                const auto* caller_bytes = reinterpret_cast<const volatile uint8_t*>(
+                                    static_cast<uintptr_t>(ret_addr - kCallerWindowBefore));
+                                static char caller_hex[2 * (kCallerWindowBefore + kCallerWindowAfter) + 1] = {};
+                                char* cw = caller_hex;
+                                for (uint64_t j = 0; j < kCallerWindowBefore + kCallerWindowAfter; ++j) {
+                                    cw += std::snprintf(cw, caller_hex + sizeof(caller_hex) - cw, "%02x",
+                                                        caller_bytes[j]);
+                                }
+                                LOG_CRITICAL(Debug,
+                                             "FEX rbp-verified caller window: return_addr={:#x} "
+                                             "window_start={:#x} before={:#x} bytes={}",
+                                             ret_addr, ret_addr - kCallerWindowBefore, kCallerWindowBefore,
+                                             caller_hex);
+                            }
                         } else {
                             LOG_CRITICAL(Debug,
                                          "FEX rbp-chain[{}]: frame_ptr={:#x} saved_rbp={:#x} "
@@ -378,33 +401,13 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                                          "(offset={:#x}), likely a return address",
                                          i * sizeof(uint64_t), word_value, module->name,
                                          word_value - module->GetBaseAddress());
-                            // Diagnostic only, gated to the one known-deterministic crash under
-                            // investigation (guest RIP 0x7000766630, a destructor faulting on a
-                            // corrupted `this` -- RBX=1 -- that survived both the allocator fix
-                            // and confirming zero HLE-boundary register clobbers this session).
-                            // The immediate caller (rsp+0x8, the first stack word actually
-                            // resolving into a module) is whoever invoked this destructor with a
-                            // bad `this` -- dumping its own code lets that call site's actual
-                            // argument setup be inspected directly, the same way the fault site
-                            // itself already gets dumped above, to see whether the bad value was
-                            // already wrong before the call or became wrong only afterward.
-                            if (accurate_guest_rip == 0x7000766630ULL && i == 1) {
-                                constexpr uint64_t kCallerWindowBefore = 256;
-                                constexpr uint64_t kCallerWindowAfter = 64;
-                                const auto* caller_bytes = reinterpret_cast<const volatile uint8_t*>(
-                                    static_cast<uintptr_t>(word_value - kCallerWindowBefore));
-                                static char caller_hex[2 * (kCallerWindowBefore + kCallerWindowAfter) + 1] = {};
-                                char* cw = caller_hex;
-                                for (uint64_t j = 0; j < kCallerWindowBefore + kCallerWindowAfter; ++j) {
-                                    cw += std::snprintf(cw, caller_hex + sizeof(caller_hex) - cw, "%02x",
-                                                        caller_bytes[j]);
-                                }
-                                LOG_CRITICAL(Debug,
-                                             "FEX caller function window: return_addr={:#x} "
-                                             "window_start={:#x} before={:#x} bytes={}",
-                                             word_value, word_value - kCallerWindowBefore,
-                                             kCallerWindowBefore, caller_hex);
-                            }
+                            // The rbp-chain walk above (frame-pointer-verified) already dumps
+                            // the real immediate caller's code window for this same crash --
+                            // this RSP-scan hit turned out to point at an unrelated, already-
+                            // returned call (confirmed on-device: disassembling it showed a
+                            // completely ordinary, unrelated argument setup), so it's no longer
+                            // trusted as a caller-identification source. Left as a plain log
+                            // line only, for whatever residual value the raw stack contents have.
                         }
                     }
                 }
