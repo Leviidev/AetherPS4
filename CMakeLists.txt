@@ -1621,6 +1621,16 @@ if (ENABLE_SHADPS4_IOS_LIB)
         )
         # LibreSSL's BN_* (RSA modexp) comes in transitively via Cpp_Httplib,
         # already linked into shadps4_ios below.
+
+        # System module import (bachata_sysmodules_import_zip): lets the app extract a
+        # user-picked ZIP of dumped, real PS4 system modules (.sprx files -- Sony-provided
+        # code shadPS4 can't legally ship, must be dumped from the user's own console)
+        # directly into EmulatorSettings::GetSysModulesDir(). Reuses miniz::miniz, already
+        # linked into shadps4_ios below for other archive handling -- no new dependency.
+        target_sources(shadps4_ios PRIVATE
+            src/core/sysmodules_import/sysmodules_import.cpp
+            src/core/sysmodules_import/sysmodules_import.h
+        )
     endif()
 
     create_target_directory_groups(shadps4_ios)
