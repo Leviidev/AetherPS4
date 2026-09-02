@@ -11,6 +11,7 @@
 
 #include "common/logging/log.h"
 #include "core/libraries/libc_internal/libc_internal_cxa.h"
+#include "core/libraries/libc_internal/libc_internal_memory.h"
 #include "core/libraries/libs.h"
 
 namespace Libraries::LibcInternal {
@@ -146,20 +147,31 @@ int PS4_SYSV_ABI fex_libc_cxa_atexit(void (*func)(void*), void* arg, void* dso_h
     std::abort();
 }
 
+// Route through internal_malloc/internal_free (libc_internal_memory.cpp) rather than calling
+// ::operator new/delete directly. A C++ `new`/`delete` expression in guest code resolves to
+// these exact entry points, and internal_free's cross-allocator safety checks (mspace arena
+// ownership, then the guest-VMM fallback) only protect pointers that actually go through it --
+// a delete expression that bypassed them and called the host allocator directly on a
+// guest-owned (mspace arena, or raw sceKernelMapNamedFlexibleMemory) pointer would corrupt the
+// host heap the exact same way internal_free's own comment describes fixing for plain free(),
+// just never applied to this parallel path. new/delete stay paired with internal_malloc/
+// internal_free specifically (not std::malloc/std::free directly) so a pointer allocated via
+// `new` and freed via a plain `free()` call elsewhere -- or vice versa -- still round-trips
+// through the same allocator consistently.
 void* PS4_SYSV_ABI fex_libc_operator_new(u64 size) {
-    return ::operator new(size);
+    return internal_malloc(size);
 }
 
 void* PS4_SYSV_ABI fex_libc_operator_new_array(u64 size) {
-    return ::operator new[](size);
+    return internal_malloc(size);
 }
 
 void PS4_SYSV_ABI fex_libc_operator_delete(void* ptr) {
-    ::operator delete(ptr);
+    internal_free(ptr);
 }
 
 void PS4_SYSV_ABI fex_libc_operator_delete_array(void* ptr) {
-    ::operator delete[](ptr);
+    internal_free(ptr);
 }
 
 void RegisterFexLibcCxaAliases(Core::Loader::SymbolsResolver* sym) {
