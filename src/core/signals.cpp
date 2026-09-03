@@ -595,6 +595,55 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                         }
                     }
                 }
+                // BACHATA_SRA_PROBE settled that this crash isn't stack exhaustion after all --
+                // guest rbp (x9) sits only ~32KB into the (now 8MB) main stack, nowhere near
+                // deep enough for genuine overflow, while guest rsp (x8) is corrupted to exactly
+                // the unrelated "SceGnmDriver" allocation's base address. Since x9/rbp is
+                // confirmed valid here (unlike x8), a [rbp]/[rbp+8] chain walk from it -- same
+                // proven technique as the rbp-chain walk gated on 0x7000766630 above, just using
+                // the *live* register here instead of that one's stale BachataDumpGuestRegisters
+                // snapshot -- should recover the real caller chain into this corrupted-rsp call,
+                // rather than guessing from a register that's already known to be wrong.
+                if (accurate_guest_rip == 0x7001342320ULL) {
+                    auto* memory = Core::Memory::Instance();
+                    auto* linker = Common::Singleton<Core::Linker>::Instance();
+                    if (memory != nullptr && linker != nullptr) {
+                        uint64_t frame_ptr = ts.__x[9];
+                        for (int depth = 0; depth < 8 && frame_ptr != 0; ++depth) {
+                            ::Libraries::Kernel::OrbisVirtualQueryInfo saved_rbp_vma{};
+                            ::Libraries::Kernel::OrbisVirtualQueryInfo ret_addr_vma{};
+                            if (memory->VirtualQuery(frame_ptr, 0, &saved_rbp_vma) != 0 ||
+                                memory->VirtualQuery(frame_ptr + 8, 0, &ret_addr_vma) != 0) {
+                                LOG_CRITICAL(Debug,
+                                             "FEX rsp-corrupt rbp-chain[{}]: frame_ptr={:#x} not "
+                                             "mapped, stopping",
+                                             depth, frame_ptr);
+                                break;
+                            }
+                            const auto saved_rbp = *reinterpret_cast<volatile uint64_t*>(
+                                static_cast<uintptr_t>(frame_ptr));
+                            const auto ret_addr = *reinterpret_cast<volatile uint64_t*>(
+                                static_cast<uintptr_t>(frame_ptr + 8));
+                            if (auto* module = linker->FindByAddress(ret_addr)) {
+                                LOG_CRITICAL(Debug,
+                                             "FEX rsp-corrupt rbp-chain[{}]: frame_ptr={:#x} "
+                                             "saved_rbp={:#x} return_addr={:#x} -- inside module "
+                                             "'{}' (offset={:#x})",
+                                             depth, frame_ptr, saved_rbp, ret_addr, module->name,
+                                             ret_addr - module->GetBaseAddress());
+                            } else {
+                                LOG_CRITICAL(Debug,
+                                             "FEX rsp-corrupt rbp-chain[{}]: frame_ptr={:#x} "
+                                             "saved_rbp={:#x} return_addr={:#x} -- no module match",
+                                             depth, frame_ptr, saved_rbp, ret_addr);
+                            }
+                            if (saved_rbp == 0 || saved_rbp <= frame_ptr) {
+                                break;
+                            }
+                            frame_ptr = saved_rbp;
+                        }
+                    }
+                }
             }
             // A newly-seen crash shape: LR at fault pointed into the dispatcher's own
             // ExitFunctionLinker assembly at the exact return site of its call into the native
