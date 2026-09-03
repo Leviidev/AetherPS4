@@ -534,6 +534,60 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
             }
             LOG_CRITICAL(Debug, "FEX host ARM64 registers at fault: {}",
                         std::string_view(host_regs, host_regs_len));
+            // New crash class (guest RIP 0x7001342320): a SIGBUS write landing 8 bytes below
+            // whatever this compiled block's host x8 register holds. x8 is guest RSP's fixed SRA
+            // slot on this build -- FEXCore's x64::SRA table (Arm64Emitter.cpp) maps
+            // X86State::REG_RSP (index 4 into CurrentFrame->State.gregs) to ARMEmitter::Reg::r8,
+            // and the faulting instruction here decodes as a genuine x86 "push rbp" at a
+            // 16-byte-aligned function entry, which by x86 semantics can only ever operate on
+            // RSP -- so whatever's live in x8 at this exact PC is what FEX believes the guest
+            // stack pointer is. Across two separate crash logs of this exact signature, that
+            // value was byte-for-byte identical to an unrelated sceKernelMapNamedDirectMemory
+            // allocation's returned address logged ~15,000 lines earlier in the same session,
+            // suggesting guest RSP had somehow ended up holding a heap pointer instead of a
+            // stack address. Rather than trust that as an eyeballed coincidence again, this
+            // queries the VMM directly for what every SRA-mapped guest GPR currently points to
+            // (not just RSP) -- settles definitively whether it's heap/direct memory, a real
+            // guest stack at a wildly wrong offset, or something else, and whether the
+            // corruption is isolated to RSP alone or spans the whole live register file (the
+            // latter would point at a bad State reload/resync rather than something RSP-specific).
+            if (accurate_guest_rip == 0x7001342320ULL) {
+                if (auto* memory = Core::Memory::Instance()) {
+                    struct SraSlot {
+                        const char* guest_name;
+                        int host_reg;
+                    };
+                    // Order/registers must match x64::SRA in Arm64Emitter.cpp: guest GPR index i
+                    // (X86State::REG_*) lives in physical host register SRA[i].
+                    static constexpr SraSlot kSraSlots[] = {
+                        {"rax", 4},  {"rcx", 7},  {"rdx", 5},  {"rbx", 6},
+                        {"rsp", 8},  {"rbp", 9},  {"rsi", 10}, {"rdi", 11},
+                        {"r8", 12},  {"r9", 13},  {"r10", 14}, {"r11", 15},
+                        {"r12", 16}, {"r13", 17}, {"r14", 19}, {"r15", 29},
+                    };
+                    for (const auto& slot : kSraSlots) {
+                        const auto value = static_cast<VAddr>(ts.__x[slot.host_reg]);
+                        ::Libraries::Kernel::OrbisVirtualQueryInfo vma{};
+                        if (memory->VirtualQuery(value, 0, &vma) == 0) {
+                            LOG_CRITICAL(Debug,
+                                         "BACHATA_SRA_PROBE: guest {}=x{}={:#x} -- mapped VMA "
+                                         "{:#x}-{:#x} offset_into_vma={:#x} name='{}' "
+                                         "stack={} direct={} flexible={} pooled={}",
+                                         slot.guest_name, slot.host_reg, value, vma.start, vma.end,
+                                         value - vma.start, vma.name,
+                                         static_cast<int>(vma.is_stack),
+                                         static_cast<int>(vma.is_direct),
+                                         static_cast<int>(vma.is_flexible),
+                                         static_cast<int>(vma.is_pooled));
+                        } else {
+                            LOG_CRITICAL(Debug,
+                                         "BACHATA_SRA_PROBE: guest {}=x{}={:#x} -- not inside any "
+                                         "tracked VMA",
+                                         slot.guest_name, slot.host_reg, value);
+                        }
+                    }
+                }
+            }
             // A newly-seen crash shape: LR at fault pointed into the dispatcher's own
             // ExitFunctionLinker assembly at the exact return site of its call into the native
             // C++ ExitFunctionLink function -- i.e. this fault may be happening inside *native*
