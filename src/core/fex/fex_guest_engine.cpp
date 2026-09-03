@@ -6,6 +6,11 @@
 // Ucontext layout only — do not include pthread.h here. pthread → semaphore →
 // assert → log → spdlog, which the FEXCore-only guest harness does not provide.
 #include "core/libraries/kernel/threads/exception.h"
+// For TryRecoverCorruptedGuestRsp's VMM-backed rsp/rbp validation (Core::Memory::Instance(),
+// OrbisVirtualQueryInfo) -- same two headers signals.cpp already pulls in for the equivalent
+// checks there.
+#include "core/libraries/kernel/memory.h"
+#include "core/memory.h"
 #include "Common/Config.h"
 #include "Common/HostFeatures.h"
 #include <FEXCore/Config/Config.h>
@@ -2210,6 +2215,68 @@ bool TryRecoverCallRetStackOverflow(int signal, siginfo_t* info, void* rawContex
   // guard-page-only check above) didn't write back its base register before faulting -- it's
   // still exactly the guest `call` that was in flight -- so simply retrying it with a valid
   // base now succeeds normally, no different from any other cache-reset push.
+  return true;
+#else
+  static_cast<void>(signal);
+  static_cast<void>(info);
+  static_cast<void>(rawContext);
+  return false;
+#endif
+}
+
+bool TryRecoverCorruptedGuestRsp(int signal, siginfo_t* info, void* rawContext) noexcept {
+#if defined(__aarch64__) && defined(__APPLE__)
+  if (signal != SIGBUS || info == nullptr || rawContext == nullptr) {
+    return false;
+  }
+
+  auto* context = reinterpret_cast<ucontext_t*>(rawContext);
+  auto& ts = context->uc_mcontext->__ss;
+  void* const pc = reinterpret_cast<void*>(arm_thread_state64_get_pc(ts));
+
+  uint64_t guest_rip = 0;
+  if (!BachataReconstructAccurateGuestRIP(pc, &guest_rip) || guest_rip != 0x7001342320ULL) {
+    return false;
+  }
+
+  auto* memory = Core::Memory::Instance();
+  if (memory == nullptr) {
+    return false;
+  }
+
+  // x8/x9 are RSP/RBP's fixed SRA slots on this build (see TryRecoverCallRetStackOverflow's
+  // own comment on how that's derived) -- reading them live here, not from CurrentFrame->
+  // State's stale checkpoint copy, for the same reason BACHATA_SRA_PROBE does.
+  const auto rsp_value = static_cast<VAddr>(ts.__x[8]);
+  const auto rbp_value = static_cast<VAddr>(ts.__x[9]);
+
+  ::Libraries::Kernel::OrbisVirtualQueryInfo rsp_vma {};
+  ::Libraries::Kernel::OrbisVirtualQueryInfo rbp_vma {};
+  const bool rsp_is_stack = memory->VirtualQuery(rsp_value, 0, &rsp_vma) == 0 && rsp_vma.is_stack != 0;
+  const bool rbp_is_stack = memory->VirtualQuery(rbp_value, 0, &rbp_vma) == 0 && rbp_vma.is_stack != 0;
+
+  // Only ever engages when rbp is confirmed trustworthy and rsp specifically is confirmed not
+  // to be -- if that clean split isn't there, this stays out of the way and falls through to
+  // the fatal path rather than risk masking a genuinely different bug with an unjustified guess.
+  if (!rbp_is_stack || rsp_is_stack) {
+    return false;
+  }
+
+  // rbp is proven to sit inside the real guest stack; give rsp a fresh position safely below
+  // it instead of trying to reconstruct the exact value that was lost -- enough headroom that
+  // this function's own upcoming pushes, and anything it calls, can't run back into the
+  // caller's still-live frame.
+  constexpr uint64_t kSafetyMargin = 0x1000;
+  const auto fresh_rsp = rbp_value - kSafetyMargin;
+  ts.__x[8] = static_cast<uint64_t>(fresh_rsp);
+
+  SignalSafeLog("BACHATA_RSP_RECOVER: guest_rip=%p corrupted_rsp=%p (vma='%s') valid_rbp=%p -> "
+                "fresh_rsp=%p -- resuming same instruction\n",
+                reinterpret_cast<void*>(guest_rip), reinterpret_cast<void*>(rsp_value), rsp_vma.name,
+                reinterpret_cast<void*>(rbp_value), reinterpret_cast<void*>(fresh_rsp));
+  // Deliberately no PC change: the faulting instruction (a pre-indexed store) didn't write
+  // back its base register before faulting -- retrying it with a valid base now succeeds
+  // normally, no different from any other guest `push`.
   return true;
 #else
   static_cast<void>(signal);

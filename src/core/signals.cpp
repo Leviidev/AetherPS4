@@ -189,6 +189,13 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
         if (::AetherPS4::Fex::TryRecoverCallRetStackOverflow(sig, info, raw_context)) {
             return;
         }
+        // The other guard-page-adjacent Rocket League SIGBUS diagnosed this session: guest rsp
+        // corrupted to an unrelated heap allocation's address at one specific, well-known guest
+        // RIP, with guest rbp confirmed still valid (see the function's own comment for the
+        // full diagnostic trail -- the "FEX rsp-corrupt rbp-chain" logging above fed this).
+        if (::AetherPS4::Fex::TryRecoverCorruptedGuestRsp(sig, info, raw_context)) {
+            return;
+        }
 #endif
         // If the guest has installed a custom signal handler, and the access violation didn't
         // come from HLE memory tracking, pass the signal on
