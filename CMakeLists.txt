@@ -1631,6 +1631,15 @@ if (ENABLE_SHADPS4_IOS_LIB)
             src/core/sysmodules_import/sysmodules_import.cpp
             src/core/sysmodules_import/sysmodules_import.h
         )
+
+        # Primary user profile bridge (bachata_get/set_primary_username): lets the app read
+        # and rename the emulated PS4 user's display name -- the same name
+        # sceUserServiceGetUserName reports to games -- without the Swift side needing to know
+        # anything about UserManager/users.json's own schema.
+        target_sources(shadps4_ios PRIVATE
+            src/core/user_profile_bridge/user_profile_bridge.cpp
+            src/core/user_profile_bridge/user_profile_bridge.h
+        )
     endif()
 
     create_target_directory_groups(shadps4_ios)
