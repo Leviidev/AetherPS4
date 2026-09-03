@@ -7,6 +7,7 @@ struct ContentView: View {
     @State private var setupVerified = false
 
     @Environment(EmulatorProcess.self) private var emulator
+    @ObservedObject private var theme = AppTheme.shared
 
     var body: some View {
         TabView {
@@ -31,6 +32,8 @@ struct ContentView: View {
                 Label("Settings", systemImage: "gearshape")
             }
         }
+        .tint(theme.accentColor)
+        .background(theme.backgroundTint)
         // fullScreenCover (not .sheet): no swipe-to-dismiss, so the only way past this
         // is actually passing both checks -- matches "only let them proceed if" working.
         .fullScreenCover(isPresented: Binding(get: { !setupVerified }, set: { _ in })) {

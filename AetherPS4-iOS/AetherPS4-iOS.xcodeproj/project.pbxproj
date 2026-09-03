@@ -87,6 +87,11 @@
 		E3068F2CD9416795C58554C8 /* PlayTimeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7A51F3B4E6E9C88A1612510 /* PlayTimeStore.swift */; };
 		5395F3062D9B5F1E4214B942 /* GameStatusStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 668694E2C2175749F5B43919 /* GameStatusStore.swift */; };
 		3298D93791D1B652ACE2538F /* GameStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A56855FFF5DA2D48453D01 /* GameStatusView.swift */; };
+		1A53018134FE4098A40B3080 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F50FDE2BEC04F6F9F4B4C55 /* AppTheme.swift */; };
+		C3E1490366494D13853D758F /* ProfileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EECB3017448D4A53AC43996A /* ProfileStore.swift */; };
+		C56E81620AB3424FB7A31654 /* SettingsConfigView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF549B4E75F94B3BBAE26827 /* SettingsConfigView.swift */; };
+		59CC3749AB0E48FC970A8D3F /* SettingsPersonalizationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BDCEF4248184ED1966DF176 /* SettingsPersonalizationView.swift */; };
+		D27EEC54F5874FC6AF7554EB /* SettingsSocialsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D407A9325EB74D40B8A956B2 /* SettingsSocialsView.swift */; };
 		E758FB0D9FFF6E4458B217BB /* libtiny-json.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 9355CEDF603E23975E5723D6 /* libtiny-json.a */; };
 		E7F6B05C5A02097342A2B3AF /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01BBD4BECDF444DE8218732F /* ContentView.swift */; };
 		ECC106482B8B14403EE11D70 /* libpng.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 35C9E4CA9C0E0C237646DBD0 /* libpng.a */; };
@@ -189,6 +194,11 @@
 		E7A51F3B4E6E9C88A1612510 /* PlayTimeStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PlayTimeStore.swift; path = Models/PlayTimeStore.swift; sourceTree = "<group>"; };
 		668694E2C2175749F5B43919 /* GameStatusStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GameStatusStore.swift; path = Models/GameStatusStore.swift; sourceTree = "<group>"; };
 		51A56855FFF5DA2D48453D01 /* GameStatusView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GameStatusView.swift; path = Views/GameStatusView.swift; sourceTree = "<group>"; };
+		4F50FDE2BEC04F6F9F4B4C55 /* AppTheme.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppTheme.swift; path = Models/AppTheme.swift; sourceTree = "<group>"; };
+		EECB3017448D4A53AC43996A /* ProfileStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ProfileStore.swift; path = Models/ProfileStore.swift; sourceTree = "<group>"; };
+		EF549B4E75F94B3BBAE26827 /* SettingsConfigView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsConfigView.swift; path = Views/SettingsConfigView.swift; sourceTree = "<group>"; };
+		9BDCEF4248184ED1966DF176 /* SettingsPersonalizationView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsPersonalizationView.swift; path = Views/SettingsPersonalizationView.swift; sourceTree = "<group>"; };
+		D407A9325EB74D40B8A956B2 /* SettingsSocialsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsSocialsView.swift; path = Views/SettingsSocialsView.swift; sourceTree = "<group>"; };
 		EAFCF6B318B8C80379B39026 /* libssl.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libssl.a; path = "../runtime/build/shadps4-ios/externals/libressl/ssl/libssl.a"; sourceTree = "<group>"; };
 		EB3F7FA4FE65734BE4DBC3ED /* libhwinfo_mainboard.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libhwinfo_mainboard.a; path = "../runtime/build/shadps4-ios/externals/hwinfo/src/libhwinfo_mainboard.a"; sourceTree = "<group>"; };
 		EC67F581D6073F6C4E3B45FF /* libhwinfo_ram.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libhwinfo_ram.a; path = "../runtime/build/shadps4-ios/externals/hwinfo/src/libhwinfo_ram.a"; sourceTree = "<group>"; };
@@ -295,6 +305,11 @@
 				136453DD4F3749B98EBF0BA6 /* GameDetailView.swift */,
 				50804515E4537DA4766EAC99 /* GameCardView.swift */,
 				51A56855FFF5DA2D48453D01 /* GameStatusView.swift */,
+				4F50FDE2BEC04F6F9F4B4C55 /* AppTheme.swift */,
+				EECB3017448D4A53AC43996A /* ProfileStore.swift */,
+				EF549B4E75F94B3BBAE26827 /* SettingsConfigView.swift */,
+				9BDCEF4248184ED1966DF176 /* SettingsPersonalizationView.swift */,
+				D407A9325EB74D40B8A956B2 /* SettingsSocialsView.swift */,
 				7EBC701E8ED4ABFCACD84B7D /* LibraryView.swift */,
 				45ED9983CF60E773F982A993 /* TouchControlsLayoutEditorView.swift */,
 				01BBD4BECDF444DE8218732F /* ContentView.swift */,
@@ -503,6 +518,11 @@
 				E3068F2CD9416795C58554C8 /* PlayTimeStore.swift in Sources */,
 				5395F3062D9B5F1E4214B942 /* GameStatusStore.swift in Sources */,
 				3298D93791D1B652ACE2538F /* GameStatusView.swift in Sources */,
+				1A53018134FE4098A40B3080 /* AppTheme.swift in Sources */,
+				C3E1490366494D13853D758F /* ProfileStore.swift in Sources */,
+				C56E81620AB3424FB7A31654 /* SettingsConfigView.swift in Sources */,
+				59CC3749AB0E48FC970A8D3F /* SettingsPersonalizationView.swift in Sources */,
+				D27EEC54F5874FC6AF7554EB /* SettingsSocialsView.swift in Sources */,
 				CA36312B7F44FC79ACA077EE /* ParamSfoReader.swift in Sources */,
 				2790D3A77254E5FB66614B5D /* GameLibrary.swift in Sources */,
 				D894E9724CD1DA6C7FD69AE5 /* GameOverlay.swift in Sources */,
@@ -602,6 +622,7 @@
 					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/src/platform/ios",
 					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/src/core/pkg_extract",
 					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/src/core/sysmodules_import",
+					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/src/core/user_profile_bridge",
 				);
 				INFOPLIST_FILE = Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
@@ -701,6 +722,7 @@
 					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/src/platform/ios",
 					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/src/core/pkg_extract",
 					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/src/core/sysmodules_import",
+					"/Users/davi/Documents/Coding/AetherCore4/aetherps4-public-release/src/core/user_profile_bridge",
 				);
 				INFOPLIST_FILE = Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;

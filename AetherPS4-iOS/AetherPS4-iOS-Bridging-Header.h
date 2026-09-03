@@ -5,3 +5,4 @@
 #import "shadps4_ios_api.h"
 #import "pkg_extractor.h"
 #import "sysmodules_import.h"
+#import "user_profile_bridge.h"
