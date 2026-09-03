@@ -189,13 +189,16 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
         if (::AetherPS4::Fex::TryRecoverCallRetStackOverflow(sig, info, raw_context)) {
             return;
         }
-        // The other guard-page-adjacent Rocket League SIGBUS diagnosed this session: guest rsp
-        // corrupted to an unrelated heap allocation's address at one specific, well-known guest
-        // RIP, with guest rbp confirmed still valid (see the function's own comment for the
-        // full diagnostic trail -- the "FEX rsp-corrupt rbp-chain" logging above fed this).
-        if (::AetherPS4::Fex::TryRecoverCorruptedGuestRsp(sig, info, raw_context)) {
-            return;
-        }
+        // TryRecoverCorruptedGuestRsp (guest RIP 0x7001342320's rsp-corrupted-to-SceGnmDriver-
+        // address crash) was tried and pulled back out: repairing rsp from rbp let the faulting
+        // instruction itself succeed, but whatever actually corrupts rsp does so again almost
+        // immediately on every subsequent call into this same function -- confirmed on-device
+        // as an infinite recover/crash/recover loop (1M+ log lines, zero forward progress,
+        // BACHATA_RSP_RECOVER and BACHATA_CALLRET_RESET alternating forever), which is worse
+        // for the user than the clean crash this replaced: a crash is visible and recoverable
+        // by relaunching, a silent infinite loop just hangs with the render thread still
+        // re-presenting stale frames, looking alive. Falls through to the fatal path until the
+        // actual corruption source (not yet found) is fixed instead of papered over.
 #endif
         // If the guest has installed a custom signal handler, and the access violation didn't
         // come from HLE memory tracking, pass the signal on

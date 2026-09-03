@@ -87,21 +87,6 @@ bool TryRecoverKnownBadPropertyLink(int signal, siginfo_t* info, void* rawContex
 // for the bottom guard page specifically, so a fault at the *top* (a different, already-fixed
 // bug earlier this session) still falls through to the fatal path instead of being masked here.
 bool TryRecoverCallRetStackOverflow(int signal, siginfo_t* info, void* rawContext) noexcept;
-// Recovers the other guard-page-adjacent Rocket League SIGBUS diagnosed this session: at
-// guest RIP 0x7001342320 (a small, frequently-reused lazy-singleton-style function whose very
-// first instruction is `push rbp`), guest rsp (x8, RSP's fixed SRA slot on this build) is
-// found corrupted -- specifically, holding an unrelated heap allocation's address rather than
-// a stack address -- while guest rbp (x9) is confirmed still valid, sitting well within the
-// real guest stack, with a completely ordinary 8-frame native call chain leading to it (see
-// the "FEX rsp-corrupt rbp-chain" diagnostic feeding this). Rather than guessing at *why* rsp
-// specifically ends up wrong here (still under investigation), this repairs it the same way
-// the other narrow recoveries in this chain do: derive a fresh, safely-in-bounds rsp from the
-// register that's known to still be correct (rbp), with enough headroom below it that this
-// function's own upcoming pushes can't run back into the caller's still-live frame, and
-// resume the identical instruction. Only ever engages when rbp is confirmed to be inside the
-// real guest stack and rsp is confirmed not to be -- if that isn't clearly true, it stays out
-// of the way rather than risk masking a different bug with an unjustified guess.
-bool TryRecoverCorruptedGuestRsp(int signal, siginfo_t* info, void* rawContext) noexcept;
 // Queue Orbis guest exception handler for deferred FEX delivery (ARM64 host).
 // orbis_sig is the Orbis signal number (e.g. 30 / SIGUSR1). guest_handler is the
 // guest VA from Libraries::Kernel::Handlers. Actual run is HandleCallback at HLE
