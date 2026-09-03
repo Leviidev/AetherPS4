@@ -777,20 +777,30 @@ public:
 
   void Initialize(FEXCore::Core::InternalThreadState* thread) const {
     thread->CallRetStackBase = StackBase();
-    // FEXCore's call-return prediction stack (Dispatcher.cpp: REG_CALLRET_SP, pushed via a
-    // pre-decrement stp before every indirect call) grows downward from wherever callret_sp
-    // starts, the same way a normal thread stack does -- so it needs to start at the *top*
-    // of the writable region (StackBase() + CALLRET_STACK_SIZE) to have the full size
-    // available to grow into before running into StackBase() itself (and the PROT_NONE
-    // guard page just before it). This previously divided by 4, starting only 25% of the
-    // way in and leaving just a quarter of CALLRET_STACK_SIZE (1MB, not 4MB) of actual
-    // headroom -- confirmed on-device as an eventual out-of-bounds stp write once a long
-    // enough session accumulates more nested call/return activity than that quarter could
-    // hold, at a guest RIP entirely unrelated to the call site (this mechanism isn't guest-
-    // visible state, just an internal prediction cache), which is what made it look like an
-    // unrelated crash rather than exhausted stack headroom.
-    thread->CurrentFrame->State.callret_sp =
-      reinterpret_cast<uint64_t>(StackBase()) + FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE;
+    // FEXCore's call-return prediction stack (Dispatcher.cpp: REG_CALLRET_SP) grows downward
+    // from wherever callret_sp starts, so it needs to start near the *top* of the writable
+    // region (StackBase() + CALLRET_STACK_SIZE) to have the full size available to grow into
+    // before running into StackBase() itself (and the PROT_NONE guard page just before it).
+    // This previously divided by 4, starting only 25% of the way in and leaving just a
+    // quarter of CALLRET_STACK_SIZE (1MB, not 4MB) of actual headroom -- confirmed on-device
+    // as an eventual out-of-bounds stp write once a long enough session accumulates more
+    // nested call/return activity than that quarter could hold.
+    //
+    // Starting at EXACTLY StackBase() + CALLRET_STACK_SIZE is its own bug, though (confirmed
+    // on-device: broke every single game immediately, not just long sessions). MakeWritable()
+    // above only mprotects the CALLRET_STACK_SIZE bytes starting at StackBase() --
+    // StackBase()+CALLRET_STACK_SIZE is the first byte of the *top* PROT_NONE guard page, one
+    // past the last valid byte, not a valid address itself. The push side (Dispatcher.cpp)
+    // pre-decrements before writing, so it alone would never touch that address -- but the
+    // return/pop side does `ldr callret_sp` then `ldp TMP1, TMP2, [callret_sp]` (a plain
+    // offset load, no pre-decrement) *before* incrementing afterward, so it reads directly
+    // from whatever callret_sp currently is. The very first return this mechanism ever
+    // resolves for a fresh thread reads from this exact starting value before any push has
+    // ever decremented it -- landing squarely in the guard page. Back off by one prediction
+    // slot (0x10, matching the stp/ldp width Dispatcher.cpp uses) so even that first,
+    // un-decremented read stays inside the writable region.
+    thread->CurrentFrame->State.callret_sp = reinterpret_cast<uint64_t>(StackBase()) +
+      FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE - 0x10;
   }
 
 private:
