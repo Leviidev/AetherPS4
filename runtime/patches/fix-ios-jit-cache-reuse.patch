@@ -1,4 +1,146 @@
-diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Context/Context.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Context/Context.cpp
+diff -ru --exclude=.git --exclude=build FEXCore-Darwin/AGENTS.md Bachata-S4/runtime/sources/fexcore-darwin/AGENTS.md
+--- FEXCore-Darwin/AGENTS.md	2026-08-16 20:09:39
++++ Bachata-S4/runtime/sources/fexcore-darwin/AGENTS.md	2026-08-18 20:05:13
+@@ -1 +1,8 @@
+-AI must not be used to generate code for contributions to this project.
++This tree is a vendored, permanently-forked copy of FEXCore-Darwin
++(/Users/davi/Documents/Coding/AetherCore4/FEXCore-Darwin), brought into
++Bachata-S4 to adapt its JIT memory model from macOS's MAP_JIT/
++pthread_jit_write_protect_np scheme to the StikDebug dual-mapped RW/RX
++protocol Bachata-S4's iOS build already uses (see src/core/ios/
++ios_jit_allocator.h). It is not headed upstream and is not a contribution
++to FEXCore-Darwin or FEX-Emu; the no-AI-contribution notice that applies
++to those projects does not apply to this copy.
+Only in FEXCore-Darwin: CLAUDE.md
+diff -ru --exclude=.git --exclude=build FEXCore-Darwin/CMakeLists.txt Bachata-S4/runtime/sources/fexcore-darwin/CMakeLists.txt
+--- FEXCore-Darwin/CMakeLists.txt	2026-08-16 20:12:49
++++ Bachata-S4/runtime/sources/fexcore-darwin/CMakeLists.txt	2026-08-30 13:45:56
+@@ -8,6 +8,7 @@
+ option(BUILD_THUNKS "Build thunks" FALSE)
+ option(BUILD_FEXCONFIG "Build FEXConfig" TRUE)
+ option(BUILD_FEXCORE_ONLY "Build only FEXCore and an embedding smoke executable" OFF)
++option(BUILD_FEXCORE_SMOKE "Build the embedding smoke executable with BUILD_FEXCORE_ONLY" ON)
+ set(FEXCORE_SMOKE_SOURCE "" CACHE FILEPATH "Embedding smoke executable source")
+ set(FEXCORE_GUEST_HARNESS_SOURCES "" CACHE STRING "Semicolon-separated absolute guest harness sources")
+ set(FEXCORE_PROJECT_SOURCE_DIR "" CACHE PATH "Embedding project source directory")
+@@ -65,9 +66,9 @@
+   message(FATAL_ERROR "Unsupported pointer size ${CMAKE_SIZEOF_VOID_P}."
+     " FEX only supports 64-bit (8-byte pointer) systems."
+     " If you believe this is in error, file an issue.")
+-elseif (NOT (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Darwin"))
++elseif (NOT (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR CMAKE_SYSTEM_NAME STREQUAL "iOS"))
+   message(FATAL_ERROR "Unsupported system type ${CMAKE_SYSTEM_NAME}."
+-    " FEX only supports Linux, Windows, and (experimentally, AetherCore4) Darwin."
++    " FEX only supports Linux, Windows, and (experimentally, AetherCore4) Darwin/iOS."
+     " If you believe this is in error, file an issue.")
+ endif()
+ 
+@@ -610,38 +611,54 @@
+ endif()
+ 
+ if (BUILD_FEXCORE_ONLY)
+-  if (NOT IS_ABSOLUTE "${FEXCORE_SMOKE_SOURCE}")
+-    message(FATAL_ERROR "FEXCORE_SMOKE_SOURCE must be an absolute path")
+-  endif()
+   add_subdirectory(Source/Common/ EXCLUDE_FROM_ALL)
+   add_subdirectory(Source/Tools/CommonTools/ EXCLUDE_FROM_ALL)
+-  add_executable(fexcore-smoke "${FEXCORE_SMOKE_SOURCE}")
+-  target_compile_features(fexcore-smoke PRIVATE cxx_std_20)
+-  target_include_directories(fexcore-smoke PRIVATE
+-    "${CMAKE_BINARY_DIR}/generated"
+-    "${CMAKE_SOURCE_DIR}/Source/Tools/CommonTools")
+-  target_link_libraries(fexcore-smoke PRIVATE
+-    FEXCore Common CommonTools JemallocLibs ${PTHREAD_LIB})
+-  if (FEXCORE_GUEST_HARNESS_SOURCES)
+-    if (NOT IS_ABSOLUTE "${FEXCORE_PROJECT_SOURCE_DIR}" OR NOT IS_DIRECTORY "${FEXCORE_PROJECT_SOURCE_DIR}")
+-      message(FATAL_ERROR "FEXCORE_PROJECT_SOURCE_DIR must be an absolute source directory")
++  if (BUILD_FEXCORE_SMOKE)
++    if (NOT IS_ABSOLUTE "${FEXCORE_SMOKE_SOURCE}")
++      message(FATAL_ERROR "FEXCORE_SMOKE_SOURCE must be an absolute path")
+     endif()
+-    foreach(source IN LISTS FEXCORE_GUEST_HARNESS_SOURCES)
+-      if (NOT IS_ABSOLUTE "${source}")
+-        message(FATAL_ERROR "fexcore-guest-harness source must be absolute: ${source}")
+-      endif()
+-    endforeach()
+-    add_executable(fexcore-guest-harness ${FEXCORE_GUEST_HARNESS_SOURCES})
+-    target_compile_features(fexcore-guest-harness PRIVATE cxx_std_20)
+-    target_include_directories(fexcore-guest-harness PRIVATE
+-      "${FEXCORE_PROJECT_SOURCE_DIR}"
++    add_executable(fexcore-smoke "${FEXCORE_SMOKE_SOURCE}")
++    target_compile_features(fexcore-smoke PRIVATE cxx_std_20)
++    target_include_directories(fexcore-smoke PRIVATE
+       "${CMAKE_BINARY_DIR}/generated"
+       "${CMAKE_SOURCE_DIR}/Source/Tools/CommonTools")
+-    target_link_libraries(fexcore-guest-harness PRIVATE
++    target_link_libraries(fexcore-smoke PRIVATE
+       FEXCore Common CommonTools JemallocLibs ${PTHREAD_LIB})
+-    install(TARGETS fexcore-smoke fexcore-guest-harness RUNTIME DESTINATION bin)
+-  else()
+-    install(TARGETS fexcore-smoke RUNTIME DESTINATION bin)
++    if (FEXCORE_GUEST_HARNESS_SOURCES)
++      if (NOT IS_ABSOLUTE "${FEXCORE_PROJECT_SOURCE_DIR}" OR NOT IS_DIRECTORY "${FEXCORE_PROJECT_SOURCE_DIR}")
++        message(FATAL_ERROR "FEXCORE_PROJECT_SOURCE_DIR must be an absolute source directory")
++      endif()
++      foreach(source IN LISTS FEXCORE_GUEST_HARNESS_SOURCES)
++        if (NOT IS_ABSOLUTE "${source}")
++          message(FATAL_ERROR "fexcore-guest-harness source must be absolute: ${source}")
++        endif()
++      endforeach()
++      add_executable(fexcore-guest-harness ${FEXCORE_GUEST_HARNESS_SOURCES})
++      target_compile_features(fexcore-guest-harness PRIVATE cxx_std_20)
++      target_include_directories(fexcore-guest-harness PRIVATE
++        "${FEXCORE_PROJECT_SOURCE_DIR}"
++        "${CMAKE_BINARY_DIR}/generated"
++        "${CMAKE_SOURCE_DIR}/Source/Tools/CommonTools")
++      target_link_libraries(fexcore-guest-harness PRIVATE
++        FEXCore Common CommonTools JemallocLibs ${PTHREAD_LIB})
++      install(TARGETS fexcore-smoke fexcore-guest-harness RUNTIME DESTINATION bin)
++    else()
++      install(TARGETS fexcore-smoke RUNTIME DESTINATION bin)
++    endif()
++  endif()
++  if (FEXCORE_ASM_TESTS_SOURCE AND FEXCORE_ASM_TESTS_JSON_INCLUDE_DIR)
++    if (NOT IS_ABSOLUTE "${FEXCORE_ASM_TESTS_SOURCE}")
++      message(FATAL_ERROR "FEXCORE_ASM_TESTS_SOURCE must be an absolute path")
++    endif()
++    add_executable(fexcore-asm-tests "${FEXCORE_ASM_TESTS_SOURCE}")
++    target_compile_features(fexcore-asm-tests PRIVATE cxx_std_20)
++    target_include_directories(fexcore-asm-tests PRIVATE
++      "${CMAKE_BINARY_DIR}/generated"
++      "${CMAKE_SOURCE_DIR}/Source/Tools/CommonTools"
++      "${FEXCORE_ASM_TESTS_JSON_INCLUDE_DIR}")
++    target_link_libraries(fexcore-asm-tests PRIVATE
++      FEXCore Common CommonTools JemallocLibs ${PTHREAD_LIB})
++    install(TARGETS fexcore-asm-tests RUNTIME DESTINATION bin)
+   endif()
+   return()
+ endif()
+diff -ru --exclude=.git --exclude=build FEXCore-Darwin/External/range-v3/include/meta/meta_fwd.hpp Bachata-S4/runtime/sources/fexcore-darwin/External/range-v3/include/meta/meta_fwd.hpp
+--- FEXCore-Darwin/External/range-v3/include/meta/meta_fwd.hpp	2026-08-16 20:10:33
++++ Bachata-S4/runtime/sources/fexcore-darwin/External/range-v3/include/meta/meta_fwd.hpp	2026-08-29 13:56:36
+@@ -217,13 +217,14 @@
+ #define META_END_NAMESPACE_CONTAINER
+ #endif
+ 
+-#if defined(_LIBCPP_VERSION) && _LIBCPP_VERSION >= 4000
+-#define META_TEMPLATE_VIS _LIBCPP_TEMPLATE_VIS
+-#elif defined(_LIBCPP_VERSION)
+-#define META_TEMPLATE_VIS _LIBCPP_TYPE_VIS_ONLY
+-#else
++// Newer libc++ (observed with Xcode-beta's toolchain) changed _LIBCPP_TEMPLATE_VIS in a way
++// that conflicts with these non-portable forward declarations ("redefinition ... as different
++// kind of symbol" for vector/set/map/etc, since the annotation no longer matches how libc++'s
++// own headers declare the same class template). These forward declarations only need to name
++// the same entity for meta.hpp's own type-trait purposes -- they don't need to reproduce
++// libc++'s exact ABI visibility attribute -- so drop the attribute entirely rather than
++// chasing libc++'s internal macro semantics across versions.
+ #define META_TEMPLATE_VIS
+-#endif
+ /// \endcond
+ 
+ namespace meta
+diff -ru --exclude=.git --exclude=build FEXCore-Darwin/FEXCore/Source/Interface/Context/Context.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Context/Context.cpp
 --- FEXCore-Darwin/FEXCore/Source/Interface/Context/Context.cpp	2026-09-01 21:28:03
 +++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Context/Context.cpp	2026-09-01 19:34:39
 @@ -14,6 +14,8 @@
@@ -68,7 +210,7 @@ diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Context/Context.cpp Bachat
 +  return Written > 0;
  }
  } // namespace FEXCore::Context
-diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Context/Context.h Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Context/Context.h
+diff -ru --exclude=.git --exclude=build FEXCore-Darwin/FEXCore/Source/Interface/Context/Context.h Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Context/Context.h
 --- FEXCore-Darwin/FEXCore/Source/Interface/Context/Context.h	2026-09-01 21:28:03
 +++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Context/Context.h	2026-08-30 22:28:58
 @@ -21,6 +21,7 @@
@@ -182,7 +324,7 @@ diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Context/Context.h Bachata-
  
    // returns false if a handler was already registered
    std::optional<CustomIRResult>
-diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp
+diff -ru --exclude=.git --exclude=build FEXCore-Darwin/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp
 --- FEXCore-Darwin/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp	2026-09-01 21:28:03
 +++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp	2026-08-31 19:40:02
 @@ -73,11 +73,33 @@
@@ -219,7 +361,7 @@ diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emit
  
    constexpr unsigned RAPairs = 4;
  
-diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/CPUBackend.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/CPUBackend.cpp
+diff -ru --exclude=.git --exclude=build FEXCore-Darwin/FEXCore/Source/Interface/Core/CPUBackend.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/CPUBackend.cpp
 --- FEXCore-Darwin/FEXCore/Source/Interface/Core/CPUBackend.cpp	2026-09-01 21:28:03
 +++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/CPUBackend.cpp	2026-08-29 10:32:09
 @@ -21,8 +21,24 @@
@@ -332,7 +474,7 @@ diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/CPUBackend.cpp Bachat
      };
  
      if (CheckCodeBuffer(*CurrentCodeBuffer, Address)) {
-diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/CodeCache.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/CodeCache.cpp
+diff -ru --exclude=.git --exclude=build FEXCore-Darwin/FEXCore/Source/Interface/Core/CodeCache.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/CodeCache.cpp
 --- FEXCore-Darwin/FEXCore/Source/Interface/Core/CodeCache.cpp	2026-09-01 21:28:03
 +++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/CodeCache.cpp	2026-08-19 18:37:01
 @@ -28,10 +28,18 @@
@@ -385,7 +527,7 @@ diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/CodeCache.cpp Bachata
    // Atomicity is critical when making the finalized code data visible.
    // We ensure this by remapping a temporary buffer onto the PROT_NONE
    // placeholder page in CodeBuffer. Some constraints to keep in mind are:
-diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/Core.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/Core.cpp
+diff -ru --exclude=.git --exclude=build FEXCore-Darwin/FEXCore/Source/Interface/Core/Core.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/Core.cpp
 --- FEXCore-Darwin/FEXCore/Source/Interface/Core/Core.cpp	2026-09-01 21:28:03
 +++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/Core.cpp	2026-09-02 18:03:10
 @@ -110,11 +110,22 @@
@@ -649,7 +791,7 @@ diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/Core.cpp Bachata-S4/r
    LOGMAN_THROW_A_FMT(CodeInvalidationMutex.try_lock() == false, "CodeInvalidationMutex needs to be unique_locked here");
  
    // Ensures now-modified mappings aren't cached as being in their previous non-executable state.
-diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
+diff -ru --exclude=.git --exclude=build FEXCore-Darwin/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
 --- FEXCore-Darwin/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp	2026-09-01 21:28:03
 +++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp	2026-08-30 23:08:26
 @@ -64,7 +64,15 @@
@@ -1035,7 +1177,7 @@ diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher
  
      // SRA information.
      .SRAGPRCount = GPRCount,
-diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h
+diff -ru --exclude=.git --exclude=build FEXCore-Darwin/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h
 --- FEXCore-Darwin/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h	2026-09-01 21:28:03
 +++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h	2026-08-30 21:21:50
 @@ -55,10 +55,36 @@
@@ -1095,7 +1237,7 @@ diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher
    uint64_t SignalHandlerReturnAddress {};
    uint64_t SignalHandlerReturnAddressRT {};
    uint64_t GuestSignal_SIGILL {};
-diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp
+diff -ru --exclude=.git --exclude=build FEXCore-Darwin/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp
 --- FEXCore-Darwin/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp	2026-09-01 21:28:03
 +++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp	2026-08-31 00:35:21
 @@ -11,6 +11,8 @@
@@ -1128,7 +1270,7 @@ diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp Bachat
    }
  
    InsertGuestRIPMove(GetReg(Node), Constant & Mask);
-diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
+diff -ru --exclude=.git --exclude=build FEXCore-Darwin/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
 --- FEXCore-Darwin/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp	2026-09-01 21:28:03
 +++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp	2026-08-30 23:08:57
 @@ -189,6 +189,33 @@
@@ -1196,7 +1338,7 @@ diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp Bac
      if (Op->Hint == IR::BranchHint::Call) {
        ARMEmitter::ForwardLabel l_CallReturn;
        if (!Op->CallReturnBlock.IsInvalid()) {
-diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/JIT/JIT.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/JIT/JIT.cpp
+diff -ru --exclude=.git --exclude=build FEXCore-Darwin/FEXCore/Source/Interface/Core/JIT/JIT.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/JIT/JIT.cpp
 --- FEXCore-Darwin/FEXCore/Source/Interface/Core/JIT/JIT.cpp	2026-09-01 21:28:03
 +++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/JIT/JIT.cpp	2026-09-02 18:20:14
 @@ -35,6 +35,7 @@
@@ -1563,7 +1705,7 @@ diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/JIT/JIT.cpp Bachata-S
  
  #ifdef VIXL_DISASSEMBLER
    if (Disassemble() & FEXCore::Config::Disassemble::STATS) {
-diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/LookupCache.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/LookupCache.cpp
+diff -ru --exclude=.git --exclude=build FEXCore-Darwin/FEXCore/Source/Interface/Core/LookupCache.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/LookupCache.cpp
 --- FEXCore-Darwin/FEXCore/Source/Interface/Core/LookupCache.cpp	2026-09-01 21:28:03
 +++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/LookupCache.cpp	2026-08-22 07:58:43
 @@ -102,6 +102,27 @@
@@ -1594,7 +1736,7 @@ diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/LookupCache.cpp Bacha
    // Allocate a new pointer from the BlockLinks pma again.
    BlockLinks = BlockLinks_pma->new_object<BlockLinksMapType>();
    // All code is gone, clear the block list
-diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/LookupCache.h Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/LookupCache.h
+diff -ru --exclude=.git --exclude=build FEXCore-Darwin/FEXCore/Source/Interface/Core/LookupCache.h Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/LookupCache.h
 --- FEXCore-Darwin/FEXCore/Source/Interface/Core/LookupCache.h	2026-09-01 21:28:03
 +++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Interface/Core/LookupCache.h	2026-09-01 20:40:59
 @@ -12,6 +12,7 @@
@@ -1700,7 +1842,7 @@ diff -ru --ex FEXCore-Darwin/FEXCore/Source/Interface/Core/LookupCache.h Bachata
  
      if (!DisableL2Cache() && !L1Only) {
        // Do ful map
-diff -ru --ex FEXCore-Darwin/FEXCore/Source/Utils/Allocator/64BitAllocator.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Utils/Allocator/64BitAllocator.cpp
+diff -ru --exclude=.git --exclude=build FEXCore-Darwin/FEXCore/Source/Utils/Allocator/64BitAllocator.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Utils/Allocator/64BitAllocator.cpp
 --- FEXCore-Darwin/FEXCore/Source/Utils/Allocator/64BitAllocator.cpp	2026-09-01 21:28:03
 +++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Utils/Allocator/64BitAllocator.cpp	2026-08-18 20:44:22
 @@ -24,7 +24,11 @@
@@ -1715,7 +1857,7 @@ diff -ru --ex FEXCore-Darwin/FEXCore/Source/Utils/Allocator/64BitAllocator.cpp B
  #include <type_traits>
  #include <utility>
  
-diff -ru --ex FEXCore-Darwin/FEXCore/Source/Utils/Allocator/IntrusiveArenaAllocator.h Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Utils/Allocator/IntrusiveArenaAllocator.h
+diff -ru --exclude=.git --exclude=build FEXCore-Darwin/FEXCore/Source/Utils/Allocator/IntrusiveArenaAllocator.h Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Utils/Allocator/IntrusiveArenaAllocator.h
 --- FEXCore-Darwin/FEXCore/Source/Utils/Allocator/IntrusiveArenaAllocator.h	2026-09-01 21:28:03
 +++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Utils/Allocator/IntrusiveArenaAllocator.h	2026-08-18 20:43:52
 @@ -11,7 +11,12 @@
@@ -1731,7 +1873,7 @@ diff -ru --ex FEXCore-Darwin/FEXCore/Source/Utils/Allocator/IntrusiveArenaAlloca
  
  #include <mutex>
  
-diff -ru --ex FEXCore-Darwin/FEXCore/Source/Utils/Allocator.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Utils/Allocator.cpp
+diff -ru --exclude=.git --exclude=build FEXCore-Darwin/FEXCore/Source/Utils/Allocator.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Utils/Allocator.cpp
 --- FEXCore-Darwin/FEXCore/Source/Utils/Allocator.cpp	2026-09-01 21:28:03
 +++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Utils/Allocator.cpp	2026-08-20 18:04:21
 @@ -27,6 +27,19 @@
@@ -1973,7 +2115,7 @@ diff -ru --ex FEXCore-Darwin/FEXCore/Source/Utils/Allocator.cpp Bachata-S4/runti
 +}
  #endif
  } // namespace FEXCore::Allocator
-diff -ru --ex FEXCore-Darwin/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp
+diff -ru --exclude=.git --exclude=build FEXCore-Darwin/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp
 --- FEXCore-Darwin/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp	2026-09-01 21:28:03
 +++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp	2026-08-21 20:32:15
 @@ -5,6 +5,7 @@
@@ -2012,7 +2154,7 @@ diff -ru --ex FEXCore-Darwin/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp Bachata-
  
    // Check some instructions first that don't do any backpatching.
    if ((Instr & ArchHelpers::Arm64::CASPAL_MASK) == ArchHelpers::Arm64::CASPAL_INST) { // CASPAL
-diff -ru --ex FEXCore-Darwin/FEXCore/include/FEXCore/Core/Context.h Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/include/FEXCore/Core/Context.h
+diff -ru --exclude=.git --exclude=build FEXCore-Darwin/FEXCore/include/FEXCore/Core/Context.h Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/include/FEXCore/Core/Context.h
 --- FEXCore-Darwin/FEXCore/include/FEXCore/Core/Context.h	2026-09-01 21:28:03
 +++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/include/FEXCore/Core/Context.h	2026-08-19 18:44:59
 @@ -160,6 +160,23 @@
@@ -2039,7 +2181,7 @@ diff -ru --ex FEXCore-Darwin/FEXCore/include/FEXCore/Core/Context.h Bachata-S4/r
     * @brief Informs the context if hardware TSO is supported.
     * Once hardware TSO is enabled, then TSO emulation through atomics is disabled and relies on the hardware.
     *
-diff -ru --ex FEXCore-Darwin/FEXCore/include/FEXCore/Core/CoreState.h Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/include/FEXCore/Core/CoreState.h
+diff -ru --exclude=.git --exclude=build FEXCore-Darwin/FEXCore/include/FEXCore/Core/CoreState.h Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/include/FEXCore/Core/CoreState.h
 --- FEXCore-Darwin/FEXCore/include/FEXCore/Core/CoreState.h	2026-09-01 21:28:03
 +++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/include/FEXCore/Core/CoreState.h	2026-08-30 22:28:41
 @@ -364,10 +364,33 @@
@@ -2100,7 +2242,27 @@ diff -ru --ex FEXCore-Darwin/FEXCore/include/FEXCore/Core/CoreState.h Bachata-S4
  
  #ifdef ARCHITECTURE_arm64ec
    // Set by the kernel on ARM64EC whenever the JIT should cooperatively suspend running guest code.
-diff -ru --ex FEXCore-Darwin/FEXCore/include/FEXCore/Utils/AllocatorHooks.h Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/include/FEXCore/Utils/AllocatorHooks.h
+diff -ru --exclude=.git --exclude=build FEXCore-Darwin/FEXCore/include/FEXCore/Debug/InternalThreadState.h Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/include/FEXCore/Debug/InternalThreadState.h
+--- FEXCore-Darwin/FEXCore/include/FEXCore/Debug/InternalThreadState.h	2026-08-16 20:09:39
++++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/include/FEXCore/Debug/InternalThreadState.h	2026-09-03 18:18:09
+@@ -109,7 +109,15 @@
+   ///< Data pointer for exclusive use by the frontend
+   void* FrontendPtr;
+ 
+-  static constexpr size_t CALLRET_STACK_SIZE {0x400000};
++  // Confirmed on-device (AetherPS4-iOS, Rocket League): a genuinely long play session can
++  // exhaust the full 4MB of call-return prediction headroom -- once the guest's own main-thread
++  // stack overflow bug was fixed separately (letting sessions run much longer before that
++  // unrelated crash), this cache's own capacity became the next wall, faulting on its guard page
++  // exactly like a real stack overflow would. Since MakeWritable() only mprotects this region
++  // (real pages are still committed lazily/on first touch, not up front), a larger reservation
++  // costs address space, not RAM proportional to how deep the guest actually nests -- quadrupled
++  // for comfortable headroom.
++  static constexpr size_t CALLRET_STACK_SIZE {0x1000000};
+ 
+   // The low address of the call-ret stack allocation (not including guard pages)
+   void* CallRetStackBase {};
+diff -ru --exclude=.git --exclude=build FEXCore-Darwin/FEXCore/include/FEXCore/Utils/AllocatorHooks.h Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/include/FEXCore/Utils/AllocatorHooks.h
 --- FEXCore-Darwin/FEXCore/include/FEXCore/Utils/AllocatorHooks.h	2026-09-01 21:28:03
 +++ Bachata-S4/runtime/sources/fexcore-darwin/FEXCore/include/FEXCore/Utils/AllocatorHooks.h	2026-08-20 18:00:22
 @@ -14,6 +14,7 @@
