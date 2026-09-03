@@ -181,6 +181,14 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
         if (::AetherPS4::Fex::TryRecoverKnownBadPropertyLink(sig, info, raw_context)) {
             return;
         }
+        // FEXCore's call-return prediction cache genuinely running out of its own reserved
+        // space (see the function's own comment for why no fixed size is ever truly enough,
+        // and why resetting it is provably safe rather than a hack) -- checked last among the
+        // recovery attempts since it does its own precise guard-page address check first and
+        // can't mask an unrelated crash.
+        if (::AetherPS4::Fex::TryRecoverCallRetStackOverflow(sig, info, raw_context)) {
+            return;
+        }
 #endif
         // If the guest has installed a custom signal handler, and the access violation didn't
         // come from HLE memory tracking, pass the signal on

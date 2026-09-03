@@ -75,6 +75,18 @@ bool TryRecoverJitAliasFault(int signal, siginfo_t* info, void* rawContext) noex
 // data) and why the specific recovery (treat the read as if it loaded 0, matching this same
 // function's own handling of a legitimately-null chain pointer) is safe here.
 bool TryRecoverKnownBadPropertyLink(int signal, siginfo_t* info, void* rawContext) noexcept;
+// Recovers a SIGBUS on the guard page just past the *bottom* of FEXCore's call-return
+// prediction cache (REG_CALLRET_SP -- see Dispatcher.cpp/BranchOps.cpp) by resetting it back
+// to a fresh top and resuming the same instruction, instead of crashing. This cache's push/pop
+// are strictly 1:1 with executed x86 call/ret *instructions*, not the guest's real call depth
+// -- anything that skips executing a `ret` for one or more frames (C++ exception unwinding via
+// a computed jump straight to a landing pad, most notably) leaks that much space permanently,
+// so no fixed capacity is ever enough for an arbitrarily long session. Safe to reset outright:
+// BranchOps.cpp's own pop already treats a stale/mismatched entry as an ordinary cache miss
+// (falls through to the full, slower lookup), never a correctness issue -- only ever engages
+// for the bottom guard page specifically, so a fault at the *top* (a different, already-fixed
+// bug earlier this session) still falls through to the fatal path instead of being masked here.
+bool TryRecoverCallRetStackOverflow(int signal, siginfo_t* info, void* rawContext) noexcept;
 // Queue Orbis guest exception handler for deferred FEX delivery (ARM64 host).
 // orbis_sig is the Orbis signal number (e.g. 30 / SIGUSR1). guest_handler is the
 // guest VA from Libraries::Kernel::Handlers. Actual run is HandleCallback at HLE

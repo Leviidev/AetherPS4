@@ -2159,6 +2159,66 @@ bool TryRecoverKnownBadPropertyLink(int signal, siginfo_t* info, void* rawContex
 #endif
 }
 
+bool TryRecoverCallRetStackOverflow(int signal, siginfo_t* info, void* rawContext) noexcept {
+#if defined(__aarch64__) && defined(__APPLE__)
+  if (signal != SIGBUS || info == nullptr || rawContext == nullptr) {
+    return false;
+  }
+  if (ActiveFexExecution.Thread == nullptr) {
+    return false;
+  }
+
+  const auto stack_base = reinterpret_cast<uintptr_t>(ActiveFexExecution.Thread->CallRetStackBase);
+  if (stack_base == 0) {
+    return false;
+  }
+  const auto fault_addr = reinterpret_cast<uintptr_t>(info->si_addr);
+  // Only the guard page immediately *below* the writable region -- the direction genuine
+  // exhaustion faults from (callret_sp starts high and is decremented on every guest `call`).
+  // A fault at/above stack_base + CALLRET_STACK_SIZE would be a different bug (the boundary
+  // issue already fixed earlier this session, see Initialize()'s own comment) and should still
+  // reach the fatal path rather than being masked here.
+  if (fault_addr >= stack_base || fault_addr < stack_base - static_cast<uintptr_t>(kRequiredPageSize)) {
+    return false;
+  }
+
+  auto* context = reinterpret_cast<ucontext_t*>(rawContext);
+  auto& ts = context->uc_mcontext->__ss;
+
+  // REG_CALLRET_SP is a fixed physical register, not something that varies per compile (see
+  // Arm64Emitter.h) -- x25 on this build (the non-arm64ec definition; arm64ec is Windows-only
+  // and never applies here, but the index is still derived from the same guard FEXCore itself
+  // uses rather than just trusting a bare "25" to stay in sync with it).
+#ifdef ARCHITECTURE_arm64ec
+  constexpr int kCallRetSpRegisterIndex = 17;
+#else
+  constexpr int kCallRetSpRegisterIndex = 25;
+#endif
+  const auto old_callret_sp = ts.__x[kCallRetSpRegisterIndex];
+  // Matches CallRetStack::Initialize()'s own formula exactly: start one prediction slot
+  // (0x10, the stp/ldp width) below the true top, so even an un-decremented first read from a
+  // freshly-reset thread stays inside the writable region.
+  const auto fresh_top =
+      stack_base + FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE - 0x10;
+  ts.__x[kCallRetSpRegisterIndex] = static_cast<uint64_t>(fresh_top);
+
+  SignalSafeLog("BACHATA_CALLRET_RESET: fault_addr=%p stack_base=%p old_callret_sp=%p "
+                "fresh_top=%p -- resuming same instruction\n",
+                info->si_addr, reinterpret_cast<void*>(stack_base),
+                reinterpret_cast<void*>(old_callret_sp), reinterpret_cast<void*>(fresh_top));
+  // Deliberately no PC change: the faulting instruction (a pre-indexed store, per the
+  // guard-page-only check above) didn't write back its base register before faulting -- it's
+  // still exactly the guest `call` that was in flight -- so simply retrying it with a valid
+  // base now succeeds normally, no different from any other cache-reset push.
+  return true;
+#else
+  static_cast<void>(signal);
+  static_cast<void>(info);
+  static_cast<void>(rawContext);
+  return false;
+#endif
+}
+
 class GuestEngine::Thread final {
 public:
   Thread(std::thread::id owner, Core::GuestExecutionRequest request)
