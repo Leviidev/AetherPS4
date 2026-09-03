@@ -777,8 +777,20 @@ public:
 
   void Initialize(FEXCore::Core::InternalThreadState* thread) const {
     thread->CallRetStackBase = StackBase();
+    // FEXCore's call-return prediction stack (Dispatcher.cpp: REG_CALLRET_SP, pushed via a
+    // pre-decrement stp before every indirect call) grows downward from wherever callret_sp
+    // starts, the same way a normal thread stack does -- so it needs to start at the *top*
+    // of the writable region (StackBase() + CALLRET_STACK_SIZE) to have the full size
+    // available to grow into before running into StackBase() itself (and the PROT_NONE
+    // guard page just before it). This previously divided by 4, starting only 25% of the
+    // way in and leaving just a quarter of CALLRET_STACK_SIZE (1MB, not 4MB) of actual
+    // headroom -- confirmed on-device as an eventual out-of-bounds stp write once a long
+    // enough session accumulates more nested call/return activity than that quarter could
+    // hold, at a guest RIP entirely unrelated to the call site (this mechanism isn't guest-
+    // visible state, just an internal prediction cache), which is what made it look like an
+    // unrelated crash rather than exhausted stack headroom.
     thread->CurrentFrame->State.callret_sp =
-      reinterpret_cast<uint64_t>(StackBase()) + FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE / 4;
+      reinterpret_cast<uint64_t>(StackBase()) + FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE;
   }
 
 private:
