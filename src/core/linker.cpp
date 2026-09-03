@@ -240,6 +240,17 @@ Linker::~Linker() = default;
 namespace {
 
 constexpr std::size_t FexTemporaryStackSize = 1_MB;
+// Fallback main-thread stack size when the game's own proc_param doesn't request one (see
+// RunGuestMain below). Confirmed on-device as the root cause of a 100%-reproducible Rocket
+// League crash: BACHATA_SRA_PROBE (signals.cpp) showed guest RSP sitting exactly on the base
+// address of the unrelated, adjacent "SceGnmDriver" 64KB direct-memory region (see linker.cpp's
+// libSceGnmDriver initialization simulation) with RBP still perfectly valid deep inside "FEX main
+// guest stack" -- i.e. the main thread's real 1MB stack had already overflowed and was silently
+// writing into that neighboring mapped-but-unrelated region (which happens to sit with zero guard
+// gap right below it) for up to another 64KB before finally reaching genuinely unmapped memory
+// and faulting. 1MB is far smaller than the stack sizes real PS4 titles commonly rely on when
+// they don't customize this field; 8MB matches what's typical for an AAA engine's main thread.
+constexpr std::size_t FexMainThreadDefaultStackSize = 8_MB;
 
 class GuestStackMapping final {
 public:
@@ -471,7 +482,7 @@ Linker::GuestFunctionResult Linker::RunGuestMain(EntryParams* params) {
     }
     if (const auto failure = InitializeFexRuntime()) return *failure;
 
-    std::size_t stackSize = FexTemporaryStackSize;
+    std::size_t stackSize = FexMainThreadDefaultStackSize;
     if (const auto* proc = GetProcParam(); proc != nullptr && proc->main_thread_stack_size != nullptr) {
         stackSize = std::clamp<std::size_t>(*proc->main_thread_stack_size, 64_KB, 64_MB);
         stackSize = Common::AlignUp(stackSize, 16_KB);
