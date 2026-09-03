@@ -80,6 +80,8 @@ struct SettingsPersonalizationView: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .navigationTitle("Profile")
+        .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             usernameDraft = profile.username
             customColor = theme.accentColor

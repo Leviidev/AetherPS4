@@ -27,5 +27,7 @@ struct SettingsSocialsView: View {
                     .accessibilityLabel("Version \(versionLabel)")
             }
         }
+        .navigationTitle("Socials")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

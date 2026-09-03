@@ -87,9 +87,16 @@
 		E3068F2CD9416795C58554C8 /* PlayTimeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7A51F3B4E6E9C88A1612510 /* PlayTimeStore.swift */; };
 		5395F3062D9B5F1E4214B942 /* GameStatusStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 668694E2C2175749F5B43919 /* GameStatusStore.swift */; };
 		3298D93791D1B652ACE2538F /* GameStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A56855FFF5DA2D48453D01 /* GameStatusView.swift */; };
+		E8C8CE4D06814F368D012E59 /* SettingsDisplayPerformanceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8EFF39CF7CA4D10BE8E67A5 /* SettingsDisplayPerformanceView.swift */; };
+		243BACAF6CF540D7B38C67DF /* SettingsConsoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D39F172BED2459F8AD9A3F6 /* SettingsConsoleView.swift */; };
+		5E2D1DC848AF414E829424DD /* SettingsNetworkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C58981E6D4564F7A8A43E1F5 /* SettingsNetworkView.swift */; };
+		95D505F8AA794666BABB68BB /* SettingsGraphicsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6C69D673DE649C7BC603A7C /* SettingsGraphicsView.swift */; };
+		0688A156C94D41A599F84E08 /* SettingsAudioView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F0D4BB649E3432DBC8DD818 /* SettingsAudioView.swift */; };
+		949AE2EEC6EE4AF4BEE53C24 /* SettingsInputView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6EFD3443DEC4687AEAC0D44 /* SettingsInputView.swift */; };
+		6F5DC55E0A5C43D99B401564 /* SettingsSystemModulesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 746343D6A3E844FCA4881604 /* SettingsSystemModulesView.swift */; };
+		8FD616101F5A4260A1A2AB54 /* SettingsAdvancedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F19FB9898AD74102916F0E24 /* SettingsAdvancedView.swift */; };
 		1A53018134FE4098A40B3080 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F50FDE2BEC04F6F9F4B4C55 /* AppTheme.swift */; };
 		C3E1490366494D13853D758F /* ProfileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EECB3017448D4A53AC43996A /* ProfileStore.swift */; };
-		C56E81620AB3424FB7A31654 /* SettingsConfigView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF549B4E75F94B3BBAE26827 /* SettingsConfigView.swift */; };
 		59CC3749AB0E48FC970A8D3F /* SettingsPersonalizationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BDCEF4248184ED1966DF176 /* SettingsPersonalizationView.swift */; };
 		D27EEC54F5874FC6AF7554EB /* SettingsSocialsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D407A9325EB74D40B8A956B2 /* SettingsSocialsView.swift */; };
 		E758FB0D9FFF6E4458B217BB /* libtiny-json.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 9355CEDF603E23975E5723D6 /* libtiny-json.a */; };
@@ -194,9 +201,16 @@
 		E7A51F3B4E6E9C88A1612510 /* PlayTimeStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PlayTimeStore.swift; path = Models/PlayTimeStore.swift; sourceTree = "<group>"; };
 		668694E2C2175749F5B43919 /* GameStatusStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GameStatusStore.swift; path = Models/GameStatusStore.swift; sourceTree = "<group>"; };
 		51A56855FFF5DA2D48453D01 /* GameStatusView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GameStatusView.swift; path = Views/GameStatusView.swift; sourceTree = "<group>"; };
+		F8EFF39CF7CA4D10BE8E67A5 /* SettingsDisplayPerformanceView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsDisplayPerformanceView.swift; path = Views/SettingsDisplayPerformanceView.swift; sourceTree = "<group>"; };
+		7D39F172BED2459F8AD9A3F6 /* SettingsConsoleView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsConsoleView.swift; path = Views/SettingsConsoleView.swift; sourceTree = "<group>"; };
+		C58981E6D4564F7A8A43E1F5 /* SettingsNetworkView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsNetworkView.swift; path = Views/SettingsNetworkView.swift; sourceTree = "<group>"; };
+		B6C69D673DE649C7BC603A7C /* SettingsGraphicsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsGraphicsView.swift; path = Views/SettingsGraphicsView.swift; sourceTree = "<group>"; };
+		9F0D4BB649E3432DBC8DD818 /* SettingsAudioView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsAudioView.swift; path = Views/SettingsAudioView.swift; sourceTree = "<group>"; };
+		E6EFD3443DEC4687AEAC0D44 /* SettingsInputView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsInputView.swift; path = Views/SettingsInputView.swift; sourceTree = "<group>"; };
+		746343D6A3E844FCA4881604 /* SettingsSystemModulesView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsSystemModulesView.swift; path = Views/SettingsSystemModulesView.swift; sourceTree = "<group>"; };
+		F19FB9898AD74102916F0E24 /* SettingsAdvancedView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsAdvancedView.swift; path = Views/SettingsAdvancedView.swift; sourceTree = "<group>"; };
 		4F50FDE2BEC04F6F9F4B4C55 /* AppTheme.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppTheme.swift; path = Models/AppTheme.swift; sourceTree = "<group>"; };
 		EECB3017448D4A53AC43996A /* ProfileStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ProfileStore.swift; path = Models/ProfileStore.swift; sourceTree = "<group>"; };
-		EF549B4E75F94B3BBAE26827 /* SettingsConfigView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsConfigView.swift; path = Views/SettingsConfigView.swift; sourceTree = "<group>"; };
 		9BDCEF4248184ED1966DF176 /* SettingsPersonalizationView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsPersonalizationView.swift; path = Views/SettingsPersonalizationView.swift; sourceTree = "<group>"; };
 		D407A9325EB74D40B8A956B2 /* SettingsSocialsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsSocialsView.swift; path = Views/SettingsSocialsView.swift; sourceTree = "<group>"; };
 		EAFCF6B318B8C80379B39026 /* libssl.a */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.ar; name = libssl.a; path = "../runtime/build/shadps4-ios/externals/libressl/ssl/libssl.a"; sourceTree = "<group>"; };
@@ -305,9 +319,16 @@
 				136453DD4F3749B98EBF0BA6 /* GameDetailView.swift */,
 				50804515E4537DA4766EAC99 /* GameCardView.swift */,
 				51A56855FFF5DA2D48453D01 /* GameStatusView.swift */,
+				F8EFF39CF7CA4D10BE8E67A5 /* SettingsDisplayPerformanceView.swift */,
+				7D39F172BED2459F8AD9A3F6 /* SettingsConsoleView.swift */,
+				C58981E6D4564F7A8A43E1F5 /* SettingsNetworkView.swift */,
+				B6C69D673DE649C7BC603A7C /* SettingsGraphicsView.swift */,
+				9F0D4BB649E3432DBC8DD818 /* SettingsAudioView.swift */,
+				E6EFD3443DEC4687AEAC0D44 /* SettingsInputView.swift */,
+				746343D6A3E844FCA4881604 /* SettingsSystemModulesView.swift */,
+				F19FB9898AD74102916F0E24 /* SettingsAdvancedView.swift */,
 				4F50FDE2BEC04F6F9F4B4C55 /* AppTheme.swift */,
 				EECB3017448D4A53AC43996A /* ProfileStore.swift */,
-				EF549B4E75F94B3BBAE26827 /* SettingsConfigView.swift */,
 				9BDCEF4248184ED1966DF176 /* SettingsPersonalizationView.swift */,
 				D407A9325EB74D40B8A956B2 /* SettingsSocialsView.swift */,
 				7EBC701E8ED4ABFCACD84B7D /* LibraryView.swift */,
@@ -518,9 +539,16 @@
 				E3068F2CD9416795C58554C8 /* PlayTimeStore.swift in Sources */,
 				5395F3062D9B5F1E4214B942 /* GameStatusStore.swift in Sources */,
 				3298D93791D1B652ACE2538F /* GameStatusView.swift in Sources */,
+				E8C8CE4D06814F368D012E59 /* SettingsDisplayPerformanceView.swift in Sources */,
+				243BACAF6CF540D7B38C67DF /* SettingsConsoleView.swift in Sources */,
+				5E2D1DC848AF414E829424DD /* SettingsNetworkView.swift in Sources */,
+				95D505F8AA794666BABB68BB /* SettingsGraphicsView.swift in Sources */,
+				0688A156C94D41A599F84E08 /* SettingsAudioView.swift in Sources */,
+				949AE2EEC6EE4AF4BEE53C24 /* SettingsInputView.swift in Sources */,
+				6F5DC55E0A5C43D99B401564 /* SettingsSystemModulesView.swift in Sources */,
+				8FD616101F5A4260A1A2AB54 /* SettingsAdvancedView.swift in Sources */,
 				1A53018134FE4098A40B3080 /* AppTheme.swift in Sources */,
 				C3E1490366494D13853D758F /* ProfileStore.swift in Sources */,
-				C56E81620AB3424FB7A31654 /* SettingsConfigView.swift in Sources */,
 				59CC3749AB0E48FC970A8D3F /* SettingsPersonalizationView.swift in Sources */,
 				D27EEC54F5874FC6AF7554EB /* SettingsSocialsView.swift in Sources */,
 				CA36312B7F44FC79ACA077EE /* ParamSfoReader.swift in Sources */,
