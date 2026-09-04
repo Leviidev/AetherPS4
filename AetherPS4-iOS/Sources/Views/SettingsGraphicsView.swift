@@ -3,6 +3,24 @@ import SwiftUI
 struct SettingsGraphicsView: View {
     private let store = ConfigStore.shared
 
+    // Resolution: the game's internal render resolution (EmulatorSettings::GPUSettings::
+    // internal_screen_width/height) -- independent of the device's own screen size, the same
+    // way changing resolution in real PS4 system settings works. Presets only, to keep the
+    // config.json value always one of these exact pairs.
+    private struct ResolutionPreset: Identifiable {
+        let id: String
+        let label: String
+        let width: Int
+        let height: Int
+    }
+    private static let resolutionPresets: [ResolutionPreset] = [
+        ResolutionPreset(id: "720p", label: "720p (1280×720)", width: 1280, height: 720),
+        ResolutionPreset(id: "1080p", label: "1080p (1920×1080)", width: 1920, height: 1080),
+        ResolutionPreset(id: "1440p", label: "1440p (2560×1440)", width: 2560, height: 1440),
+        ResolutionPreset(id: "4k", label: "4K (3840×2160)", width: 3840, height: 2160),
+    ]
+    @State private var selectedResolutionId = "720p"
+
     // GPU / Rendering
     @State private var nullGpu = false
     @State private var dumpShaders = false
@@ -24,6 +42,22 @@ struct SettingsGraphicsView: View {
 
     var body: some View {
         Form {
+            Section("Resolution") {
+                Picker("Render Resolution", selection: $selectedResolutionId) {
+                    ForEach(Self.resolutionPresets) { preset in
+                        Text(preset.label).tag(preset.id)
+                    }
+                }
+                .onChange(of: selectedResolutionId) { _, id in
+                    guard let preset = Self.resolutionPresets.first(where: { $0.id == id }) else { return }
+                    store.setInt("GPU", "internal_screen_width", preset.width)
+                    store.setInt("GPU", "internal_screen_height", preset.height)
+                }
+                Text("Higher resolutions look sharper but cost significantly more GPU performance. Takes effect the next time you start a game.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("GPU & Rendering") {
                 Toggle("Null GPU (Skip Rendering)", isOn: $nullGpu)
                     .onChange(of: nullGpu) { _, v in store.setBool("GPU", "null_gpu", v) }
@@ -75,6 +109,12 @@ struct SettingsGraphicsView: View {
 
     private func loadFromStore() {
         store.reload()
+
+        let storedWidth = store.int("GPU", "internal_screen_width", default: 1280)
+        let storedHeight = store.int("GPU", "internal_screen_height", default: 720)
+        selectedResolutionId = Self.resolutionPresets.first { $0.width == storedWidth && $0.height == storedHeight }?.id
+            ?? "720p"
+
         nullGpu = store.bool("GPU", "null_gpu", default: false)
         dumpShaders = store.bool("GPU", "dump_shaders", default: false)
         readbacksMode = store.int("GPU", "readbacks_mode", default: 0)
