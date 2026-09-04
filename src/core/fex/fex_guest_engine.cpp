@@ -2617,6 +2617,17 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
             }
             LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: clearing thread {:#x}'s local caches",
                               reinterpret_cast<uintptr_t>(t->Native));
+            // Diagnostic only, same Rocket League rsp-corruption investigation as
+            // BACHATA_SAFEPOINT_RSP_CHECK above: dumps every *paused* (not just the calling)
+            // thread's own rsp checkpoint at the exact moment its caches get cleared here, to
+            // catch a corruption already present on a thread that never triggered the reuse
+            // itself, in case that's the one that later crashes.
+            if (t->Native->CurrentFrame != nullptr) {
+              LogMan::Msg::IFmt(
+                  "BACHATA_SAFEPOINT_RSP_CHECK: paused thread={:#x} rsp_checkpoint={:#x}",
+                  reinterpret_cast<uintptr_t>(t->Native),
+                  t->Native->CurrentFrame->State.gregs[FEXCore::X86State::REG_RSP]);
+            }
             t->Native->LookupCache->ClearThreadLocalCaches(lk);
           }
           LogMan::Msg::IFmt("BACHATA_BUFFER_REUSE: callback end");
@@ -2630,6 +2641,14 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
     static_cast<FEXCore::Context::ContextImpl*>(impl->Context.get())
         ->BeginBufferInvalidationSafepoint = [rawImpl](FEXCore::Core::InternalThreadState* CallingThread) {
       LogMan::Msg::IFmt("BACHATA_SAFEPOINT: begin, CallingThread={:#x}", reinterpret_cast<uintptr_t>(CallingThread));
+      // Diagnostic only, tracking the Rocket League guest-rip-0x7001342320 rsp-corruption
+      // investigation: pinpoints whether the calling thread's own rsp checkpoint is already
+      // wrong *before* this reuse cycle even starts (pointing at whatever compiled the block
+      // that triggered ClearCodeCache) versus only going bad somewhere during/after it.
+      if (CallingThread != nullptr && CallingThread->CurrentFrame != nullptr) {
+        LogMan::Msg::IFmt("BACHATA_SAFEPOINT_RSP_CHECK: begin, calling_thread_rsp_checkpoint={:#x}",
+                          CallingThread->CurrentFrame->State.gregs[FEXCore::X86State::REG_RSP]);
+      }
       g_safepoint_resume.store(false, std::memory_order_release);
       g_safepoint_paused_count.store(0, std::memory_order_release);
       int signaled = 0;
@@ -2727,10 +2746,18 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
       }
     };
     static_cast<FEXCore::Context::ContextImpl*>(impl->Context.get())
-        ->EndBufferInvalidationSafepoint = [](FEXCore::Core::InternalThreadState*) {
+        ->EndBufferInvalidationSafepoint = [](FEXCore::Core::InternalThreadState* CallingThread) {
       // See g_reuse_generation's own comment for what this closes and why it has to happen
       // here specifically: after the buffer's bytes are fully repopulated (this callback fires
       // after that memcpy -- see CompileCode, JIT.cpp), before any paused thread can resume.
+      // Same diagnostic pairing as BeginBufferInvalidationSafepoint's own BACHATA_SAFEPOINT_RSP_
+      // CHECK above -- if this one already shows the corrupted value, the reuse cycle itself
+      // (or the compile that triggered it) is where rsp goes bad, not something that happens
+      // only after threads resume.
+      if (CallingThread != nullptr && CallingThread->CurrentFrame != nullptr) {
+        LogMan::Msg::IFmt("BACHATA_SAFEPOINT_RSP_CHECK: end, calling_thread_rsp_checkpoint={:#x}",
+                          CallingThread->CurrentFrame->State.gregs[FEXCore::X86State::REG_RSP]);
+      }
       const auto new_generation = g_reuse_generation.fetch_add(1, std::memory_order_release) + 1;
       // Deliberately unconditional: this whole mechanism (JITPointers::ReuseGenerationCounterAddress
       // and its two live checks, JIT.cpp/Dispatcher.cpp) has no other visibility into whether it's
