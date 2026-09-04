@@ -20,8 +20,10 @@ if(APPLE)
         # comparable floor, so the app's own deployment target is what actually gates
         # compatibility here. Kept as its own branch, not folded into the macOS value
         # below, precisely so raising/lowering one platform's floor never silently moves
-        # the other's.
-        set(CMAKE_OSX_DEPLOYMENT_TARGET 18.0 CACHE STRING "")
+        # the other's. 17.4 matches StikDebug's own minimum (its Universal JIT Script is
+        # a hard runtime dependency -- see ios_jit_allocator.cpp -- so there's no point
+        # going any lower than what StikDebug itself requires).
+        set(CMAKE_OSX_DEPLOYMENT_TARGET 17.4 CACHE STRING "")
     else()
         # Minimum OS version for KosmicKrisp
         set(CMAKE_OSX_DEPLOYMENT_TARGET 26.0 CACHE STRING "")
