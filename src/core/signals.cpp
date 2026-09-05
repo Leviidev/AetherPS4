@@ -796,6 +796,38 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                 LOG_CRITICAL(Debug, "FEX SIGILL host ARM64 words around fault pc={:#x}: {}",
                             reinterpret_cast<uintptr_t>(code_address), ill_host_code);
             }
+            // Bloodborne investigation: every occurrence of this crash lands at exactly
+            // thunk_start+0x1c (confirmed across multiple sessions via BACHATA_BLOODBORNE_
+            // THUNK_TRACE, which independently proved the crashing thunk's caller BL instruction
+            // was correctly encoded (branching to thunk_start+0x00) at compile time. That rules
+            // out the emission/binding path -- if the caller's instruction is now something
+            // *other* than that original BL, whatever rewrote it is the actual bug (a
+            // DirectBlockDelinker/ExitFunctionLink direct-patch computing the wrong target, or a
+            // stray write from something else entirely); if it's unchanged, the corruption must
+            // be happening some other way this doesn't yet explain (e.g. the CPU never actually
+            // took this exact BL, meaning something else branched here directly).
+            {
+                const auto fault_addr = reinterpret_cast<uintptr_t>(code_address);
+                const auto thunk_start = fault_addr - 0x1c;
+                uint64_t bb_guest_rip = 0;
+                if (BachataSafeRead(thunk_start + 0x18, &bb_guest_rip) && bb_guest_rip == 0x7002047b00ULL) {
+                    uint64_t bb_host_code = 0;
+                    int64_t bb_caller_offset = 0;
+                    uint32_t bb_caller_word = 0;
+                    const bool got_host_code = BachataSafeRead(thunk_start + 0x10, &bb_host_code);
+                    const bool got_caller_offset = BachataSafeRead(thunk_start + 0x20, &bb_caller_offset);
+                    const bool got_caller_word =
+                        got_caller_offset &&
+                        BachataSafeRead(static_cast<uintptr_t>(static_cast<int64_t>(thunk_start) + bb_caller_offset), &bb_caller_word);
+                    LOG_CRITICAL(Debug,
+                                "BACHATA_BLOODBORNE_CALLER_AT_CRASH: thunk_start={:#x} HostCode={:#x} "
+                                "(read_ok={}) CallerOffset={} (read_ok={}) CallerAddress={:#x} "
+                                "CallerWordNow={:#x} (read_ok={})",
+                                thunk_start, bb_host_code, got_host_code, bb_caller_offset, got_caller_offset,
+                                got_caller_offset ? static_cast<uintptr_t>(static_cast<int64_t>(thunk_start) + bb_caller_offset) : 0,
+                                bb_caller_word, got_caller_word);
+                }
+            }
             char ill_snapshot_compare[256] = {};
             if (::AetherPS4::Fex::BachataCompareKnownBlockSnapshot(ill_snapshot_compare, sizeof(ill_snapshot_compare))) {
                 LOG_CRITICAL(Debug, "FEX SIGILL known-block snapshot comparison: {}", ill_snapshot_compare);
