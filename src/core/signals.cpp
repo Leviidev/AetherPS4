@@ -879,18 +879,47 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
         // settles what: BRK's own encoding is 0xD4200000 | (imm16 << 5), so a different imm16
         // than 0xf00d (or a word that doesn't even decode as BRK at all) narrows this down
         // immediately, without waiting on a full separate investigation cycle.
-        {
-            const auto* trap_word_ptr = reinterpret_cast<const volatile uint32_t*>(code_address);
-            const uint32_t trap_word = *trap_word_ptr;
-            const bool looks_like_brk = (trap_word & 0xFFE0001F) == 0xD4200000;
-            const uint32_t brk_imm16 = (trap_word >> 5) & 0xFFFF;
+        const auto* trap_word_ptr = reinterpret_cast<const volatile uint32_t*>(code_address);
+        const uint32_t trap_word = *trap_word_ptr;
+        const bool looks_like_brk = (trap_word & 0xFFE0001F) == 0xD4200000;
+        const uint32_t brk_imm16 = (trap_word >> 5) & 0xFFFF;
+        LOG_CRITICAL(Debug,
+                    "FEX SIGTRAP raw instruction word at fault pc={:#x}: {:#010x} "
+                    "is_brk_encoding={} brk_imm16={:#x}",
+                    reinterpret_cast<uintptr_t>(code_address), trap_word, looks_like_brk, brk_imm16);
+        // A GTA V session hit this fatal path repeatedly at *different* addresses within one
+        // continuous run (0x1a04d2284, 0x104d3a994, 0x1a7efa8fc, 0x1a05111e8) -- a static,
+        // compiler-inserted trap (a failed assertion, stack-protector check, __builtin_trap())
+        // would sit at a fixed offset within one already-loaded library, hence the same absolute
+        // address for the life of one process launch; different addresses within the same launch
+        // instead matches something planting and removing a breakpoint dynamically. Every one of
+        // these decoded as a real BRK (confirmed above), with imm16 of 0 or 1 -- not the
+        // BreakGetJITMapping #0xf00d the dedicated branch above already handles, but StikDebug's
+        // BreakpointJIT.framework is itself an attached-debugger-style mechanism, and this is a
+        // shipped, production build with no legitimate reason for a real developer breakpoint to
+        // exist on a user's device -- any BRK reaching here is far more likely to be one of
+        // StikDebug's own internal breakpoints (planted and normally removed as part of servicing
+        // some other request) left armed after it went unresponsive, the same underlying failure
+        // mode as the #0xf00d case, just via a different mechanism. Recovering the same way --
+        // skip the single 4-byte instruction and resume -- turns a guaranteed app-ending crash
+        // into, at worst, whatever StikDebug's own now-skipped instrumentation would have done,
+        // which is strictly better than killing the whole process. Only a SIGTRAP that doesn't
+        // even decode as BRK at all (genuinely unexplained) still falls through to the fatal path.
+        if (looks_like_brk) {
             LOG_CRITICAL(Debug,
-                        "FEX SIGTRAP raw instruction word at fault pc={:#x}: {:#010x} "
-                        "is_brk_encoding={} brk_imm16={:#x}",
-                        reinterpret_cast<uintptr_t>(code_address), trap_word, looks_like_brk, brk_imm16);
+                        "BACHATA_UNKNOWN_BRK_RECOVERED: BRK #{:#x} at {:#x} was not the "
+                        "JIT-mapping protocol's #0xf00d -- likely a StikDebug-internal breakpoint "
+                        "left armed after it went unresponsive; skipping it instead of crashing",
+                        brk_imm16, reinterpret_cast<uintptr_t>(code_address));
+            auto* apple_context = reinterpret_cast<ucontext_t*>(raw_context);
+            auto& ts = apple_context->uc_mcontext->__ss;
+            const auto pc = static_cast<uintptr_t>(arm_thread_state64_get_pc(ts));
+            arm_thread_state64_set_pc_fptr(ts, reinterpret_cast<void*>(pc + 4));
+            return;
         }
         Common::ReportCrash(raw_context, sig, info);
-        UNREACHABLE_MSG("Unhandled SIGTRAP at code address {} (not a JIT-mapping request)",
+        UNREACHABLE_MSG("Unhandled SIGTRAP at code address {} (not a JIT-mapping request, and not "
+                        "a BRK instruction at all)",
                         fmt::ptr(code_address));
     }
 #endif
