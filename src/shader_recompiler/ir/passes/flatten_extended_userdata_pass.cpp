@@ -407,13 +407,22 @@ public:
     }
 
 private:
-    static constexpr size_t kPoolSize = 1_MB;
+    // Grown from the original 1MB: GTA V's shader complexity plausibly exceeds "many thousands"
+    // of distinct walkers over a long session, and RegisterWalkerCode (below) no longer falls
+    // back to a standalone Allocate() when this pool runs out -- that fallback was removed as
+    // an unsafe pattern (see its own comment), so a shader whose walker doesn't fit here now
+    // permanently falls back to slower, non-JIT'd interpretation instead of JIT for the rest of
+    // the session, rather than crashing. Bigger upfront reduces how often that degradation ever
+    // triggers. 8MB for walkers each well under 200 bytes covers on the order of tens of
+    // thousands of them, still a single StikDebug interaction, and still trivial next to the
+    // multi-MB JIT code buffers already in use elsewhere in this port.
+    static constexpr size_t kPoolSize = 8_MB;
 
     IosSrtCodePool() : region(Core::DualMappedRegion::Allocate(kPoolSize)) {
         if (!region.IsValid()) {
             LOG_CRITICAL(Render_Recompiler,
                         "IosSrtCodePool: initial {}-byte pool allocation failed; every SRT "
-                        "walker this session will fall back to a standalone JIT request",
+                        "walker this session falls back to non-JIT'd interpretation",
                         kPoolSize);
         }
     }
@@ -605,28 +614,28 @@ PFN_SrtWalker RegisterWalkerCode(const u8* ptr, size_t size) {
 
     std::unique_ptr<SrtCodeMapping> mapping;
 #if defined(__APPLE__) && TARGET_OS_IPHONE
-    // Pool first (one StikDebug interaction for the whole session, made as early as the first
-    // shader needing a walker -- see IosSrtCodePool's own comment for why); only fall back to
-    // a standalone per-walker request if the pool never initialized or is actually exhausted.
-    // Either way, rw_addr and rx_addr back the same physical pages, so writing through the
-    // former is immediately visible when later executed through the latter; both aliases
-    // still need their own cache maintenance (icache is fetched from rx_addr, dcache was
-    // dirtied at rw_addr -- one alias's invalidate does not cover the other's).
+    // Pool only -- deliberately no fallback to a standalone per-walker Core::DualMappedRegion::
+    // Allocate() here anymore. That fallback used to exist, but it's exactly the unsafe pattern
+    // this whole pool was introduced to get away from (see IosSrtCodePool's own comment): unlike
+    // veneers, which are capped at a *provable* ceiling (see kVeneerBatchSize's own comment,
+    // hle_call_adapter.cpp -- 5340 total HLE functions exist in this whole codebase, period),
+    // shader/walker count has no such bound -- it's determined entirely by the game's own
+    // assets, unknowable in advance. A standalone Allocate() call here is a *second* (or
+    // later) StikDebug interaction happening at some arbitrary, unpredictable point deep into a
+    // session, exactly the situation documented as unreliable and confirmed on-device to
+    // eventually crash for real (a SIGSEGV inside BreakpointJIT.framework itself, not reachable
+    // from shadPS4's own source) -- once that state is possible, retrying via a fresh
+    // allocation is not a safe recovery, it is just another roll of the same die. Failing this
+    // one walker and letting the caller fall back to (slower) non-JIT'd interpretation, the same
+    // way an incompatible cached walker already does just above, is strictly safer than risking
+    // the whole process for it.
     auto [rw_addr, rx_addr] = IosSrtCodePool::Instance().TryAllocate(size);
     if (rw_addr == nullptr) {
-        mapping = std::make_unique<SrtCodeMapping>();
-        // Allocation, not "grant an address I already own" -- see ios_jit_allocator.h's top
-        // comment for why that second branch is a known-bad path this codebase avoids
-        // everywhere.
-        mapping->region = Core::DualMappedRegion::Allocate(size);
-        if (!mapping->region.IsValid()) {
-            LOG_CRITICAL(Render_Recompiler,
-                        "Unable to allocate ARM64 SRT walker (iOS dual-mapped JIT, pool "
-                        "exhausted or never initialized)");
-            std::abort();
-        }
-        rw_addr = mapping->region.rw_addr;
-        rx_addr = mapping->region.rx_addr;
+        LOG_WARNING(Render_Recompiler,
+                    "ARM64 SRT walker pool exhausted (or never initialized); this shader falls "
+                    "back to non-JIT'd interpretation instead of risking a new, StikDebug-"
+                    "mediated JIT allocation this late in the session");
+        return nullptr;
     }
     std::memcpy(rw_addr, ptr, size);
     __builtin___clear_cache(reinterpret_cast<char*>(rw_addr),

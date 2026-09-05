@@ -65,7 +65,25 @@ HleVeneerResult HleVeneerAllocator::Allocate(const HleCallAdapter& adapter) {
 #if defined(__APPLE__) && TARGET_OS_IPHONE
     // See VeneerBatch's own doc comment (hle_call_adapter.h) for why this batches into a
     // shared dual-mapped region instead of one mmap+mprotect page per veneer.
-    constexpr std::size_t kVeneerBatchSize = 16 * 1024;
+    //
+    // 128KB / 16 bytes = 8192 veneer slots. Not just "generous" -- an actual, provable ceiling:
+    // grep -c LIB_FUNCTION\\( across src/core/libraries/ counts exactly 5340 registered HLE
+    // functions in this entire codebase (checked when this was sized), and a veneer is only
+    // ever created for one of those, once, cached by operation number (see the `veneers.find`
+    // check above) -- so no game, however large, can ever need more than 5340 of them, which
+    // this capacity already exceeds. That matters more than it sounds: DualMappedRegion::
+    // Allocate() goes through StikDebug's BreakGetJITMapping, documented (ios_jit_allocator.h)
+    // as unreliable "on a session's 3rd+ such request" and confirmed on-device to eventually
+    // crash for real partway through a long GTA V session (a SIGSEGV inside
+    // BreakpointJIT.framework itself, dereferencing what looks like raw GDB-remote protocol
+    // response text as a pointer -- not reachable from shadPS4's own source, so not something
+    // fixable here directly, and once StikDebug is in that state a *retry* is not a safe
+    // recovery, just another chance at the same crash). A second veneer batch was the previous
+    // failure mode (GTA V's scope plausibly exceeding the old 1024-slot batch over a long
+    // session) -- this size doesn't reduce that risk, it eliminates the second-batch code path
+    // from ever executing at all, for any game. 128KB costs nothing meaningful against the
+    // multi-MB JIT code buffers already in use.
+    constexpr std::size_t kVeneerBatchSize = 128 * 1024;
     if (batches.empty() || batches.back().used + veneer_size > batches.back().region.size) {
         auto region = Core::DualMappedRegion::Allocate(kVeneerBatchSize);
         if (!region.IsValid()) {
