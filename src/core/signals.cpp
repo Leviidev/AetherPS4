@@ -19,6 +19,7 @@
 #endif
 #include "emulator.h"
 
+#include <atomic>
 #include <cstdio>
 #include <string_view>
 #include <unistd.h>
@@ -887,39 +888,63 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                     "FEX SIGTRAP raw instruction word at fault pc={:#x}: {:#010x} "
                     "is_brk_encoding={} brk_imm16={:#x}",
                     reinterpret_cast<uintptr_t>(code_address), trap_word, looks_like_brk, brk_imm16);
-        // A GTA V session hit this fatal path repeatedly at *different* addresses within one
-        // continuous run (0x1a04d2284, 0x104d3a994, 0x1a7efa8fc, 0x1a05111e8) -- a static,
-        // compiler-inserted trap (a failed assertion, stack-protector check, __builtin_trap())
-        // would sit at a fixed offset within one already-loaded library, hence the same absolute
-        // address for the life of one process launch; different addresses within the same launch
-        // instead matches something planting and removing a breakpoint dynamically. Every one of
-        // these decoded as a real BRK (confirmed above), with imm16 of 0 or 1 -- not the
-        // BreakGetJITMapping #0xf00d the dedicated branch above already handles, but StikDebug's
-        // BreakpointJIT.framework is itself an attached-debugger-style mechanism, and this is a
-        // shipped, production build with no legitimate reason for a real developer breakpoint to
-        // exist on a user's device -- any BRK reaching here is far more likely to be one of
-        // StikDebug's own internal breakpoints (planted and normally removed as part of servicing
-        // some other request) left armed after it went unresponsive, the same underlying failure
-        // mode as the #0xf00d case, just via a different mechanism. Recovering the same way --
-        // skip the single 4-byte instruction and resume -- turns a guaranteed app-ending crash
-        // into, at worst, whatever StikDebug's own now-skipped instrumentation would have done,
-        // which is strictly better than killing the whole process. Only a SIGTRAP that doesn't
-        // even decode as BRK at all (genuinely unexplained) still falls through to the fatal path.
-        if (looks_like_brk) {
+        // An earlier GTA V session hit this fatal path at four *different* addresses within one
+        // continuous run, each occurring once -- consistent with something planting and removing
+        // a StikDebug-internal breakpoint dynamically, so the recovery below (skip the 4-byte
+        // BRK, resume) was added for that case: this is a shipped, production build, and
+        // StikDebug's BreakpointJIT.framework is the only legitimate debugger-style attachment,
+        // so there's no scenario where a real, meaningful developer breakpoint should exist here.
+        //
+        // BUT a *later* session with that recovery in place got stuck looping thousands of times
+        // on the exact same address (0x1a7efa8fc, BRK #1), each recovery immediately preceded by
+        // "Assertion failed: (p), function atexit_register, file atexit.c, line 115." on stderr --
+        // this is libc's own assert() macro, which issues a BRK as part of calling abort(). abort()
+        // is intentionally unrecoverable: skipping past its trap doesn't fix whatever made the
+        // assertion fail, it just re-enters the same broken code path immediately, which is
+        // exactly the busy-loop this produced instead of the clean crash abort() is supposed to
+        // give. The address-varies-each-time StikDebug case and the address-repeats-forever
+        // abort() case are distinguishable from right here: track the last recovered address and
+        // how many consecutive times it's repeated, and stop recovering (fall through to the
+        // fatal path, same as before this whole mechanism existed) once that count gets
+        // unreasonable -- a StikDebug breakpoint firing the same address several times in a row
+        // isn't expected either, so this costs nothing in that case while actually breaking the
+        // infinite loop in this one.
+        static std::atomic<uintptr_t> last_recovered_brk_address {0};
+        static std::atomic<int> last_recovered_brk_consecutive_count {0};
+        constexpr int kMaxConsecutiveRecoveries = 8;
+        const auto this_address = reinterpret_cast<uintptr_t>(code_address);
+        int consecutive_count = 1;
+        if (last_recovered_brk_address.load(std::memory_order_relaxed) == this_address) {
+            consecutive_count = last_recovered_brk_consecutive_count.fetch_add(1, std::memory_order_relaxed) + 1;
+        } else {
+            last_recovered_brk_address.store(this_address, std::memory_order_relaxed);
+            last_recovered_brk_consecutive_count.store(1, std::memory_order_relaxed);
+        }
+        if (looks_like_brk && consecutive_count <= kMaxConsecutiveRecoveries) {
             LOG_CRITICAL(Debug,
                         "BACHATA_UNKNOWN_BRK_RECOVERED: BRK #{:#x} at {:#x} was not the "
-                        "JIT-mapping protocol's #0xf00d -- likely a StikDebug-internal breakpoint "
-                        "left armed after it went unresponsive; skipping it instead of crashing",
-                        brk_imm16, reinterpret_cast<uintptr_t>(code_address));
+                        "JIT-mapping protocol's #0xf00d (consecutive repeat #{}) -- likely a "
+                        "StikDebug-internal breakpoint left armed after it went unresponsive; "
+                        "skipping it instead of crashing",
+                        brk_imm16, this_address, consecutive_count);
             auto* apple_context = reinterpret_cast<ucontext_t*>(raw_context);
             auto& ts = apple_context->uc_mcontext->__ss;
             const auto pc = static_cast<uintptr_t>(arm_thread_state64_get_pc(ts));
             arm_thread_state64_set_pc_fptr(ts, reinterpret_cast<void*>(pc + 4));
             return;
         }
+        if (looks_like_brk) {
+            LOG_CRITICAL(Debug,
+                        "BACHATA_BRK_RECOVERY_ABANDONED: BRK #{:#x} at {:#x} has now repeated {} "
+                        "times in a row -- this looks like a genuine, unrecoverable trap (e.g. an "
+                        "assert()/abort() failure logged just above on stderr), not a one-off "
+                        "StikDebug breakpoint; letting it be fatal instead of looping forever",
+                        brk_imm16, this_address, consecutive_count);
+        }
         Common::ReportCrash(raw_context, sig, info);
         UNREACHABLE_MSG("Unhandled SIGTRAP at code address {} (not a JIT-mapping request, and not "
-                        "a BRK instruction at all)",
+                        "a BRK instruction at all, or a BRK that repeated too many times to keep "
+                        "recovering from)",
                         fmt::ptr(code_address));
     }
 #endif
