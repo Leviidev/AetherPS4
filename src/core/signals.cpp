@@ -869,6 +869,26 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
             arm_thread_state64_set_pc_fptr(ts, reinterpret_cast<void*>(pc + 4));
             return;
         }
+        // Diagnostic only: a GTA V session hit this fatal path repeatedly, on multiple unrelated
+        // threads (RenderThread mid-qsort-callback, shadPS4:Main, Hang Detect Thread), all with
+        // no preceding "ios_jit_allocator: requesting fresh execute-capable region" log line at
+        // all -- meaning this specific SIGTRAP is NOT the BreakGetJITMapping BRK #0xf00d the
+        // recovery path above targets (already confirmed thread-safe, see
+        // g_expecting_jit_mapping_trap_count's own comment), it's something else entirely.
+        // Dumping the actual trapping instruction's encoding here, rather than just the address,
+        // settles what: BRK's own encoding is 0xD4200000 | (imm16 << 5), so a different imm16
+        // than 0xf00d (or a word that doesn't even decode as BRK at all) narrows this down
+        // immediately, without waiting on a full separate investigation cycle.
+        {
+            const auto* trap_word_ptr = reinterpret_cast<const volatile uint32_t*>(code_address);
+            const uint32_t trap_word = *trap_word_ptr;
+            const bool looks_like_brk = (trap_word & 0xFFE0001F) == 0xD4200000;
+            const uint32_t brk_imm16 = (trap_word >> 5) & 0xFFFF;
+            LOG_CRITICAL(Debug,
+                        "FEX SIGTRAP raw instruction word at fault pc={:#x}: {:#010x} "
+                        "is_brk_encoding={} brk_imm16={:#x}",
+                        reinterpret_cast<uintptr_t>(code_address), trap_word, looks_like_brk, brk_imm16);
+        }
         Common::ReportCrash(raw_context, sig, info);
         UNREACHABLE_MSG("Unhandled SIGTRAP at code address {} (not a JIT-mapping request)",
                         fmt::ptr(code_address));
