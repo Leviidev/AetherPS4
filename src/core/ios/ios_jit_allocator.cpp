@@ -101,12 +101,25 @@ namespace Core {
 // StikDebug failed to intercept" (recoverable: simulate get_jit_mapping() returning nullptr,
 // the same failure DualMappedRegion::Allocate() already handles below) from any other SIGTRAP
 // (a real debugger breakpoint, which must not be silently swallowed).
-thread_local bool g_expecting_jit_mapping_trap = false;
+//
+// A GTA V session hit exactly this fatal path with the crashing thread's own name logged as
+// empty ("()") -- not any named guest thread, and not Game:Main, which is what actually called
+// Allocate() here. This was thread_local, so it protected only the calling thread; the BRK
+// itself, serviced by StikDebug's own BreakpointJIT.framework, evidently executes on an
+// internal thread of its own rather than synchronously on the caller (which pthread_kill/BRK's
+// normal same-thread-delivery semantics would otherwise guarantee), so that thread's own copy
+// of a thread_local flag was never set to true at all -- guaranteeing this crash every time the
+// BRK went unserviced, not just occasionally. A plain (non-thread-local) global bool would fix
+// the cross-thread case but reintroduces a different race for overlapping concurrent calls to
+// Allocate() (one call's guard destructing and clearing the flag while another's request, on a
+// different thread, is still in flight and could still trap): reference-counted instead, so
+// "expecting a trap" stays true for as long as *any* request is outstanding, however many.
+std::atomic<int> g_expecting_jit_mapping_trap_count {0};
 
 class IosJitTrapGuard final {
 public:
-  IosJitTrapGuard() { g_expecting_jit_mapping_trap = true; }
-  ~IosJitTrapGuard() { g_expecting_jit_mapping_trap = false; }
+  IosJitTrapGuard() { g_expecting_jit_mapping_trap_count.fetch_add(1, std::memory_order_acq_rel); }
+  ~IosJitTrapGuard() { g_expecting_jit_mapping_trap_count.fetch_sub(1, std::memory_order_acq_rel); }
   IosJitTrapGuard(const IosJitTrapGuard&) = delete;
   IosJitTrapGuard& operator=(const IosJitTrapGuard&) = delete;
 };
@@ -272,7 +285,7 @@ void Detach() noexcept {
 }
 
 bool IsExpectingJitMappingTrap() noexcept {
-    return g_expecting_jit_mapping_trap;
+    return g_expecting_jit_mapping_trap_count.load(std::memory_order_acquire) > 0;
 }
 
 } // namespace IosJitAllocator
