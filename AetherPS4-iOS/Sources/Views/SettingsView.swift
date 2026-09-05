@@ -42,6 +42,9 @@ struct SettingsView: View {
             }
 
             Section {
+                settingsRow(title: "Storage", systemImage: "externaldrive.fill", tint: .teal) {
+                    SettingsStorageView()
+                }
                 settingsRow(title: "System Modules", systemImage: "shippingbox.fill", tint: .brown) {
                     SettingsSystemModulesView()
                 }

@@ -87,6 +87,8 @@
 		E3068F2CD9416795C58554C8 /* PlayTimeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7A51F3B4E6E9C88A1612510 /* PlayTimeStore.swift */; };
 		5395F3062D9B5F1E4214B942 /* GameStatusStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 668694E2C2175749F5B43919 /* GameStatusStore.swift */; };
 		3298D93791D1B652ACE2538F /* GameStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A56855FFF5DA2D48453D01 /* GameStatusView.swift */; };
+		11F3B1886E9A4288A59CEDB9 /* ExternalStorageStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0AAC120490E4B00BED4BF25 /* ExternalStorageStore.swift */; };
+		67AD0632E7954EDFA5CB6E30 /* SettingsStorageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 397DABCF71CD407AA493F9FE /* SettingsStorageView.swift */; };
 		E8C8CE4D06814F368D012E59 /* SettingsDisplayPerformanceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8EFF39CF7CA4D10BE8E67A5 /* SettingsDisplayPerformanceView.swift */; };
 		243BACAF6CF540D7B38C67DF /* SettingsConsoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D39F172BED2459F8AD9A3F6 /* SettingsConsoleView.swift */; };
 		5E2D1DC848AF414E829424DD /* SettingsNetworkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C58981E6D4564F7A8A43E1F5 /* SettingsNetworkView.swift */; };
@@ -201,6 +203,8 @@
 		E7A51F3B4E6E9C88A1612510 /* PlayTimeStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PlayTimeStore.swift; path = Models/PlayTimeStore.swift; sourceTree = "<group>"; };
 		668694E2C2175749F5B43919 /* GameStatusStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GameStatusStore.swift; path = Models/GameStatusStore.swift; sourceTree = "<group>"; };
 		51A56855FFF5DA2D48453D01 /* GameStatusView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GameStatusView.swift; path = Views/GameStatusView.swift; sourceTree = "<group>"; };
+		A0AAC120490E4B00BED4BF25 /* ExternalStorageStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExternalStorageStore.swift; path = Models/ExternalStorageStore.swift; sourceTree = "<group>"; };
+		397DABCF71CD407AA493F9FE /* SettingsStorageView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsStorageView.swift; path = Views/SettingsStorageView.swift; sourceTree = "<group>"; };
 		F8EFF39CF7CA4D10BE8E67A5 /* SettingsDisplayPerformanceView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsDisplayPerformanceView.swift; path = Views/SettingsDisplayPerformanceView.swift; sourceTree = "<group>"; };
 		7D39F172BED2459F8AD9A3F6 /* SettingsConsoleView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsConsoleView.swift; path = Views/SettingsConsoleView.swift; sourceTree = "<group>"; };
 		C58981E6D4564F7A8A43E1F5 /* SettingsNetworkView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsNetworkView.swift; path = Views/SettingsNetworkView.swift; sourceTree = "<group>"; };
@@ -319,6 +323,8 @@
 				136453DD4F3749B98EBF0BA6 /* GameDetailView.swift */,
 				50804515E4537DA4766EAC99 /* GameCardView.swift */,
 				51A56855FFF5DA2D48453D01 /* GameStatusView.swift */,
+				A0AAC120490E4B00BED4BF25 /* ExternalStorageStore.swift */,
+				397DABCF71CD407AA493F9FE /* SettingsStorageView.swift */,
 				F8EFF39CF7CA4D10BE8E67A5 /* SettingsDisplayPerformanceView.swift */,
 				7D39F172BED2459F8AD9A3F6 /* SettingsConsoleView.swift */,
 				C58981E6D4564F7A8A43E1F5 /* SettingsNetworkView.swift */,
@@ -539,6 +545,8 @@
 				E3068F2CD9416795C58554C8 /* PlayTimeStore.swift in Sources */,
 				5395F3062D9B5F1E4214B942 /* GameStatusStore.swift in Sources */,
 				3298D93791D1B652ACE2538F /* GameStatusView.swift in Sources */,
+				11F3B1886E9A4288A59CEDB9 /* ExternalStorageStore.swift in Sources */,
+				67AD0632E7954EDFA5CB6E30 /* SettingsStorageView.swift in Sources */,
 				E8C8CE4D06814F368D012E59 /* SettingsDisplayPerformanceView.swift in Sources */,
 				243BACAF6CF540D7B38C67DF /* SettingsConsoleView.swift in Sources */,
 				5E2D1DC848AF414E829424DD /* SettingsNetworkView.swift in Sources */,

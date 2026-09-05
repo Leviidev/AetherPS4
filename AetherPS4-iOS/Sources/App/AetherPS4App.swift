@@ -66,13 +66,28 @@ struct AetherPS4App: App {
 
     init() {
         CrashLogger.shared.setup()
+        // Forces ExternalStorageStore's lazy `shared` singleton to init now (resolving any
+        // saved bookmark) rather than whenever a view first happens to touch it -- games can
+        // be launched (EmulatorProcess.launch, reading Game.pkgURL) before Settings' own
+        // storage screen is ever opened this session, and that needs external access already
+        // granted by then, not granted-on-first-use.
+        _ = ExternalStorageStore.shared
     }
+
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environment(library)
                 .environment(emulator)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // External drives can be plugged/unplugged while the app is backgrounded -- catches
+            // that instead of only re-checking when the user happens to open Settings > Storage.
+            if phase == .active {
+                ExternalStorageStore.shared.refresh()
+            }
         }
     }
 }

@@ -49,25 +49,29 @@ final class GameLibrary {
     /// Adds a `.pkg` reference to the library. Returns the new game, or nil if
     /// this exact path is already present (no duplicate entries).
     @discardableResult
-    func addGame(pkgPath: String) -> Game? {
+    func addGame(pkgPath: String, storageLocation: GameStorageLocation? = nil) -> Game? {
         guard !games.contains(where: { $0.pkgPath == pkgPath }) else { return nil }
         let initialName = displayName(forPkgPath: pkgPath)
-        var game = Game(name: initialName, pkgPath: pkgPath)
+        var game = Game(name: initialName, pkgPath: pkgPath, storageLocation: storageLocation)
         game = resolveMetadata(for: game)
         games.append(game)
         save()
         return game
     }
 
-    /// Decrypts and extracts a user-picked, raw `.pkg` file into a plain game
-    /// directory (eboot.bin + sce_sys/) under this app's own Application
-    /// Support/AetherPS4/games directory, then adds it to the library.
-    /// shadps4_run() can only open an already-extracted eboot.bin -- it has
-    /// no PKG-decryption code of its own (see bachata_pkg_extract, ported
-    /// from tools/pkg-extract/, which does the actual PFS/RSA/AES work).
-    /// Extraction runs on a background thread since a real PS4 package can
-    /// be several GB; only the C calls themselves are off the main actor,
-    /// everything touching `games`/`isImporting` still happens on it.
+    /// Decrypts and extracts a user-picked, raw `.pkg` file into a plain game directory
+    /// (eboot.bin + sce_sys/) under either this app's own Application Support/AetherPS4/games
+    /// directory, or -- if an external drive is configured and currently reachable (see
+    /// ExternalStorageStore) -- that drive's AetherPS4Games directory instead, then adds it
+    /// to the library. A PS4 game's *installed* footprint (after PFS decompression) commonly
+    /// runs several times its package size, easily 80GB+ for a modern title, which is why
+    /// this exists at all: plenty of devices don't have that much free internal storage.
+    /// shadps4_run() can only open an already-extracted eboot.bin -- it has no
+    /// PKG-decryption code of its own (see bachata_pkg_extract, ported from
+    /// tools/pkg-extract/, which does the actual PFS/RSA/AES work). Extraction runs on a
+    /// background thread since a real PS4 package can be several GB; only the C calls
+    /// themselves are off the main actor, everything touching `games`/`isImporting` still
+    /// happens on it.
     @discardableResult
     func importPkg(from sourceURL: URL) async -> Game? {
         lastImportError = nil
@@ -77,8 +81,15 @@ final class GameLibrary {
         let didStartAccess = sourceURL.startAccessingSecurityScopedResource()
         defer { if didStartAccess { sourceURL.stopAccessingSecurityScopedResource() } }
 
+        // External storage's own security-scoped access is already held open for the whole
+        // app session by ExternalStorageStore itself (see its own comment on why) -- this
+        // just decides which root to extract into, on the main actor since ExternalStorageStore
+        // is @MainActor.
+        let useExternal = ExternalStorageStore.shared.gamesRootURL != nil
+        let externalRoot = ExternalStorageStore.shared.gamesRootURL
         let appSupportURL = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let destinationRoot = useExternal ? externalRoot! : appSupportURL
         let sourcePath = sourceURL.path
 
         let result = await Task.detached(priority: .userInitiated) { () -> Result<String, PkgImportError> in
@@ -98,8 +109,9 @@ final class GameLibrary {
                 return .failure(PkgImportError(message: "Could not read the package's content ID."))
             }
 
-            let relativeGameDir = "AetherPS4/games/\(contentId)"
-            let gameDir = appSupportURL.appendingPathComponent(relativeGameDir)
+            let relativeGameDir = useExternal ? "\(contentId)" : "AetherPS4/games/\(contentId)"
+            let gameDir = destinationRoot.appendingPathComponent(relativeGameDir)
+            try? FileManager.default.createDirectory(at: destinationRoot, withIntermediateDirectories: true)
             try? FileManager.default.removeItem(at: gameDir)
 
             let extractStatus = bachata_pkg_extract(fd, gameDir.path, nil, nil, nil)
@@ -115,7 +127,7 @@ final class GameLibrary {
 
         switch result {
         case .success(let relativeEbootPath):
-            return addGame(pkgPath: relativeEbootPath)
+            return addGame(pkgPath: relativeEbootPath, storageLocation: useExternal ? .external : nil)
         case .failure(let error):
             lastImportError = error.message
             return nil
