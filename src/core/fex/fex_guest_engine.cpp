@@ -2520,9 +2520,16 @@ std::string GuestEngine::DumpThreadNamesForDiagnostics(void* raw_impl) {
   return result;
 }
 
+// Reopens the same anonymous namespace HleStallWatchdogThread and this function's own forward
+// declaration live in (further up this file, before Impl's definition) -- anonymous namespace
+// blocks share identical internal linkage across the whole translation unit, so this still
+// defines the exact same symbol the watchdog calls, it just has to live down here since it
+// needs GuestEngine::DumpThreadNamesForDiagnostics, declared only after GuestEngine itself.
+namespace {
 std::string DumpGuestThreadNamesForDiagnostics() {
   return GuestEngine::DumpThreadNamesForDiagnostics(g_guest_engine_impl_for_diagnostics.load(std::memory_order_acquire));
 }
+} // namespace
 
 GuestEngine::GuestEngine(std::unique_ptr<Impl> impl)
   : ImplState {std::move(impl)} {}
