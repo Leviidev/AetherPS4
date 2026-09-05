@@ -14,6 +14,7 @@
 
 #ifdef __APPLE__
 #include <TargetConditionals.h>
+#include <mach-o/dyld.h>
 #endif
 
 #include <SDL3/SDL_events.h>
@@ -340,6 +341,15 @@ void Emulator::PrepareWindow(std::filesystem::path file, std::vector<std::string
     LOG_INFO(Loader, "Branch {}", Common::g_scm_branch);
     LOG_INFO(Loader, "Description {}", Common::g_scm_desc);
     LOG_INFO(Loader, "Remote {}", Common::g_scm_remote_url);
+#ifdef __APPLE__
+    // signals.cpp's native ARM64 call-stack dumps (the [fp]/[fp+8] walk on a host-side crash)
+    // are raw runtime addresses, not offsets into this build's own binary -- ASLR gives each
+    // launch its own slide, so symbolicating those addresses offline (atos -l <slide> ...)
+    // needs this logged somewhere. Slide is for image 0, the main executable, which is what
+    // every one of shadPS4/FEXCore's own native (non-JIT, non-veneer) code lives in.
+    LOG_INFO(Loader, "Main executable ASLR slide {:#x}",
+             static_cast<uintptr_t>(_dyld_get_image_vmaddr_slide(0)));
+#endif
 
     LOG_INFO(Config, "Game-specific config used: {}",
              EmulatorState::GetInstance()->IsGameSpecifigConfigUsed());
