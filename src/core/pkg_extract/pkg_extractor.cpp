@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -659,10 +660,25 @@ bool extract_file(int fd, ExtractState& st, const pfs_fs_table& table, std::stri
         err = "Path escapes extract root";
         return false;
     }
-    fs::create_directories(out_path.parent_path());
+    std::error_code mkdir_ec;
+    fs::create_directories(out_path.parent_path(), mkdir_ec);
+    errno = 0;
     std::ofstream out(out_path, std::ios::binary);
     if (!out) {
-        err = "Cannot open output file";
+        // "Cannot open output file" alone was undiagnosable -- every failure mode (path too
+        // long for APFS, a component that collides with an existing non-directory entry, a
+        // directory that create_directories silently couldn't make, disk full, permissions)
+        // produced the exact same three words with no way to tell them apart from the log.
+        // path.string().size() specifically because Rocket League's Unreal-cooked asset tree
+        // nests deep enough that the full path (this app's already-long sandboxed container
+        // path *plus* the PFS's own internal structure) can plausibly approach APFS/Darwin's
+        // real limits even though no individual path *component* is unusual.
+        const int open_errno = errno;
+        err = "Cannot open output file: " + out_path.string() +
+              " (errno=" + std::to_string(open_errno) + " " + std::strerror(open_errno) +
+              ", path_len=" + std::to_string(out_path.string().size()) +
+              ", mkdir_parent_ec=" + std::to_string(mkdir_ec.value()) + " " + mkdir_ec.message() +
+              ")";
         return false;
     }
 
