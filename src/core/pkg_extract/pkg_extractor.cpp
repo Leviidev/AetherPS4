@@ -606,7 +606,20 @@ bool build_fs_table(int fd, ExtractState& st, std::string& err) {
                 if (table.type == PFS_FILE || table.type == PFS_DIR) {
                     if (table.type == PFS_DIR) {
                         const auto& p = st.extractPaths[static_cast<int>(table.inode)];
-                        if (safe_under(st.extract_root, p)) fs::create_directories(p);
+                        // Non-throwing overload deliberately, error ignored here: this is a
+                        // defensive pre-create as directories are discovered while walking the
+                        // fs table, called for every PFS_DIR entry (thousands of times for a
+                        // real game) -- extract_file() below creates the same parent directory
+                        // again right before actually writing each file, and *that* call is
+                        // where a real failure (e.g. a read-only destination) gets properly
+                        // reported through the normal err-string path instead of silently
+                        // swallowed or, with the throwing overload this used to call, taking
+                        // the whole app down with an uncaught exception from deep inside this
+                        // fs-table walk.
+                        if (safe_under(st.extract_root, p)) {
+                            std::error_code mkdir_ec;
+                            fs::create_directories(p, mkdir_ec);
+                        }
                     }
                     st.fsTable.push_back(table);
                     listed_entries++;
@@ -765,7 +778,14 @@ bool extract_file(int fd, ExtractState& st, const pfs_fs_table& table, std::stri
 bool extract_sce_sys_entries(int fd, ExtractState& st, std::string& err) {
     const u32 offset = st.hdr.pkg_table_entry_offset;
     const u32 n_files = st.hdr.pkg_table_entry_count;
-    fs::create_directories(st.extract_root / "sce_sys");
+    {
+        std::error_code mkdir_ec;
+        fs::create_directories(st.extract_root / "sce_sys", mkdir_ec);
+        if (mkdir_ec) {
+            err = "Cannot create sce_sys directory: " + mkdir_ec.message();
+            return false;
+        }
+    }
     for (u32 i = 0; i < n_files; ++i) {
         PKGEntry entry{};
         if (!pread_all(fd, &entry, sizeof(entry), static_cast<off_t>(offset) + i * 32)) {
@@ -874,7 +894,22 @@ int bachata_pkg_extract(int fd, const char* out_path, const char* passcode_or_nu
     st.content_id = cid;
     if (std::strlen(cid) >= 16) st.title_id.assign(cid + 7, 9);
     st.extract_root = fs::path(out_path);
-    fs::create_directories(st.extract_root);
+    {
+        // Reported live: an external drive reached through a File Provider extension (the
+        // "LiveFiles/com.apple.filesystems.userfsd/..." path shape a USB-SSD app presents
+        // through the Files framework) rejected this exact call as a read-only filesystem --
+        // std::filesystem's throwing overload turned that into an *uncaught C++ exception*,
+        // which is not a "this extraction failed" error at all, it's std::terminate() taking
+        // the entire app down. No error here should ever be allowed to do that; the
+        // error_code overload plus a clean early return is the fix, matching how every other
+        // failure in this function already reports through LOGE + a return code instead.
+        std::error_code mkdir_ec;
+        fs::create_directories(st.extract_root, mkdir_ec);
+        if (mkdir_ec) {
+            LOGE("extract: cannot create output directory %s: %s", out_path, mkdir_ec.message().c_str());
+            return 3;
+        }
+    }
 
     std::string err;
     const char* pass = passcode_or_null;
