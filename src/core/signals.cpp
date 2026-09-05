@@ -287,6 +287,24 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
         if (::AetherPS4::Fex::BachataReconstructAccurateGuestRIP(code_address, &accurate_guest_rip)) {
             LOG_CRITICAL(Debug, "FEX accurate guest rip at fault (reconstructed from host pc): {:#x}",
                          accurate_guest_rip);
+            // guest_rip above (from BachataQueryGuestRipSyscall) is only the last JIT/HLE
+            // checkpoint and can be stale by the time of an actual fault (see its own comment
+            // above) -- accurate_guest_rip is the address that actually faulted, so the "which
+            // module" check belongs here too, not only on the potentially-stale value. A GTA V
+            // crash showed these two disagree entirely (guest_rip landed near an HLE veneer,
+            // which Linker legitimately doesn't track, while accurate_guest_rip was a real
+            // address inside eboot.bin) -- checking only guest_rip made a real in-module crash
+            // misleadingly print "not inside any loaded module".
+            if (auto* linker = Common::Singleton<Core::Linker>::Instance()) {
+                if (auto* module = linker->FindByAddress(accurate_guest_rip)) {
+                    LOG_CRITICAL(Debug,
+                                 "FEX accurate guest rip is inside module '{}' (base={:#x}, offset={:#x})",
+                                 module->name, module->GetBaseAddress(),
+                                 accurate_guest_rip - module->GetBaseAddress());
+                } else {
+                    LOG_CRITICAL(Debug, "FEX accurate guest rip is not inside any loaded module");
+                }
+            }
             if (auto* memory = Core::Memory::Instance()) {
                 ::Libraries::Kernel::OrbisVirtualQueryInfo rip_vma{};
                 if (memory->VirtualQuery(accurate_guest_rip, 0, &rip_vma) == 0) {

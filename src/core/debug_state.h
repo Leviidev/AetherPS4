@@ -179,6 +179,15 @@ public:
 
     void RemoveCurrentThreadFromGuestList();
 
+    // Diagnostic only: snapshots every currently-registered guest thread's id and name (best
+    // effort -- a thread that crashed without going through RemoveCurrentThreadFromGuestList can
+    // still be listed here, which is useful for exactly that case: telling apart "this thread was
+    // never running" from "this thread was still alive/registered when the stall fired"). Used by
+    // the GTA V stall investigation (fex_guest_engine.cpp's HleStallWatchdogThread) to see which
+    // other guest threads were still around at the moment Game:Main's HLE call got stuck, since
+    // that watchdog's own per-thread tracking only ever covers Game:Main and RenderingThread.
+    std::string DumpGuestThreadsForDiagnostics();
+
     void PauseGuestThreads();
 
     void ResumeGuestThreads();

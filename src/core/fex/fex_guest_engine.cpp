@@ -193,6 +193,15 @@ std::atomic<uint64_t> g_reuse_generation {0};
 // operation has been in flight unreasonably long. Deliberately NOT signal-based (unlike the
 // safepoint mechanism above) -- this only ever reads plain atomics from its own thread, so it
 // can't perturb the JIT/threading correctness work that's already gone into this file.
+// Raw Impl* (type not yet visible at this point in the file -- see its declaration further
+// down), set once the same place OnBufferReusedInPlace/BeginBufferInvalidationSafepoint are
+// wired up, since that's the one place a live GuestEngine::Impl (and its Threads/ThreadsMutex)
+// is available. DumpGuestThreadNamesForDiagnostics (defined after Impl's declaration) is the
+// only thing that casts this back; kept as void* here purely to let the watchdog above call it
+// without needing Impl's full definition visible this early in the file.
+std::atomic<void*> g_guest_engine_impl_for_diagnostics {nullptr};
+std::string DumpGuestThreadNamesForDiagnostics();
+
 std::atomic<uint64_t> g_last_hle_operation {0};
 std::atomic<int64_t> g_last_hle_operation_start_ms {0};
 std::atomic<int64_t> g_last_hle_operation_logged_start_ms {-1};
@@ -243,6 +252,17 @@ void HleStallWatchdogThread() {
                         "without returning -- cross-reference against this log's own "
                         "BACHATA_FEX_VENEER lines for this operation number to find its name",
                         who, op_slot.load(std::memory_order_acquire), elapsed_ms);
+      // GTA V investigation: this watchdog's own per-thread tracking only ever covers Game:Main
+      // and RenderingThread (see g_last_hle_operation_rt's comment -- deliberately not
+      // per-thread for every worker). A GTA V session showed this exact stall on Game:Main
+      // immediately followed by SIGSEGVs on two *other* RAGE-engine threads ([RAGE] RenderThread,
+      // [RAGE] Hang Detect Thread) that this watchdog has no visibility into at all. Dumping
+      // every currently-registered guest thread's name right here, at the moment the stall is
+      // first detected, settles whether those other threads were still alive/running at that
+      // point (consistent with the stall being the root cause and the crashes a downstream
+      // symptom, e.g. of a stuck safepoint) or had already died earlier (meaning they're an
+      // unrelated, independent problem).
+      LogMan::Msg::EFmt("BACHATA_HLE_STALL_THREADS: {}", DumpGuestThreadNamesForDiagnostics());
     }
   }
 }
@@ -2470,6 +2490,40 @@ public:
   std::unordered_set<Thread*> Threads;
 };
 
+// Defined out-of-line as a member of GuestEngine (declared in the header) rather than a plain
+// free function: Impl is a private nested class, invisible outside GuestEngine's own members,
+// so this needs to actually be one of those members to reach Threads/ThreadsMutex/Thread's
+// fields at all. See g_guest_engine_impl_for_diagnostics' own comment (further up this file)
+// for why the caller only ever has a raw void* to pass in, not a live GuestEngine&.
+std::string GuestEngine::DumpThreadNamesForDiagnostics(void* raw_impl) {
+  auto* impl = static_cast<Impl*>(raw_impl);
+  if (impl == nullptr) {
+    return "<engine not initialized yet>";
+  }
+  std::scoped_lock lock {impl->ThreadsMutex};
+  if (impl->Threads.empty()) {
+    return "<no guest threads registered>";
+  }
+  std::string result;
+  for (auto* t : impl->Threads) {
+    const pthread_t handle = t->NativeHandle.load(std::memory_order_acquire);
+    char name[64] = {};
+    if (handle != pthread_t {}) {
+      pthread_getname_np(handle, name, sizeof(name));
+    }
+    result += "native=";
+    result += std::to_string(reinterpret_cast<uintptr_t>(t->Native));
+    result += " name=";
+    result += (name[0] != '\0' ? name : "<unnamed/no-handle>");
+    result += "; ";
+  }
+  return result;
+}
+
+std::string DumpGuestThreadNamesForDiagnostics() {
+  return GuestEngine::DumpThreadNamesForDiagnostics(g_guest_engine_impl_for_diagnostics.load(std::memory_order_acquire));
+}
+
 GuestEngine::GuestEngine(std::unique_ptr<Impl> impl)
   : ImplState {std::move(impl)} {}
 
@@ -2589,6 +2643,7 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
   // This is the one place that list (Threads, below) actually exists, so wire it in here.
   {
     auto* rawImpl = impl.get();
+    g_guest_engine_impl_for_diagnostics.store(rawImpl, std::memory_order_release);
     static_cast<FEXCore::Context::ContextImpl*>(impl->Context.get())->OnBufferReusedInPlace =
         [rawImpl](FEXCore::Core::InternalThreadState* CallingThread,
                   const FEXCore::LookupCacheWriteLockToken& lk) {

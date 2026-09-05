@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <variant>
 
 #ifndef _WIN32
@@ -196,6 +197,14 @@ public:
   std::uintptr_t ReturnAddress() const;
   Core::GuestExecutionRange ReturnRange() const;
   Core::GuestExecutionRange CallbackReturnRange() const;
+
+  // Diagnostic only (GTA V stall investigation): lists every currently-registered guest
+  // thread's native handle and name. raw_impl must be an Impl* obtained by a prior GuestEngine
+  // instance storing itself via g_guest_engine_impl_for_diagnostics (fex_guest_engine.cpp) --
+  // exposed as a public static taking a type-erased pointer, rather than an instance method,
+  // because the only caller (HleStallWatchdogThread) is a detached background thread with no
+  // GuestEngine& of its own, only that raw pointer.
+  static std::string DumpThreadNamesForDiagnostics(void* raw_impl);
 
 private:
   class Impl;

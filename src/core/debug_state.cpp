@@ -60,6 +60,22 @@ void DebugStateImpl::RemoveCurrentThreadFromGuestList() {
     std::erase_if(guest_threads, [&](const ThreadID& v) { return v == id; });
 }
 
+std::string DebugStateImpl::DumpGuestThreadsForDiagnostics() {
+    std::lock_guard lock{guest_threads_mutex};
+    std::string result;
+    for (const auto& id : guest_threads) {
+#ifdef _WIN32
+        result += "tid=" + std::to_string(id) + " name=<unavailable on this platform>; ";
+#else
+        char name[64] = {};
+        pthread_getname_np(id, name, sizeof(name));
+        result += "tid=" + std::to_string(reinterpret_cast<uintptr_t>(id)) + " name=" +
+                  (name[0] != '\0' ? name : "<none>") + "; ";
+#endif
+    }
+    return result.empty() ? "<no guest threads registered>" : result;
+}
+
 void DebugStateImpl::PauseGuestThreads() {
     using namespace Libraries::MsgDialog;
     std::unique_lock lock{guest_threads_mutex};
