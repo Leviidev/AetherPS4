@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
+#include <pthread.h>
 #include "common/elf_info.h"
 #include "common/singleton.h"
 #include "core/emulator_settings.h"
@@ -18,6 +21,59 @@ bool g_splash_status{true};
 std::queue<OrbisSystemServiceEvent> g_event_queue;
 std::mutex g_event_queue_mutex;
 s32 g_sdk_version{};
+
+namespace {
+// Diagnostic only, added while tracking down a GTA V stall: sceSystemServiceGetStatus's own
+// body is a handful of field writes behind this exact mutex -- nowhere close to something
+// that should ever take seconds -- so a stall calling it can only mean this lock is held
+// elsewhere for an abnormally long time. std::mutex alone can't answer "who holds me right
+// now", hence tracking it by hand. Deliberately racy on the holder name (no separate lock
+// protecting it): only whichever thread actually holds g_event_queue_mutex ever writes here,
+// so there's at most one writer at a time by construction; a reader checking this from
+// another thread (right before blocking on the same mutex, see TrackedEventQueueLock below)
+// could in principle see a torn read, an acceptable tradeoff for a value that only ever
+// feeds a log line, never real synchronization.
+std::atomic<bool> g_event_queue_mutex_held{false};
+std::atomic<int64_t> g_event_queue_mutex_locked_since_ms{0};
+char g_event_queue_mutex_holder_name[64] = {};
+
+int64_t NowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+// RAII replacement for `std::lock_guard<std::mutex> lock(g_event_queue_mutex);` -- logs
+// immediately (not on some separate poll interval) the moment a caller is about to block on
+// an already-held lock, naming exactly which thread holds it and for how long, then performs
+// the exact same lock_guard-equivalent acquire/release around that.
+class TrackedEventQueueLock {
+public:
+    TrackedEventQueueLock() {
+        if (g_event_queue_mutex_held.load(std::memory_order_acquire)) {
+            const auto locked_since = g_event_queue_mutex_locked_since_ms.load(std::memory_order_relaxed);
+            LOG_CRITICAL(Lib_SystemService,
+                        "BACHATA_EVENT_QUEUE_MUTEX_CONTENDED: about to block -- held by thread "
+                        "'{}' for {}ms so far",
+                        g_event_queue_mutex_holder_name, NowMs() - locked_since);
+        }
+        lock_.lock();
+        pthread_getname_np(pthread_self(), g_event_queue_mutex_holder_name,
+                            sizeof(g_event_queue_mutex_holder_name));
+        g_event_queue_mutex_locked_since_ms.store(NowMs(), std::memory_order_relaxed);
+        g_event_queue_mutex_held.store(true, std::memory_order_release);
+    }
+    ~TrackedEventQueueLock() {
+        g_event_queue_mutex_held.store(false, std::memory_order_release);
+        lock_.unlock();
+    }
+    TrackedEventQueueLock(const TrackedEventQueueLock&) = delete;
+    TrackedEventQueueLock& operator=(const TrackedEventQueueLock&) = delete;
+
+private:
+    std::unique_lock<std::mutex> lock_{g_event_queue_mutex, std::defer_lock};
+};
+} // namespace
 
 bool IsSplashVisible() {
     return EmulatorSettings.IsShowSplash() && g_splash_status;
@@ -1781,7 +1837,7 @@ s32 PS4_SYSV_ABI sceSystemServiceGetStatus(OrbisSystemServiceStatus* status) {
         return ORBIS_SYSTEM_SERVICE_ERROR_PARAMETER;
     }
 
-    std::lock_guard<std::mutex> lock(g_event_queue_mutex);
+    TrackedEventQueueLock lock;
     status->event_num = static_cast<s32>(g_event_queue.size());
     status->is_system_ui_overlaid = false;
     status->is_in_background_execution = false;
@@ -1987,7 +2043,7 @@ s32 PS4_SYSV_ABI sceSystemServiceReceiveEvent(OrbisSystemServiceEvent* event) {
         return ORBIS_SYSTEM_SERVICE_ERROR_PARAMETER;
     }
 
-    std::lock_guard<std::mutex> lock(g_event_queue_mutex);
+    TrackedEventQueueLock lock;
     if (g_event_queue.empty()) {
         return ORBIS_SYSTEM_SERVICE_ERROR_NO_EVENT;
     }
@@ -2463,7 +2519,7 @@ int PS4_SYSV_ABI Func_CB5E885E225F69F0() {
 }
 
 void PushSystemServiceEvent(const OrbisSystemServiceEvent& event) {
-    std::lock_guard<std::mutex> lock(g_event_queue_mutex);
+    TrackedEventQueueLock lock;
     g_event_queue.push(event);
 }
 
