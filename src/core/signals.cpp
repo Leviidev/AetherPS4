@@ -710,6 +710,112 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                 return;
             }
             Common::ReportCrash(raw_context, sig, info);
+#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
+            // First Bloodborne crash investigated on this build: unlike every SIGBUS this file
+            // already has rich diagnostics for (a bad memory *address*), SIGILL means the CPU
+            // refused to execute whatever instruction is actually sitting at code_address --
+            // DisassembleInstruction is a no-op stub on this ARM64 host (Zydis is only wired up
+            // for ARCH_X86_64, see its #ifdef above), so "<unable to decode>" told us nothing.
+            // Mirrors the SIGBUS handler's own diagnostic set below, since the same open
+            // questions apply here: is code_address even inside a live JIT allocation, what
+            // guest x86 code was this block translating, and -- the one most specific to SIGILL
+            // -- do the actual bytes at the fault match what was compiled, or did something
+            // overwrite this address with garbage after the fact (memory corruption) rather
+            // than the JIT genuinely emitting an invalid instruction (a miscompilation).
+            char ill_host_code[640] = {};
+            if (::AetherPS4::Fex::BachataDumpHostCodeWords(code_address, ill_host_code, sizeof(ill_host_code))) {
+                LOG_CRITICAL(Debug, "FEX SIGILL host ARM64 words around fault pc={:#x}: {}",
+                            reinterpret_cast<uintptr_t>(code_address), ill_host_code);
+            }
+            char ill_snapshot_compare[256] = {};
+            if (::AetherPS4::Fex::BachataCompareKnownBlockSnapshot(ill_snapshot_compare, sizeof(ill_snapshot_compare))) {
+                LOG_CRITICAL(Debug, "FEX SIGILL known-block snapshot comparison: {}", ill_snapshot_compare);
+            }
+            char ill_fault_desc[192] = {};
+            if (::AetherPS4::Fex::BachataDescribeHostFaultAddress(code_address, ill_fault_desc, sizeof(ill_fault_desc))) {
+                LOG_CRITICAL(Debug, "FEX SIGILL host fault address classification: {}", ill_fault_desc);
+            }
+            uint64_t ill_accurate_guest_rip = 0;
+            if (::AetherPS4::Fex::BachataReconstructAccurateGuestRIP(code_address, &ill_accurate_guest_rip)) {
+                LOG_CRITICAL(Debug, "FEX SIGILL accurate guest rip at fault (reconstructed from host pc): {:#x}",
+                            ill_accurate_guest_rip);
+                if (auto* linker = Common::Singleton<Core::Linker>::Instance()) {
+                    if (auto* module = linker->FindByAddress(ill_accurate_guest_rip)) {
+                        LOG_CRITICAL(Debug,
+                                    "FEX SIGILL guest rip is inside module '{}' (base={:#x}, offset={:#x})",
+                                    module->name, module->GetBaseAddress(),
+                                    ill_accurate_guest_rip - module->GetBaseAddress());
+                    } else {
+                        LOG_CRITICAL(Debug, "FEX SIGILL guest rip is not inside any loaded module");
+                    }
+                }
+                if (auto* memory = Core::Memory::Instance()) {
+                    ::Libraries::Kernel::OrbisVirtualQueryInfo ill_rip_vma{};
+                    if (memory->VirtualQuery(ill_accurate_guest_rip, 0, &ill_rip_vma) == 0) {
+                        constexpr uint64_t kIllWindowBefore = 256;
+                        constexpr uint64_t kIllWindowAfter = 256;
+                        const auto* bytes = reinterpret_cast<const volatile uint8_t*>(
+                            static_cast<uintptr_t>(ill_accurate_guest_rip - kIllWindowBefore));
+                        static char ill_hex[2 * (kIllWindowBefore + kIllWindowAfter) + 1] = {};
+                        char* w = ill_hex;
+                        for (uint64_t i = 0; i < kIllWindowBefore + kIllWindowAfter; ++i) {
+                            w += std::snprintf(w, ill_hex + sizeof(ill_hex) - w, "%02x", bytes[i]);
+                        }
+                        LOG_CRITICAL(Debug,
+                                    "FEX SIGILL guest function window at accurate rip: rip={:#x} "
+                                    "window_start={:#x} before={:#x} bytes={}",
+                                    ill_accurate_guest_rip, ill_accurate_guest_rip - kIllWindowBefore,
+                                    kIllWindowBefore, ill_hex);
+                    }
+                }
+            }
+            char ill_dispatcher_state[768] = {};
+            if (::AetherPS4::Fex::BachataDumpDispatcherState(ill_dispatcher_state, sizeof(ill_dispatcher_state))) {
+                LOG_CRITICAL(Debug, "FEX SIGILL dispatcher state: {}", ill_dispatcher_state);
+            }
+#ifdef __APPLE__
+            {
+                auto* apple_context = reinterpret_cast<ucontext_t*>(raw_context);
+                const auto lr = static_cast<uintptr_t>(arm_thread_state64_get_lr(apple_context->uc_mcontext->__ss));
+                const auto pc = static_cast<uintptr_t>(arm_thread_state64_get_pc(apple_context->uc_mcontext->__ss));
+                LOG_CRITICAL(Debug, "FEX SIGILL fault registers: pc={:#x} lr={:#x}", pc, lr);
+                const auto& ts = apple_context->uc_mcontext->__ss;
+                char ill_host_regs[512] = {};
+                int ill_host_regs_len = 0;
+                for (int i = 0; i < 29 && ill_host_regs_len < static_cast<int>(sizeof(ill_host_regs)) - 16;
+                     i++) {
+                    ill_host_regs_len += std::snprintf(ill_host_regs + ill_host_regs_len,
+                                                   sizeof(ill_host_regs) - ill_host_regs_len, "x%d=%#llx ", i,
+                                                   static_cast<unsigned long long>(ts.__x[i]));
+                }
+                LOG_CRITICAL(Debug, "FEX SIGILL host ARM64 registers at fault: {}",
+                            std::string_view(ill_host_regs, ill_host_regs_len));
+                uintptr_t ill_frame_fp = static_cast<uintptr_t>(arm_thread_state64_get_fp(ts));
+                char ill_native_bt[1024] = {};
+                int ill_native_bt_len = 0;
+                for (int depth = 0; depth < 24 && ill_frame_fp != 0 &&
+                     ill_native_bt_len < static_cast<int>(sizeof(ill_native_bt)) - 32;
+                     depth++) {
+                    if (ill_frame_fp < 0x1000 || (ill_frame_fp & 0x7) != 0) {
+                        break;
+                    }
+                    const auto* frame_words = reinterpret_cast<const volatile uintptr_t*>(ill_frame_fp);
+                    const uintptr_t saved_fp = frame_words[0];
+                    const uintptr_t saved_lr = frame_words[1];
+                    ill_native_bt_len += std::snprintf(ill_native_bt + ill_native_bt_len,
+                                                   sizeof(ill_native_bt) - ill_native_bt_len, "[%d]=%#llx ",
+                                                   depth, static_cast<unsigned long long>(saved_lr));
+                    if (saved_lr == 0 || saved_fp == ill_frame_fp) {
+                        break;
+                    }
+                    ill_frame_fp = saved_fp;
+                }
+                LOG_CRITICAL(Debug, "FEX SIGILL native ARM64 call stack (walk [fp]/[fp+8], symbolicate "
+                                    "offline against this build's binary): {}",
+                            std::string_view(ill_native_bt, ill_native_bt_len));
+            }
+#endif
+#endif
             UNREACHABLE_MSG("Unhandled illegal instruction at code address {}: {}",
                             fmt::ptr(code_address), DisassembleInstruction(code_address));
         }
