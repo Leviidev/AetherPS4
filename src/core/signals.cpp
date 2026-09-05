@@ -35,6 +35,7 @@ static constexpr DWORD MS_VC_EXCEPTION = 0x406D1388;
 #endif
 #ifdef __APPLE__
 #include <mach/arm/thread_status.h>
+#include <mach/mach.h>
 #endif
 #endif
 
@@ -46,6 +47,31 @@ extern std::array<OrbisKernelExceptionHandler, 32> Handlers;
 #endif
 
 namespace Core {
+
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+// Every raw-memory dump in this file runs *inside* a signal handler already reporting some
+// other fault -- reading bytes/words around a fault address, walking a guest or native stack
+// via [fp]/[fp+8], etc. A direct pointer dereference has no way to know a neighboring address
+// is actually mapped, and a fault near the edge of a small/tightly-sized allocation (or a wild
+// pointer used as a stack frame pointer) walks straight off it. Confirmed on-device: exactly
+// this crashed with a SECOND SIGSEGV inside BachataDumpHostCodeWords itself (fex_guest_engine.cpp)
+// while already handling a first one, visible in a symbolicated native call stack as that
+// function appearing twice. vm_read_overwrite reports KERN_INVALID_ADDRESS instead of faulting
+// when the source isn't mapped, so an unreadable byte/word becomes a visible gap in the
+// diagnostic output rather than silently taking down the handler reporting the original crash --
+// every direct dereference below one of these dumps read from was rewritten to use it.
+// Deliberately the older vm_ (not mach_vm_) API: <mach/mach_vm.h> is unsupported on iOS
+// ("#error mach_vm.h unsupported"), and mach_vm_read_overwrite isn't declared without it --
+// vm_read_overwrite (declared in <mach/vm_map.h>, already reachable via <mach/mach.h>) does the
+// same job with vm_address_t/vm_size_t, which are 64-bit on arm64 (LP64) so no truncation risk.
+template <typename T>
+bool BachataSafeRead(uintptr_t address, T* out) noexcept {
+    vm_size_t bytes_read = 0;
+    return vm_read_overwrite(mach_task_self(), static_cast<vm_address_t>(address), sizeof(T),
+                             reinterpret_cast<vm_address_t>(out), &bytes_read) == KERN_SUCCESS &&
+          bytes_read == sizeof(T);
+}
+#endif
 
 #if defined(_WIN32)
 
@@ -265,12 +291,15 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
             if (auto* memory = Core::Memory::Instance()) {
                 ::Libraries::Kernel::OrbisVirtualQueryInfo rip_vma{};
                 if (memory->VirtualQuery(guest_rip, 0, &rip_vma) == 0) {
-                    const auto* bytes =
-                        reinterpret_cast<const volatile uint8_t*>(static_cast<uintptr_t>(guest_rip));
                     char hex[64] = {};
                     char* w = hex;
                     for (int i = 0; i < 16; ++i) {
-                        w += std::snprintf(w, hex + sizeof(hex) - w, "%02x ", bytes[i]);
+                        uint8_t byte = 0;
+                        if (BachataSafeRead(static_cast<uintptr_t>(guest_rip) + i, &byte)) {
+                            w += std::snprintf(w, hex + sizeof(hex) - w, "%02x ", byte);
+                        } else {
+                            w += std::snprintf(w, hex + sizeof(hex) - w, "?? ");
+                        }
                     }
                     LOG_CRITICAL(Debug, "FEX guest instruction bytes at rip: {}", hex);
                 }
@@ -320,12 +349,16 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                     // full function is what's needed to find that earlier computation.
                     constexpr uint64_t kWindowBefore = 512;
                     constexpr uint64_t kWindowAfter = 512;
-                    const auto* bytes = reinterpret_cast<const volatile uint8_t*>(
-                        static_cast<uintptr_t>(accurate_guest_rip - kWindowBefore));
+                    const auto window_start = static_cast<uintptr_t>(accurate_guest_rip - kWindowBefore);
                     static char hex[2 * (kWindowBefore + kWindowAfter) + 1] = {};
                     char* w = hex;
                     for (uint64_t i = 0; i < kWindowBefore + kWindowAfter; ++i) {
-                        w += std::snprintf(w, hex + sizeof(hex) - w, "%02x", bytes[i]);
+                        uint8_t byte = 0;
+                        if (BachataSafeRead(window_start + i, &byte)) {
+                            w += std::snprintf(w, hex + sizeof(hex) - w, "%02x", byte);
+                        } else {
+                            w += std::snprintf(w, hex + sizeof(hex) - w, "??");
+                        }
                     }
                     LOG_CRITICAL(Debug,
                                  "FEX guest function window at accurate rip: rip={:#x} "
@@ -367,10 +400,14 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                                          depth, frame_ptr);
                             break;
                         }
-                        const auto saved_rbp =
-                            *reinterpret_cast<volatile uint64_t*>(static_cast<uintptr_t>(frame_ptr));
-                        const auto ret_addr = *reinterpret_cast<volatile uint64_t*>(
-                            static_cast<uintptr_t>(frame_ptr + 8));
+                        uint64_t saved_rbp = 0;
+                        uint64_t ret_addr = 0;
+                        if (!BachataSafeRead(static_cast<uintptr_t>(frame_ptr), &saved_rbp) ||
+                            !BachataSafeRead(static_cast<uintptr_t>(frame_ptr + 8), &ret_addr)) {
+                            LOG_CRITICAL(Debug, "FEX rbp-chain[{}]: frame_ptr={:#x} unreadable, stopping",
+                                        depth, frame_ptr);
+                            break;
+                        }
                         if (auto* module = linker->FindByAddress(ret_addr)) {
                             LOG_CRITICAL(Debug,
                                          "FEX rbp-chain[{}]: frame_ptr={:#x} saved_rbp={:#x} "
@@ -392,13 +429,16 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                             if (depth == 0 || depth == 1) {
                                 constexpr uint64_t kCallerWindowBefore = 256;
                                 constexpr uint64_t kCallerWindowAfter = 64;
-                                const auto* caller_bytes = reinterpret_cast<const volatile uint8_t*>(
-                                    static_cast<uintptr_t>(ret_addr - kCallerWindowBefore));
+                                const auto caller_window_start = static_cast<uintptr_t>(ret_addr - kCallerWindowBefore);
                                 static char caller_hex[2 * (kCallerWindowBefore + kCallerWindowAfter) + 1] = {};
                                 char* cw = caller_hex;
                                 for (uint64_t j = 0; j < kCallerWindowBefore + kCallerWindowAfter; ++j) {
-                                    cw += std::snprintf(cw, caller_hex + sizeof(caller_hex) - cw, "%02x",
-                                                        caller_bytes[j]);
+                                    uint8_t byte = 0;
+                                    if (BachataSafeRead(caller_window_start + j, &byte)) {
+                                        cw += std::snprintf(cw, caller_hex + sizeof(caller_hex) - cw, "%02x", byte);
+                                    } else {
+                                        cw += std::snprintf(cw, caller_hex + sizeof(caller_hex) - cw, "??");
+                                    }
                                 }
                                 LOG_CRITICAL(Debug,
                                              "FEX rbp-verified caller window: return_addr={:#x} "
@@ -436,8 +476,10 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                         if (memory->VirtualQuery(word_addr, 0, &stack_vma) != 0) {
                             continue;
                         }
-                        const auto word_value =
-                            *reinterpret_cast<volatile uint64_t*>(static_cast<uintptr_t>(word_addr));
+                        uint64_t word_value = 0;
+                        if (!BachataSafeRead(static_cast<uintptr_t>(word_addr), &word_value)) {
+                            continue;
+                        }
                         if (auto* module = linker->FindByAddress(word_value)) {
                             LOG_CRITICAL(Debug,
                                          "FEX guest stack[rsp+{:#x}]={:#x} -- inside module '{}' "
@@ -649,10 +691,16 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                                              depth, frame_ptr);
                                 break;
                             }
-                            const auto saved_rbp = *reinterpret_cast<volatile uint64_t*>(
-                                static_cast<uintptr_t>(frame_ptr));
-                            const auto ret_addr = *reinterpret_cast<volatile uint64_t*>(
-                                static_cast<uintptr_t>(frame_ptr + 8));
+                            uint64_t saved_rbp = 0;
+                            uint64_t ret_addr = 0;
+                            if (!BachataSafeRead(static_cast<uintptr_t>(frame_ptr), &saved_rbp) ||
+                                !BachataSafeRead(static_cast<uintptr_t>(frame_ptr + 8), &ret_addr)) {
+                                LOG_CRITICAL(Debug,
+                                             "FEX rsp-corrupt rbp-chain[{}]: frame_ptr={:#x} "
+                                             "unreadable, stopping",
+                                             depth, frame_ptr);
+                                break;
+                            }
                             if (auto* module = linker->FindByAddress(ret_addr)) {
                                 LOG_CRITICAL(Debug,
                                              "FEX rsp-corrupt rbp-chain[{}]: frame_ptr={:#x} "
@@ -699,9 +747,11 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                 if (frame_fp < 0x1000 || (frame_fp & 0x7) != 0) {
                     break;
                 }
-                const auto* frame_words = reinterpret_cast<const volatile uintptr_t*>(frame_fp);
-                const uintptr_t saved_fp = frame_words[0];
-                const uintptr_t saved_lr = frame_words[1];
+                uintptr_t saved_fp = 0;
+                uintptr_t saved_lr = 0;
+                if (!BachataSafeRead(frame_fp, &saved_fp) || !BachataSafeRead(frame_fp + sizeof(uintptr_t), &saved_lr)) {
+                    break;
+                }
                 native_bt_len += std::snprintf(native_bt + native_bt_len,
                                                sizeof(native_bt) - native_bt_len, "[%d]=%#llx ",
                                                depth, static_cast<unsigned long long>(saved_lr));
@@ -773,12 +823,16 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                     if (memory->VirtualQuery(ill_accurate_guest_rip, 0, &ill_rip_vma) == 0) {
                         constexpr uint64_t kIllWindowBefore = 256;
                         constexpr uint64_t kIllWindowAfter = 256;
-                        const auto* bytes = reinterpret_cast<const volatile uint8_t*>(
-                            static_cast<uintptr_t>(ill_accurate_guest_rip - kIllWindowBefore));
+                        const auto ill_window_start = static_cast<uintptr_t>(ill_accurate_guest_rip - kIllWindowBefore);
                         static char ill_hex[2 * (kIllWindowBefore + kIllWindowAfter) + 1] = {};
                         char* w = ill_hex;
                         for (uint64_t i = 0; i < kIllWindowBefore + kIllWindowAfter; ++i) {
-                            w += std::snprintf(w, ill_hex + sizeof(ill_hex) - w, "%02x", bytes[i]);
+                            uint8_t byte = 0;
+                            if (BachataSafeRead(ill_window_start + i, &byte)) {
+                                w += std::snprintf(w, ill_hex + sizeof(ill_hex) - w, "%02x", byte);
+                            } else {
+                                w += std::snprintf(w, ill_hex + sizeof(ill_hex) - w, "??");
+                            }
                         }
                         LOG_CRITICAL(Debug,
                                     "FEX SIGILL guest function window at accurate rip: rip={:#x} "
@@ -818,9 +872,12 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                     if (ill_frame_fp < 0x1000 || (ill_frame_fp & 0x7) != 0) {
                         break;
                     }
-                    const auto* frame_words = reinterpret_cast<const volatile uintptr_t*>(ill_frame_fp);
-                    const uintptr_t saved_fp = frame_words[0];
-                    const uintptr_t saved_lr = frame_words[1];
+                    uintptr_t saved_fp = 0;
+                    uintptr_t saved_lr = 0;
+                    if (!BachataSafeRead(ill_frame_fp, &saved_fp) ||
+                        !BachataSafeRead(ill_frame_fp + sizeof(uintptr_t), &saved_lr)) {
+                        break;
+                    }
                     ill_native_bt_len += std::snprintf(ill_native_bt + ill_native_bt_len,
                                                    sizeof(ill_native_bt) - ill_native_bt_len, "[%d]=%#llx ",
                                                    depth, static_cast<unsigned long long>(saved_lr));
@@ -880,8 +937,12 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
         // settles what: BRK's own encoding is 0xD4200000 | (imm16 << 5), so a different imm16
         // than 0xf00d (or a word that doesn't even decode as BRK at all) narrows this down
         // immediately, without waiting on a full separate investigation cycle.
-        const auto* trap_word_ptr = reinterpret_cast<const volatile uint32_t*>(code_address);
-        const uint32_t trap_word = *trap_word_ptr;
+        // code_address is the fault PC itself, not a neighboring address like the dumps above --
+        // the CPU just fetched and executed whatever's there to trap in the first place, so this
+        // one read is inherently safe. BachataSafeRead anyway, purely for consistency with every
+        // other read in this file now going through the same path.
+        uint32_t trap_word = 0;
+        BachataSafeRead(reinterpret_cast<uintptr_t>(code_address), &trap_word);
         const bool looks_like_brk = (trap_word & 0xFFE0001F) == 0xD4200000;
         const uint32_t brk_imm16 = (trap_word >> 5) & 0xFFFF;
         LOG_CRITICAL(Debug,

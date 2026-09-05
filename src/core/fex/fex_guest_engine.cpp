@@ -1559,10 +1559,32 @@ bool BachataDumpHostCodeWords(void* fault_pc, char* out_buf, std::size_t out_buf
   char* w = out_buf;
   char* const end = out_buf + out_buf_size;
   for (int i = -kWordsBefore; i <= kWordsAfter && w < end; ++i) {
-    const auto* word_ptr =
-        reinterpret_cast<const volatile uint32_t*>(writable_pc + static_cast<ptrdiff_t>(i) * 4);
-    const uint32_t word = *word_ptr;
-    const int written = std::snprintf(w, static_cast<std::size_t>(end - w), "%s%08x", i == 0 ? "[" : "", word);
+    const auto word_addr = static_cast<vm_address_t>(writable_pc + static_cast<ptrdiff_t>(i) * 4);
+    // This function exists to run *inside* a signal handler already reporting some other
+    // fault, dumping words on both sides of the faulting instruction -- a direct dereference
+    // here has no way to know those neighboring words are actually mapped, and a fault_pc near
+    // the edge of a small/tightly-sized JIT allocation walks straight off it. Confirmed
+    // on-device: this exact direct read crashed with a SECOND SIGSEGV, inside this diagnostic
+    // function itself, while already handling a first one -- visible in a native call stack as
+    // BachataDumpHostCodeWords appearing twice (once at the fault, once as its own caller).
+    // vm_read_overwrite reports KERN_INVALID_ADDRESS instead of faulting when the source isn't
+    // mapped, so an unreadable word becomes a visible placeholder in the dump rather than
+    // silently taking down the very handler reporting the original crash. Deliberately the
+    // older vm_ (not mach_vm_) API: <mach/mach_vm.h> is unsupported on iOS ("#error mach_vm.h
+    // unsupported"), and mach_vm_read_overwrite isn't declared without it -- vm_read_overwrite
+    // (declared in <mach/vm_map.h>, already reachable via <mach/mach.h>) does the same job with
+    // vm_address_t/vm_size_t, which are 64-bit on arm64 (LP64) so no truncation risk here.
+    uint32_t word = 0;
+    vm_size_t bytes_read = 0;
+    const bool readable = vm_read_overwrite(mach_task_self(), word_addr, sizeof(word),
+                                            reinterpret_cast<vm_address_t>(&word), &bytes_read) == KERN_SUCCESS &&
+                          bytes_read == sizeof(word);
+    int written;
+    if (readable) {
+      written = std::snprintf(w, static_cast<std::size_t>(end - w), "%s%08x", i == 0 ? "[" : "", word);
+    } else {
+      written = std::snprintf(w, static_cast<std::size_t>(end - w), "%s????????", i == 0 ? "[" : "");
+    }
     if (written <= 0) break;
     w += written;
     if (i == 0 && w < end) {
