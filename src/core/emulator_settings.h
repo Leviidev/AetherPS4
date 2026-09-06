@@ -341,6 +341,11 @@ struct AudioSettings {
     Setting<std::string> openal_mic_device{"Default Device"};
     Setting<std::string> openal_main_output_device{"Default Device"};
     Setting<std::string> openal_padSpk_output_device{"Default Device"};
+    // iOS diagnostic only (see audioout.cpp's sceAudioOutInit()): lets a game run with audio
+    // output skipped entirely, to test whether the game's own audio session is what's forcing
+    // StikDebug's background silent-audio keep-alive off -- see BackgroundAudioManager.swift's
+    // own comment (AetherDebug) admitting "continuous game audio" can steal that session.
+    Setting<bool> disable_audio_output{false};
 
     std::vector<OverrideItem> GetOverrideableFields() const {
         return std::vector<OverrideItem>{
@@ -354,14 +359,16 @@ struct AudioSettings {
             make_override<AudioSettings>("openal_main_output_device",
                                          &AudioSettings::openal_main_output_device),
             make_override<AudioSettings>("openal_padSpk_output_device",
-                                         &AudioSettings::openal_padSpk_output_device)};
+                                         &AudioSettings::openal_padSpk_output_device),
+            make_override<AudioSettings>("disable_audio_output",
+                                         &AudioSettings::disable_audio_output)};
     }
 };
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(AudioSettings, audio_backend, sdl_mic_device,
                                    sdl_main_output_device, sdl_padSpk_output_device,
                                    openal_mic_device, openal_main_output_device,
-                                   openal_padSpk_output_device)
+                                   openal_padSpk_output_device, disable_audio_output)
 
 // -------------------------------
 // GPU settings
@@ -637,6 +644,7 @@ public:
     SETTING_FORWARD(m_audio, OpenALMicDevice, openal_mic_device)
     SETTING_FORWARD(m_audio, OpenALMainOutputDevice, openal_main_output_device)
     SETTING_FORWARD(m_audio, OpenALPadSpkOutputDevice, openal_padSpk_output_device)
+    SETTING_FORWARD_BOOL(m_audio, AudioOutputDisabled, disable_audio_output)
 
     // Debug settings
     SETTING_FORWARD_BOOL(m_debug, DebugDump, debug_dump)

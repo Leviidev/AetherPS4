@@ -28,6 +28,25 @@ std::mutex port_allocation_mutex;
 static std::unique_ptr<AudioOutBackend> audio;
 static std::atomic<int> lazy_init{0};
 
+namespace {
+// See EmulatorSettings::IsAudioOutputDisabled()'s own comment (emulator_settings.h) -- a
+// diagnostic-only backend that discards every buffer instead of opening a real audio device,
+// used to test whether this app's own audio session is what's forcing StikDebug's background
+// keep-alive off on iOS.
+class NullPortBackend final : public PortBackend {
+public:
+    void Output(void*) override {}
+    void SetVolume(const std::array<int, 8>&) override {}
+};
+
+class NullAudioOut final : public AudioOutBackend {
+public:
+    std::unique_ptr<PortBackend> Open(PortOut&) override {
+        return std::make_unique<NullPortBackend>();
+    }
+};
+} // namespace
+
 // Port allocation ranges
 constexpr struct PortRange {
     s32 start;
@@ -206,15 +225,21 @@ s32 PS4_SYSV_ABI sceAudioOutInit() {
         return ORBIS_AUDIO_OUT_ERROR_ALREADY_INIT;
     }
 
-#ifdef ENABLE_BACHATA_RUNTIME
-    audio = std::make_unique<BachataAudioOut>();
-#else
-    if (EmulatorSettings.GetAudioBackend() == AudioBackend::OpenAL) {
-        audio = std::make_unique<OpenALAudioOut>();
+    if (EmulatorSettings.IsAudioOutputDisabled()) {
+        LOG_WARNING(Lib_AudioOut, "Audio output disabled by setting (diagnostic) -- every port "
+                                  "will discard its buffers instead of opening a real device");
+        audio = std::make_unique<NullAudioOut>();
     } else {
-        audio = std::make_unique<SDLAudioOut>();
-    }
+#ifdef ENABLE_BACHATA_RUNTIME
+        audio = std::make_unique<BachataAudioOut>();
+#else
+        if (EmulatorSettings.GetAudioBackend() == AudioBackend::OpenAL) {
+            audio = std::make_unique<OpenALAudioOut>();
+        } else {
+            audio = std::make_unique<SDLAudioOut>();
+        }
 #endif
+    }
 
     LOG_INFO(Lib_AudioOut, "Audio system initialized");
     return ORBIS_OK;
