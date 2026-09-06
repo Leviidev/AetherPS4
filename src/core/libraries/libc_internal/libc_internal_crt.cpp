@@ -5,6 +5,7 @@
 #include <climits>
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <thread>
 #include <vector>
@@ -80,18 +81,38 @@ void PS4_SYSV_ABI internal_qsort(void* base, u64 nmemb, u64 size,
     // in Dispatcher.cpp/BranchOps.cpp instead).
     const auto base_addr = reinterpret_cast<uintptr_t>(base);
     const auto range_end = base_addr + nmemb * size;
-    auto compare_via_guest = [compar, base_addr, range_end, size](const void* a,
-                                                                   const void* b) -> int {
+    LOG_CRITICAL(Lib_LibcInternal,
+                "BACHATA_QSORT_BEGIN: base={:#x} nmemb={} size={} range_end={:#x} compar={:#x}",
+                base_addr, nmemb, size, range_end, reinterpret_cast<uintptr_t>(compar));
+    // Diagnostic only, continued: a prior session proved every comparator call's `a`/`b` slot
+    // pointer is already correctly inside [base, base+nmemb*size) (BACHATA_QSORT_OOB never
+    // fired), yet the crash address itself decoded as string-like text nearly identical to a
+    // register (x16) that must have been loaded from guest memory just before the fault -- i.e.
+    // a VALUE read out of the array (or something it points to) is being used as a pointer, not
+    // the slot address itself. Reading the first 8 bytes at `a`/`b` from here, on the host side,
+    // BEFORE the call crosses into guest code settles whether that garbage already exists as the
+    // element's own stored content (pointing at a heap-corruption/uninitialized-data bug outside
+    // this glue code entirely) or is something the guest comparator itself computes/corrupts.
+    // call_index is a plain stack local, safe to capture by reference: compare_via_guest never
+    // outlives this function (Trampoline::Call only reaches it via a thread_local pointer set
+    // and cleared within this same call, see below).
+    u64 call_index = 0;
+    auto compare_via_guest = [compar, base_addr, range_end, size, &call_index](const void* a,
+                                                                                const void* b) -> int {
         const auto addr_a = reinterpret_cast<uintptr_t>(a);
         const auto addr_b = reinterpret_cast<uintptr_t>(b);
         const bool in_range_a = addr_a >= base_addr && addr_a + size <= range_end;
         const bool in_range_b = addr_b >= base_addr && addr_b + size <= range_end;
-        if (!in_range_a || !in_range_b) [[unlikely]] {
-            LOG_CRITICAL(Lib_LibcInternal,
-                        "BACHATA_QSORT_OOB: comparator called with a={:#x} (in_range={}) "
-                        "b={:#x} (in_range={}) base={:#x} size={} nmemb-implied-end={:#x}",
-                        addr_a, in_range_a, addr_b, in_range_b, base_addr, size, range_end);
-        }
+        ++call_index;
+        u64 contents_a = 0;
+        u64 contents_b = 0;
+        const auto peek_len = std::min<u64>(size, sizeof(u64));
+        if (in_range_a) std::memcpy(&contents_a, a, peek_len);
+        if (in_range_b) std::memcpy(&contents_b, b, peek_len);
+        LOG_CRITICAL(Lib_LibcInternal,
+                    "BACHATA_QSORT_CALL: #{} a={:#x} (in_range={} contents={:#x}) b={:#x} "
+                    "(in_range={} contents={:#x})",
+                    call_index, addr_a, in_range_a, contents_a, addr_b, in_range_b, contents_b);
         const std::array<u64, 2> args{reinterpret_cast<u64>(a), reinterpret_cast<u64>(b)};
         return static_cast<int>(AetherPS4::GuestCpu::RunGuestFunctionOrAbort(
             reinterpret_cast<const void*>(compar), args, "qsort comparator"));
