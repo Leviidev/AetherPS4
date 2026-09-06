@@ -314,8 +314,24 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 }
                 case PM4CmdNop::PayloadType::DebugMarkerPush: {
                     if (guest_markers_enabled) {
-                        const auto marker_sz = nop->header.count.Value() * 2;
-                        const std::string_view label{
+                        // marker_sz is guest-controlled (from this packet's own PM4 header
+                        // count field) and the bytes it spans are NOT guaranteed to be
+                        // NUL-terminated -- constructing a std::string_view directly over them
+                        // and handing its .data() to Vulkan's pLabelName (which requires a real
+                        // C string) means the driver keeps scanning past the intended label
+                        // for a NUL byte wherever one happens to land, reading and very likely
+                        // copying an unbounded amount of unrelated adjacent memory into its own
+                        // internal state. Confirmed on-device: a GTA V session's crash showed
+                        // exactly this pattern -- a short, real-looking label fragment ("pass
+                        // 00") immediately followed by garbage, corrupting an unrelated system
+                        // structure. Building a real, NUL-terminated std::string here (clamped
+                        // to a sane max, since marker_sz itself is guest-supplied and not to be
+                        // trusted either) fixes both problems at the one place the unterminated
+                        // view was ever created.
+                        constexpr size_t kMaxMarkerLen = 256;
+                        const auto marker_sz =
+                            std::min<size_t>(nop->header.count.Value() * 2, kMaxMarkerLen);
+                        const std::string label{
                             reinterpret_cast<const char*>(&nop->data_block[1]), marker_sz};
                         rasterizer->ScopeMarkerBegin(label, true);
                     }
@@ -323,11 +339,14 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 }
                 case PM4CmdNop::PayloadType::DebugColorMarkerPush: {
                     if (guest_markers_enabled) {
-                        const auto marker_sz = nop->header.count.Value() * 2;
-                        const std::string_view label{
+                        // See DebugMarkerPush's own comment just above -- same fix, same reason.
+                        constexpr size_t kMaxMarkerLen = 256;
+                        const auto raw_marker_sz = nop->header.count.Value() * 2;
+                        const auto marker_sz = std::min<size_t>(raw_marker_sz, kMaxMarkerLen);
+                        const std::string label{
                             reinterpret_cast<const char*>(&nop->data_block[1]), marker_sz};
                         const u32 color = *reinterpret_cast<const u32*>(
-                            reinterpret_cast<const u8*>(&nop->data_block[1]) + marker_sz);
+                            reinterpret_cast<const u8*>(&nop->data_block[1]) + raw_marker_sz);
                         rasterizer->ScopedMarkerInsertColor(label, color, true);
                     }
                     break;
