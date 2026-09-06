@@ -68,7 +68,30 @@ void PS4_SYSV_ABI internal_qsort(void* base, u64 nmemb, u64 size,
     // Host qsort with a host-side comparator trampoline: this still performs the actual
     // sort/swap logic natively (fast, well-tested), only the *comparison itself* crosses
     // into guest code for each pairwise test.
-    auto compare_via_guest = [compar](const void* a, const void* b) -> int {
+    // Diagnostic only: a GTA V session crashed with a wild guest-pointer SIGSEGV reading from
+    // an address that decoded as string-like text while executing this exact comparator -- not
+    // a host/guest address-space mismatch (confirmed: hle_call_adapter.h's DecodeArgument does a
+    // bare reinterpret_cast for pointer arguments, so this codebase identity-maps guest memory,
+    // meaning `a`/`b` here are already valid guest VAddrs once computed by std::qsort's own
+    // pointer arithmetic on `base`). Logging every call's offset from `base` and whether it
+    // falls inside [base, base + nmemb*size) settles whether the bad value already exists right
+    // here at the call site (implicating this glue code or std::qsort's own element math) or
+    // only appears once inside JIT'd guest code (implicating FEXCore's reentrant-callback path
+    // in Dispatcher.cpp/BranchOps.cpp instead).
+    const auto base_addr = reinterpret_cast<uintptr_t>(base);
+    const auto range_end = base_addr + nmemb * size;
+    auto compare_via_guest = [compar, base_addr, range_end, size](const void* a,
+                                                                   const void* b) -> int {
+        const auto addr_a = reinterpret_cast<uintptr_t>(a);
+        const auto addr_b = reinterpret_cast<uintptr_t>(b);
+        const bool in_range_a = addr_a >= base_addr && addr_a + size <= range_end;
+        const bool in_range_b = addr_b >= base_addr && addr_b + size <= range_end;
+        if (!in_range_a || !in_range_b) [[unlikely]] {
+            LOG_CRITICAL(Lib_LibcInternal,
+                        "BACHATA_QSORT_OOB: comparator called with a={:#x} (in_range={}) "
+                        "b={:#x} (in_range={}) base={:#x} size={} nmemb-implied-end={:#x}",
+                        addr_a, in_range_a, addr_b, in_range_b, base_addr, size, range_end);
+        }
         const std::array<u64, 2> args{reinterpret_cast<u64>(a), reinterpret_cast<u64>(b)};
         return static_cast<int>(AetherPS4::GuestCpu::RunGuestFunctionOrAbort(
             reinterpret_cast<const void*>(compar), args, "qsort comparator"));
