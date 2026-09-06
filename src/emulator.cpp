@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2025-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -25,6 +26,7 @@
 #include "common/thread.h"
 #include "core/debug_state.h"
 #include "core/emulator_settings.h"
+#include "core/ios/ios_jit_allocator.h"
 #include "core/ipc/ipc.h"
 #ifdef ENABLE_DISCORD_RPC
 #include "common/discord_rpc_handler.h"
@@ -485,6 +487,49 @@ void Emulator::PrepareWindow(std::filesystem::path file, std::vector<std::string
     LOG_CRITICAL(Core, "BACHATA_BOOT_TIMING: PrepareWindow done at {}ms", Common::BootElapsedMs());
 }
 
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+namespace {
+
+// See ios_jit_allocator.h's MarkStikDebugLikelyDead() for what sets the flag this polls, and
+// this file's own StikDebugDeathWatchdogThread-starting call (in RunLoop(), below) for when
+// this starts running. Mirrors fex_guest_engine.cpp's HleStallWatchdogThread: a signal handler
+// can only safely flip an atomic, so a plain background thread is what actually acts on it --
+// std::filesystem::path allocates, and Restart() below blocks the calling thread forever, both
+// of which are unsafe to do directly from inside a signal handler.
+void StikDebugDeathWatchdogThread() {
+    for (;;) {
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        if (!Core::IosJitAllocator::IsStikDebugLikelyDead()) {
+            continue;
+        }
+        // A game that never needs another JIT-capable allocation for the rest of its session
+        // could still run fine from here on -- but there's no way to know that in advance, and
+        // the alternative (do nothing, wait for whichever later operation happens to need one)
+        // is exactly the unpredictable, unrecoverable crash this whole feature exists to avoid.
+        // Restarting now, once, while the app can still show the user a clean prompt, beats
+        // limping along until something else crashes with no warning.
+        LOG_CRITICAL(Core, "BACHATA_STIKDEBUG_DEATH_RESTART: StikDebug is no longer servicing "
+                           "JIT requests -- restarting the game instead of continuing in an "
+                           "increasingly unstable state");
+        auto* emulator = Common::Singleton<Core::Emulator>::Instance();
+        emulator->Restart(emulator->GetRunningEbootPath());
+        return;
+    }
+}
+
+std::atomic<bool> g_stikdebug_death_watchdog_started{false};
+
+void EnsureStikDebugDeathWatchdogStarted() {
+    bool expected = false;
+    if (!g_stikdebug_death_watchdog_started.compare_exchange_strong(expected, true)) {
+        return;
+    }
+    std::thread(StikDebugDeathWatchdogThread).detach();
+}
+
+} // namespace
+#endif
+
 void Emulator::RunLoop() {
     const std::string& id = pending_game_id;
     const auto& eboot_path = pending_eboot_path;
@@ -600,6 +645,9 @@ void Emulator::RunLoop() {
     }
 
     window->InitTimers();
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    EnsureStikDebugDeathWatchdogStarted();
+#endif
     LOG_CRITICAL(Core, "BACHATA_RUNLOOP: entering window event loop at {}ms",
                 Common::BootElapsedMs());
     while (window->IsOpen()) {

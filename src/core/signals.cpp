@@ -945,6 +945,13 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                         "BACHATA_JIT_TRAP_UNSERVICED: StikDebug did not service the "
                         "BreakGetJITMapping BRK (likely killed by iOS's background wake-rate "
                         "limiter) -- simulating a nullptr return instead of crashing");
+            // This is the clearest, most direct proof available that StikDebug has stopped
+            // responding: shadPS4 issued the BRK, expected it to be serviced, and it wasn't.
+            // Recovering here keeps this one allocation from crashing the process outright, but
+            // every JIT-capable operation for the rest of the session now has a debugger that
+            // can't grant it memory -- see MarkStikDebugLikelyDead()'s own comment
+            // (ios_jit_allocator.h) for what happens next.
+            Core::IosJitAllocator::MarkStikDebugLikelyDead();
             auto* apple_context = reinterpret_cast<ucontext_t*>(raw_context);
             auto& ts = apple_context->uc_mcontext->__ss;
             // x0 is the ARM64 return-value register; simulating get_jit_mapping() == nullptr
@@ -1020,6 +1027,10 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                         "StikDebug-internal breakpoint left armed after it went unresponsive; "
                         "skipping it instead of crashing",
                         brk_imm16, this_address, consecutive_count);
+            // A stray StikDebug-internal breakpoint left armed after it went unresponsive is the
+            // same underlying cause as the unserviced-JIT-mapping-BRK case above (see that call
+            // site's comment) -- corroborating evidence, not a separate detector.
+            Core::IosJitAllocator::MarkStikDebugLikelyDead();
             auto* apple_context = reinterpret_cast<ucontext_t*>(raw_context);
             auto& ts = apple_context->uc_mcontext->__ss;
             const auto pc = static_cast<uintptr_t>(arm_thread_state64_get_pc(ts));

@@ -88,6 +88,17 @@ public:
      */
     std::optional<std::filesystem::path> TakePendingRestart(std::vector<std::string>& out_args);
 
+    /**
+     * Returns the eboot path of the game currently running (set once by PrepareWindow() and
+     * never touched again by RunLoop() -- see pending_eboot_path's own comment below). Empty
+     * before PrepareWindow() has run. Meant for iOS's StikDebug-death watchdog (see
+     * emulator.cpp's StikDebugDeathWatchdogThread) to pass straight back into Restart(),
+     * i.e. "restart with the same game."
+     */
+    std::filesystem::path GetRunningEbootPath() const {
+        return pending_eboot_path;
+    }
+
     const char* executableName;
     bool waitForDebuggerBeforeRun{false};
     std::function<void()> onRuntimeRunning;

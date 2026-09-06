@@ -116,6 +116,9 @@ namespace Core {
 // "expecting a trap" stays true for as long as *any* request is outstanding, however many.
 std::atomic<int> g_expecting_jit_mapping_trap_count {0};
 
+// See IosJitAllocator::MarkStikDebugLikelyDead()'s own doc comment (ios_jit_allocator.h).
+std::atomic<bool> g_stikdebug_likely_dead {false};
+
 class IosJitTrapGuard final {
 public:
   IosJitTrapGuard() { g_expecting_jit_mapping_trap_count.fetch_add(1, std::memory_order_acq_rel); }
@@ -286,6 +289,14 @@ void Detach() noexcept {
 
 bool IsExpectingJitMappingTrap() noexcept {
     return g_expecting_jit_mapping_trap_count.load(std::memory_order_acquire) > 0;
+}
+
+void MarkStikDebugLikelyDead() noexcept {
+    g_stikdebug_likely_dead.store(true, std::memory_order_release);
+}
+
+bool IsStikDebugLikelyDead() noexcept {
+    return g_stikdebug_likely_dead.load(std::memory_order_acquire);
 }
 
 } // namespace IosJitAllocator

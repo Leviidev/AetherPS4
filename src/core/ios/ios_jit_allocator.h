@@ -143,6 +143,21 @@ void Detach() noexcept;
 // BRK trap (recoverable) from any other SIGTRAP (not).
 [[nodiscard]] bool IsExpectingJitMappingTrap() noexcept;
 
+// Records that signals.cpp's SIGTRAP handler has proven StikDebug is no longer servicing JIT
+// requests -- either a BreakGetJITMapping BRK went completely unserviced, or a stray
+// StikDebug-internal breakpoint was recovered elsewhere (both are documented at their call
+// sites in signals.cpp as evidence of the same underlying cause: StikDebug killed mid-session
+// by iOS's background wake-rate limiter). Idempotent and safe to call from a signal handler --
+// only ever transitions false -> true, never back. A background watchdog (see emulator.cpp's
+// StikDebugDeathWatchdogThread) polls IsStikDebugLikelyDead() and, once true, triggers a clean
+// Emulator::Restart() rather than letting the game keep running against a debugger that can no
+// longer grant it new JIT memory (per the user's own correction: retrying StikDebug once it's
+// in this state isn't a safe recovery, it's just another chance at the exact same crash).
+void MarkStikDebugLikelyDead() noexcept;
+
+// See MarkStikDebugLikelyDead() above.
+[[nodiscard]] bool IsStikDebugLikelyDead() noexcept;
+
 } // namespace IosJitAllocator
 
 } // namespace Core
