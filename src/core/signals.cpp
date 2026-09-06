@@ -1052,6 +1052,47 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                         "Common::ReportCrash() below captures the real failure",
                         brk_imm16, this_address);
         }
+        // Common::ReportCrash() is gated behind a BACHATA_CRASH_REGISTERS env var this build has
+        // no way to set, so it silently no-ops here -- confirmed via a session where nothing at
+        // all appeared between this point and UNREACHABLE_MSG's own log line below. When
+        // brk_imm16 == 0 (this codebase's own assert.cpp Crash()), the LR at the point of the
+        // trap is assert_fail_impl()'s own return address, i.e. this walk's [1] entry is exactly
+        // which ASSERT/ASSERT_MSG/UNREACHABLE/UNREACHABLE_MSG call site actually fired --
+        // needed since that's otherwise completely lost once we're back here re-executing
+        // UNREACHABLE_MSG's own unrelated call to unreachable_impl().
+        {
+            auto* apple_context = reinterpret_cast<ucontext_t*>(raw_context);
+            auto& ts = apple_context->uc_mcontext->__ss;
+            uintptr_t frame_fp = static_cast<uintptr_t>(arm_thread_state64_get_fp(ts));
+            const uintptr_t lr = static_cast<uintptr_t>(arm_thread_state64_get_lr(ts));
+            char native_bt[1024] = {};
+            int native_bt_len = std::snprintf(native_bt, sizeof(native_bt), "lr=%#llx ",
+                                              static_cast<unsigned long long>(lr));
+            for (int depth = 0; depth < 24 && frame_fp != 0 &&
+                 native_bt_len < static_cast<int>(sizeof(native_bt)) - 32;
+                 depth++) {
+                if (frame_fp < 0x1000 || (frame_fp & 0x7) != 0) {
+                    break;
+                }
+                uintptr_t saved_fp = 0;
+                uintptr_t saved_lr = 0;
+                if (!BachataSafeRead(frame_fp, &saved_fp) ||
+                    !BachataSafeRead(frame_fp + sizeof(uintptr_t), &saved_lr)) {
+                    break;
+                }
+                native_bt_len += std::snprintf(native_bt + native_bt_len,
+                                               sizeof(native_bt) - native_bt_len, "[%d]=%#llx ",
+                                               depth, static_cast<unsigned long long>(saved_lr));
+                if (saved_lr == 0 || saved_fp == frame_fp) {
+                    break;
+                }
+                frame_fp = saved_fp;
+            }
+            LOG_CRITICAL(Debug,
+                        "BACHATA_SIGTRAP_NATIVE_STACK: (walk [fp]/[fp+8], symbolicate offline "
+                        "against this build's binary): {}",
+                        std::string_view(native_bt, native_bt_len));
+        }
         Common::ReportCrash(raw_context, sig, info);
         UNREACHABLE_MSG("Unhandled SIGTRAP at code address {} (not a JIT-mapping request, and not "
                         "a BRK instruction at all, or a BRK that repeated too many times to keep "
