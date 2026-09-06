@@ -766,6 +766,40 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
         }
 #endif
 #endif
+        // Diagnostic only: several GTA V crashes at this exact fault PC (0x1ce850a7c, a system
+        // library's thread-local-storage-destructor-chain walker) read a "next" pointer field
+        // whose *value* decoded as fragments of readable text ("d pass 0", "t pass 0", "...s
+        // 0\0pass...") instead of a real pointer -- confirmed not a valid canonical address at
+        // all (bit pattern exceeds the 48-bit address space), so dumping around the fault
+        // address itself (info->si_addr, computed from that same bad value) would only ever
+        // read unmapped memory. The stack, by contrast, is guaranteed valid here and may still
+        // hold whatever address that corrupted value was originally loaded from (e.g. spilled
+        // to a stack slot before this loop's own load), or other nearby pointers into the same
+        // corrupted region -- this is genuinely a fishing expedition, but a free one, and it's
+        // the only guaranteed-readable memory left to look at from here.
+        {
+            auto* apple_context = reinterpret_cast<ucontext_t*>(raw_context);
+            auto& ts = apple_context->uc_mcontext->__ss;
+            constexpr int kBytesBefore = 64;
+            constexpr int kBytesAfter = 192;
+            const auto sp_addr = static_cast<uintptr_t>(arm_thread_state64_get_sp(ts));
+            char dump[3 * (kBytesBefore + kBytesAfter) + 16] = {};
+            int dump_len = 0;
+            for (int i = -kBytesBefore; i < kBytesAfter && dump_len < static_cast<int>(sizeof(dump)) - 8; ++i) {
+                uint8_t byte = 0;
+                const auto addr = static_cast<uintptr_t>(static_cast<ptrdiff_t>(sp_addr) + i);
+                if (BachataSafeRead(addr, &byte)) {
+                    dump_len += std::snprintf(dump + dump_len, sizeof(dump) - dump_len, "%02x", byte);
+                } else {
+                    dump_len += std::snprintf(dump + dump_len, sizeof(dump) - dump_len, "??");
+                }
+            }
+            LOG_CRITICAL(Debug,
+                        "BACHATA_FAULT_STACK_MEMORY: {} bytes before, {} after sp={} (hex, ?? = "
+                        "unreadable): {}",
+                        kBytesBefore, kBytesAfter, fmt::ptr(reinterpret_cast<void*>(sp_addr)),
+                        std::string_view(dump, dump_len));
+        }
         UNREACHABLE_MSG("Unhandled access violation at code address {}: {} address {}",
                         fmt::ptr(code_address), is_write ? "Write to" : "Read from",
                         fmt::ptr(info->si_addr));
