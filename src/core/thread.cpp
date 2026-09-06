@@ -39,18 +39,19 @@ int NativeThread::Create(ThreadFunc func, void* arg) {
 #endif
 }
 
-void NativeThread::Exit() {
+void NativeThread::PrepareExit() {
     if (!native_handle) {
         return;
     }
 
     tid = 0;
 
-#ifdef _WIN64
-    native_handle = nullptr;
-    ExitThread(0);
-#else
-    // Disable and free the signal stack.
+#ifndef _WIN64
+    // Disable and free the signal stack. Must happen here, before this thread's owning
+    // Pthread object (see pthread.cpp's ExitThread()) is marked terminated and becomes
+    // eligible for another thread to reap and reuse -- doing this in Exit() instead (as
+    // before) read sig_stack_ptr/native_handle off `this` after that point, racing whichever
+    // thread's Collect() call reused the same pooled memory first.
     constexpr stack_t sig_stack = {
         .ss_flags = SS_DISABLE,
     };
@@ -60,6 +61,14 @@ void NativeThread::Exit() {
         free(sig_stack_ptr);
         sig_stack_ptr = nullptr;
     }
+#endif
+}
+
+void NativeThread::Exit() {
+#ifdef _WIN64
+    native_handle = nullptr;
+    ExitThread(0);
+#else
     pthread_exit(nullptr);
 #endif
 }

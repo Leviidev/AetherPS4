@@ -44,6 +44,15 @@ void PS4_SYSV_ABI _sceKernelSetThreadDtors(ThreadDtor dtor) {
 static void ExitThread() {
     Pthread* curthread = g_curthread;
 
+    // Must run before this thread's own Pthread object is marked terminated below (see
+    // ThreadState::Collect()) and becomes eligible for another thread to reap/reuse its
+    // pooled memory -- confirmed on-device as a real use-after-free: a GTA V session's
+    // native ARM64 crash dump showed garbage (values with no resemblance to a real pointer)
+    // being read from a terminating thread's own NativeThread state from inside a system
+    // library's thread-teardown code, consistent with another thread's Collect() call
+    // reusing this exact object's memory while this thread was still using it below.
+    curthread->native_thr.PrepareExit();
+
     /* Check if there is thread specific data: */
     if (curthread->specific != nullptr) {
         /* Run the thread-specific data destructors: */
