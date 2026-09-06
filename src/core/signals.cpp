@@ -989,29 +989,30 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                     "is_brk_encoding={} brk_imm16={:#x}",
                     reinterpret_cast<uintptr_t>(code_address), trap_word, looks_like_brk, brk_imm16);
         // An earlier GTA V session hit this fatal path at four *different* addresses within one
-        // continuous run, each occurring once -- consistent with something planting and removing
-        // a StikDebug-internal breakpoint dynamically, so the recovery below (skip the 4-byte
-        // BRK, resume) was added for that case: this is a shipped, production build, and
-        // StikDebug's BreakpointJIT.framework is the only legitimate debugger-style attachment,
-        // so there's no scenario where a real, meaningful developer breakpoint should exist here.
-        //
-        // BUT a *later* session with that recovery in place got stuck looping thousands of times
-        // on the exact same address (0x1a7efa8fc, BRK #1), each recovery immediately preceded by
-        // "Assertion failed: (p), function atexit_register, file atexit.c, line 115." on stderr --
-        // this is libc's own assert() macro, which issues a BRK as part of calling abort(). abort()
-        // is intentionally unrecoverable: skipping past its trap doesn't fix whatever made the
-        // assertion fail, it just re-enters the same broken code path immediately, which is
-        // exactly the busy-loop this produced instead of the clean crash abort() is supposed to
-        // give. The address-varies-each-time StikDebug case and the address-repeats-forever
-        // abort() case are distinguishable from right here: track the last recovered address and
-        // how many consecutive times it's repeated, and stop recovering (fall through to the
-        // fatal path, same as before this whole mechanism existed) once that count gets
-        // unreasonable -- a StikDebug breakpoint firing the same address several times in a row
-        // isn't expected either, so this costs nothing in that case while actually breaking the
-        // infinite loop in this one.
+        // continuous run, each occurring once, and a generalized "recover from any BRK" fix was
+        // shipped for it -- WRONG, discovered later by symbolicating a session where that fix
+        // let a game keep running (RenderThread mid-qsort-callback, several LOG lines of normal
+        // activity) for a while after a recovered BRK, before dying anyway via an uncaught
+        // "Terminate: Exception: Unreachable code" with none of Common::ReportCrash()'s usual
+        // diagnostic detail. Root cause: assert.cpp's own Crash() -- the mechanism behind every
+        // ASSERT/ASSERT_MSG/UNREACHABLE/UNREACHABLE_MSG failure anywhere in this entire codebase
+        // -- is `__asm__ __volatile__("brk 0")` on ARM64. BRK #1 is separately the standard
+        // compiler/libc trap immediate (__builtin_trap(), Swift/Obj-C runtime traps, abort()'s
+        // own internal BRK, confirmed on an earlier session via a concurrent "Assertion failed:
+        // ... atexit_register" on stderr). Recovering from either -- even just once, even before
+        // the repeat-count safety net below would kick in -- means silently skipping over this
+        // codebase's own "something is already badly wrong, stop now" signal (assert_fail_impl()
+        // has *already* called Emulator::Instance()->Shutdown() by the time Crash() executes) and
+        // letting the game keep running against a partially-torn-down emulator, which is worse
+        // than the original crash, not a recovery from it. #0xf00d is the ONLY BRK immediate this
+        // file has ever had a documented, protocol-level reason to consider skippable (StikDebug's
+        // BreakpointJIT.framework, see ios_jit_allocator.h) -- recovery below is restricted to
+        // exactly that value; every other BRK, including #0 and #1, falls straight through to the
+        // fatal path, same as a real, unrecovered SIGTRAP always has.
         static std::atomic<uintptr_t> last_recovered_brk_address {0};
         static std::atomic<int> last_recovered_brk_consecutive_count {0};
         constexpr int kMaxConsecutiveRecoveries = 8;
+        constexpr uint32_t kJitMappingBrkImm16 = 0xf00d;
         const auto this_address = reinterpret_cast<uintptr_t>(code_address);
         int consecutive_count = 1;
         if (last_recovered_brk_address.load(std::memory_order_relaxed) == this_address) {
@@ -1020,12 +1021,13 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
             last_recovered_brk_address.store(this_address, std::memory_order_relaxed);
             last_recovered_brk_consecutive_count.store(1, std::memory_order_relaxed);
         }
-        if (looks_like_brk && consecutive_count <= kMaxConsecutiveRecoveries) {
+        const bool is_recoverable_brk = looks_like_brk && brk_imm16 == kJitMappingBrkImm16;
+        if (is_recoverable_brk && consecutive_count <= kMaxConsecutiveRecoveries) {
             LOG_CRITICAL(Debug,
-                        "BACHATA_UNKNOWN_BRK_RECOVERED: BRK #{:#x} at {:#x} was not the "
-                        "JIT-mapping protocol's #0xf00d (consecutive repeat #{}) -- likely a "
-                        "StikDebug-internal breakpoint left armed after it went unresponsive; "
-                        "skipping it instead of crashing",
+                        "BACHATA_UNKNOWN_BRK_RECOVERED: BRK #{:#x} at {:#x} was not the expected "
+                        "JIT-mapping call site (consecutive repeat #{}) -- likely a StikDebug-"
+                        "internal breakpoint left armed after it went unresponsive; skipping it "
+                        "instead of crashing",
                         brk_imm16, this_address, consecutive_count);
             // A stray StikDebug-internal breakpoint left armed after it went unresponsive is the
             // same underlying cause as the unserviced-JIT-mapping-BRK case above (see that call
@@ -1037,13 +1039,18 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
             arm_thread_state64_set_pc_fptr(ts, reinterpret_cast<void*>(pc + 4));
             return;
         }
-        if (looks_like_brk) {
+        if (is_recoverable_brk) {
             LOG_CRITICAL(Debug,
                         "BACHATA_BRK_RECOVERY_ABANDONED: BRK #{:#x} at {:#x} has now repeated {} "
-                        "times in a row -- this looks like a genuine, unrecoverable trap (e.g. an "
-                        "assert()/abort() failure logged just above on stderr), not a one-off "
-                        "StikDebug breakpoint; letting it be fatal instead of looping forever",
+                        "times in a row -- letting it be fatal instead of looping forever",
                         brk_imm16, this_address, consecutive_count);
+        } else if (looks_like_brk) {
+            LOG_CRITICAL(Debug,
+                        "BACHATA_BRK_NOT_RECOVERABLE: BRK #{:#x} at {:#x} is not the JIT-mapping "
+                        "protocol's #0xf00d -- likely this codebase's own assert/unreachable "
+                        "Crash() (#0) or a compiler/libc trap (#1); letting it be fatal so "
+                        "Common::ReportCrash() below captures the real failure",
+                        brk_imm16, this_address);
         }
         Common::ReportCrash(raw_context, sig, info);
         UNREACHABLE_MSG("Unhandled SIGTRAP at code address {} (not a JIT-mapping request, and not "
