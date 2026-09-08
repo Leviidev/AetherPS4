@@ -711,7 +711,14 @@ s32 PS4_SYSV_ABI posix_stat(const char* path, OrbisKernelStat* sb) {
 s32 PS4_SYSV_ABI sceKernelStat(const char* path, OrbisKernelStat* sb) {
     s32 result = posix_stat(path, sb);
     if (result < 0) {
-        LOG_ERROR(Kernel_Fs, "error = {}", *__Error());
+        // path added: a GTA V session repeatedly hit this exact error path from RenderThread
+        // (roughly once every 2 seconds, indefinitely, alongside a real per-tick CPU workload
+        // that never reached a single GNM command-buffer submission) without ever advancing to
+        // rendering a frame -- with only the bare errno logged there was no way to tell which
+        // file it kept failing to find, or whether it's the same path checked repeatedly (a
+        // stuck "wait for this resource to appear" poll) versus many different candidate paths
+        // (a broken resource-search fallback chain).
+        LOG_ERROR(Kernel_Fs, "error = {} path={}", *__Error(), path ? path : "(null)");
         return ErrnoToSceKernelError(*__Error());
     }
     return result;
