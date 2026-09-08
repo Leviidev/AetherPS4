@@ -13,6 +13,7 @@
 #include <variant>
 
 #ifndef _WIN32
+#include <pthread.h>
 #include <signal.h>
 #endif
 
@@ -205,6 +206,17 @@ public:
   // because the only caller (HleStallWatchdogThread) is a detached background thread with no
   // GuestEngine& of its own, only that raw pointer.
   static std::string DumpThreadNamesForDiagnostics(void* raw_impl);
+
+  // Diagnostic only (GTA V stall investigation, continued): finds the native pthread_t handle
+  // for the first currently-registered guest thread whose name exactly matches `name`, or
+  // pthread_t{} if none is registered under that name right now. Same raw-pointer contract as
+  // DumpThreadNamesForDiagnostics above, for the same reason (only caller is a detached
+  // background thread). Lets that caller pthread_kill() a specific named thread (e.g.
+  // "Game:Main") with a diagnostic-only signal to sample its live guest RIP, rather than only
+  // ever seeing whatever it last logged -- Game:Main went completely silent for the rest of a
+  // GTA V session right after spawning its render thread, with no way to tell from logging
+  // alone whether it was still alive, or where.
+  static pthread_t FindGuestThreadHandleByName(void* raw_impl, const char* name);
 
 private:
   class Impl;

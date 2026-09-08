@@ -142,7 +142,7 @@ enum class HgsCheckpoint : int {
   CheckedCodeBuffer = 5, NotInCodeBufferReturn = 6, IsAlignmentFault = 7,
   NotAlignmentFaultReturn = 8, BeforeWriteGuard = 9, AfterWriteGuard = 10,
   HaveWritablePc = 11, AfterHandleUnaligned = 12, AdjustmentFailedReturn = 13,
-  SuccessReturnTrue = 14,
+  SuccessReturnTrue = 14, StuckAtSamePcReturn = 15,
 };
 // clang-format on
 std::atomic<int> g_hgs_checkpoint {static_cast<int>(HgsCheckpoint::Idle)};
@@ -219,6 +219,112 @@ std::atomic<uint64_t> g_last_hle_operation_rt {0};
 std::atomic<int64_t> g_last_hle_operation_start_ms_rt {0};
 std::atomic<int64_t> g_last_hle_operation_logged_start_ms_rt {-1};
 
+// GTA V stall investigation, continued: Game:Main went completely silent (no tagged log line
+// at all, at *any* level -- confirmed the runtime filter isn't just suppressing trace) for the
+// rest of a session right after spawning its render thread, while the stall tracking above
+// confirmed it was still alive, still making occasional HLE calls. That's not enough to say
+// *where* it is: nothing here distinguishes "spinning in guest code waiting on a condition
+// that never arrives" from "blocked in a single long HLE call" from "genuinely making slow
+// progress." This answers that directly by interrupting the thread and reading its actual
+// live guest RIP, the same way SafepointSignalHandler (further down this file) already does
+// for a different purpose -- proof this kind of cross-thread signal probe is safe in this
+// codebase, unlike HleStallWatchdogThread's own comment just above (which deliberately avoided
+// signals for a mechanism that didn't need them). BachataQueryGuestRipSyscall is explicitly
+// documented as async-signal-safe for exactly this kind of use.
+// which: 0 = Game:Main, 1 = "[RAGE] RenderThread" -- set by the watchdog immediately before
+// each pthread_kill, not part of siginfo_t, since this signal carries no payload of its own.
+// Not a race in practice: samples are sent one at a time with a short sleep in between (see the
+// watchdog loop below), so the target thread's handler runs and reads this well before the
+// next iteration could overwrite it.
+std::atomic<int> g_rip_sample_which {-1};
+std::atomic<bool> g_rip_sampler_installed {false};
+constexpr int kRipSampleSignal = SIGUSR2;
+
+// Minimal, local, async-signal-safe hex writer -- deliberately not a call to SignalSafeLog
+// (defined much further down this file, inside a *different* reopened anonymous-namespace
+// block): forward-declaring SignalSafeLog here and defining GuestRipSampleHandler here too hit
+// a genuine linker failure ("undefined symbol...referenced from...HleStallWatchdogThread()"),
+// meaning this toolchain does NOT treat the two `namespace { }` blocks under this file's
+// enclosing AetherPS4::Fex as the same merged anonymous namespace the standard says they should
+// be. Rather than chase that further, this handler is fully self-contained instead -- same
+// write(2)-retry-on-EINTR pattern as SignalSafeLog, just inlined.
+void SignalSafeWriteHex(char*& out, char* end, unsigned long long value) noexcept {
+  char digits[16];
+  int n = 0;
+  if (value == 0) {
+    digits[n++] = '0';
+  } else {
+    while (value != 0 && n < 16) {
+      const int d = static_cast<int>(value & 0xF);
+      digits[n++] = static_cast<char>(d < 10 ? '0' + d : 'a' + d - 10);
+      value >>= 4;
+    }
+  }
+  while (n > 0 && out < end) {
+    *out++ = digits[--n];
+  }
+}
+
+void GuestRipSampleHandler(int, siginfo_t*, void*) noexcept {
+  uint64_t rip = 0;
+  uint64_t last_syscall = 0;
+  const bool ok = BachataQueryGuestRipSyscall(&rip, &last_syscall);
+  const int which = g_rip_sample_which.load(std::memory_order_acquire);
+
+  char buf[128];
+  char* out = buf;
+  char* const end = buf + sizeof(buf);
+  const auto append = [&](const char* s) {
+    for (; *s != '\0' && out < end; ++s) {
+      *out++ = *s;
+    }
+  };
+  append("BACHATA_RIP_SAMPLE: which=");
+  if (out < end) {
+    *out++ = static_cast<char>('0' + (which >= 0 && which <= 9 ? which : 9));
+  }
+  if (ok) {
+    append(" guest_rip=0x");
+    SignalSafeWriteHex(out, end, rip);
+    append(" last_syscall=0x");
+    SignalSafeWriteHex(out, end, last_syscall);
+  } else {
+    append(" no_active_fex_context_on_this_host_thread");
+  }
+  if (out < end) {
+    *out++ = '\n';
+  }
+
+  size_t remaining = static_cast<size_t>(out - buf);
+  const char* wp = buf;
+  while (remaining > 0) {
+    const ssize_t written = write(STDERR_FILENO, wp, remaining);
+    if (written < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      break;
+    }
+    if (written == 0) {
+      break;
+    }
+    wp += written;
+    remaining -= static_cast<size_t>(written);
+  }
+}
+
+void EnsureGuestRipSamplerInstalled() noexcept {
+  bool expected = false;
+  if (!g_rip_sampler_installed.compare_exchange_strong(expected, true)) {
+    return;
+  }
+  struct sigaction action {};
+  action.sa_sigaction = GuestRipSampleHandler;
+  sigemptyset(&action.sa_mask);
+  action.sa_flags = SA_SIGINFO;
+  sigaction(kRipSampleSignal, &action, nullptr);
+}
+
 void HleStallWatchdogThread() {
   for (;;) {
     std::this_thread::sleep_for(std::chrono::seconds(3));
@@ -263,6 +369,30 @@ void HleStallWatchdogThread() {
       // symptom, e.g. of a stuck safepoint) or had already died earlier (meaning they're an
       // unrelated, independent problem).
       LogMan::Msg::EFmt("BACHATA_HLE_STALL_THREADS: {}", DumpGuestThreadNamesForDiagnostics());
+    }
+
+    // GTA V stall investigation, continued: sampled every tick of this same loop (every 3s),
+    // unconditionally -- not gated behind the stall check above, since the whole point is
+    // seeing whether Game:Main/RenderThread are making real progress *before* anything looks
+    // stuck by the elapsed_ms>=3000 threshold above. A single stall log line says "something
+    // was slow once"; a sequence of these across several ticks says whether guest_rip is
+    // actually advancing (real, if slow, progress), stuck at one address (a genuine spin/wait),
+    // or the thread has no active FEX context at all (already exited or never started).
+    EnsureGuestRipSamplerInstalled();
+    void* raw_impl = g_guest_engine_impl_for_diagnostics.load(std::memory_order_acquire);
+    static constexpr const char* kSampleTargets[] = {"Game:Main", "[RAGE] RenderThread"};
+    for (int which = 0; which < 2; ++which) {
+      const pthread_t handle =
+          GuestEngine::FindGuestThreadHandleByName(raw_impl, kSampleTargets[which]);
+      if (handle == pthread_t {}) {
+        continue;
+      }
+      g_rip_sample_which.store(which, std::memory_order_release);
+      pthread_kill(handle, kRipSampleSignal);
+      // Lets the signaled thread's handler run and log before this loop potentially moves on
+      // to the next target and overwrites g_rip_sample_which -- see that variable's own
+      // comment for why this is safe rather than a real race.
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
   }
 }
@@ -1924,6 +2054,37 @@ bool HandleGuestSignal(int signal, siginfo_t* info, void* rawContext) noexcept {
     return false;
   }
   SetHgsCheckpoint(HgsCheckpoint::IsAlignmentFault);
+  // Confirmed on-device (GTA V) that a successful backpatch does not always end the loop: the
+  // first hit at a given pc correctly rewrites the faulting instruction (e.g. an RCpc
+  // acquire/release load/store FEX emitted for a guest atomic op) into an alignment-tolerant
+  // plain variant, but execution then re-faults at that exact same pc over and over afterward
+  // with instr_before == instr_after -- 2 million-plus repeats, 8.5M+ log lines, from one run.
+  // Whatever defeats the fix on this path (resuming at pc rather than past it, or a JIT block
+  // regenerated fresh each time and discarding the earlier patch), spinning forever just
+  // produces an unresponsive app with an ever-growing log, indistinguishable from a real hang.
+  // Bail out after a bounded number of repeats at the same pc and let this fall through as an
+  // unhandled fault instead -- signals.cpp's own SignalHandler (reached when
+  // DispatchAccessViolation/this function returns false) already produces a full, working
+  // crash report with guest register state and a backtrace, far more useful than another
+  // doomed retry.
+  {
+    static std::atomic<std::uintptr_t> last_stuck_pc{0};
+    static std::atomic<std::uint32_t> stuck_pc_repeat_count{0};
+    constexpr std::uint32_t kMaxRepeatsAtSamePc = 20;
+    if (last_stuck_pc.exchange(pc, std::memory_order_relaxed) == pc) {
+      const auto repeats = stuck_pc_repeat_count.fetch_add(1, std::memory_order_relaxed) + 1;
+      if (repeats >= kMaxRepeatsAtSamePc) {
+        SignalSafeLog(
+            "BACHATA_UNALIGNED_STUCK: pc=%p repeated %d times with no progress -- giving up "
+            "and falling through to the real crash handler\n",
+            reinterpret_cast<void*>(pc), static_cast<int>(repeats));
+        SetHgsCheckpoint(HgsCheckpoint::StuckAtSamePcReturn);
+        return false;
+      }
+    } else {
+      stuck_pc_repeat_count.store(1, std::memory_order_relaxed);
+    }
+  }
 #ifdef __APPLE__
   // __x[0..28] are plain (non-PAC) uint64_t registers x0-x28; fp/lr (x29/x30) are
   // separate opaque fields on Darwin, not contiguous with __x -- stage all 31 GPRs into
@@ -2540,6 +2701,26 @@ std::string GuestEngine::DumpThreadNamesForDiagnostics(void* raw_impl) {
     result += "; ";
   }
   return result;
+}
+
+pthread_t GuestEngine::FindGuestThreadHandleByName(void* raw_impl, const char* name) {
+  auto* impl = static_cast<Impl*>(raw_impl);
+  if (impl == nullptr || name == nullptr) {
+    return pthread_t {};
+  }
+  std::scoped_lock lock {impl->ThreadsMutex};
+  for (auto* t : impl->Threads) {
+    const pthread_t handle = t->NativeHandle.load(std::memory_order_acquire);
+    if (handle == pthread_t {}) {
+      continue;
+    }
+    char thread_name[64] = {};
+    pthread_getname_np(handle, thread_name, sizeof(thread_name));
+    if (std::strcmp(thread_name, name) == 0) {
+      return handle;
+    }
+  }
+  return pthread_t {};
 }
 
 // Reopens the same anonymous namespace HleStallWatchdogThread and this function's own forward
