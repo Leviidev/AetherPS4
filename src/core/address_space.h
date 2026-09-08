@@ -87,6 +87,37 @@ public:
     // Returns an interval set containing all usable regions.
     boost::icl::interval_set<VAddr> GetUsableRegions();
 
+    // Games request Fixed mappings (see MemoryManager::MapMemory) at addresses that assume the
+    // SDK-standard fixed layout other platforms reserve verbatim (the SYSTEM_MANAGED_MIN /
+    // SYSTEM_RESERVED_MIN / USER_MIN constants defined at the top of address_space.cpp). On iOS
+    // those constants are never actually used as the real base -- the sandbox refuses MAP_FIXED
+    // at them outright, so the constructor instead reserves same-sized regions wherever
+    // mmap(nullptr, ...) happens to place them and packs system_reserved_base/user_base
+    // relative to that arbitrary base (see the TARGET_OS_IPHONE branch's own comment). A
+    // perfectly valid, real-hardware address computed against the fixed constants can therefore
+    // fall entirely outside every region this build actually tracks even though the *offset*
+    // into its logical region is fine -- confirmed on-device as the cause of a GTA V memory
+    // request that has no covering VMA at all. Since each logical region and its real
+    // counterpart are always the same size (both come from the same *Size constants), any
+    // address that legitimately falls within a logical region's [MIN, MAX] range maps losslessly
+    // onto the equivalent offset in that region's real, currently-reserved counterpart. Returns
+    // addr unchanged if it already falls inside an actual reserved region (nothing to do), or if
+    // it doesn't correspond to any known logical region either (callers must still validate the
+    // result -- this can't invent a valid address out of a genuinely bogus one).
+    [[nodiscard]] VAddr TranslateFixedMappingAddress(VAddr addr) const noexcept;
+
+    // Attempts to back [addr, addr+size) with real memory at that EXACT address via a direct,
+    // fixed mmap -- see TranslateFixedMappingAddress's own comment on why rebasing alone isn't
+    // enough for every caller: some games recompute the SDK-standard address later for direct
+    // JIT loads/stores rather than remembering whatever a Fixed mapping syscall actually
+    // returned, so the memory has to genuinely exist where they compute it, not merely have the
+    // syscall report success from somewhere else. Deliberately narrow (exactly this one
+    // mapping's range, not the whole logical region) to keep the blast radius small. Returns
+    // false (host state unchanged) on any failure -- EACCES/ENOMEM/an actual collision --
+    // rather than throwing or asserting, since callers have a rebase-based fallback for exactly
+    // that case.
+    [[nodiscard]] bool TryReserveExactRegion(VAddr addr, u64 size) noexcept;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl;

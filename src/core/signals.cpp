@@ -5,6 +5,7 @@
 #include "common/assert.h"
 #include "common/crash_reporter.h"
 #include "common/decoder.h"
+#include "common/logging/log.h"
 #include "common/signal_context.h"
 #include "core/libraries/kernel/threads/exception.h"
 #include "core/signals.h"
@@ -21,6 +22,7 @@
 
 #include <atomic>
 #include <cstdio>
+#include <cstring>
 #include <string_view>
 #include <unistd.h>
 
@@ -34,6 +36,7 @@ static constexpr DWORD MS_VC_EXCEPTION = 0x406D1388;
 #include <Zydis/Formatter.h>
 #endif
 #ifdef __APPLE__
+#include <mach-o/dyld.h>
 #include <mach/arm/thread_status.h>
 #include <mach/mach.h>
 #endif
@@ -290,7 +293,7 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
             // since a wild/corrupted rip could point anywhere.
             if (auto* memory = Core::Memory::Instance()) {
                 ::Libraries::Kernel::OrbisVirtualQueryInfo rip_vma{};
-                if (memory->VirtualQuery(guest_rip, 0, &rip_vma) == 0) {
+                if (memory->TryVirtualQuery(guest_rip, 0, &rip_vma)) {
                     char hex[64] = {};
                     char* w = hex;
                     for (int i = 0; i < 16; ++i) {
@@ -337,7 +340,7 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
             }
             if (auto* memory = Core::Memory::Instance()) {
                 ::Libraries::Kernel::OrbisVirtualQueryInfo rip_vma{};
-                if (memory->VirtualQuery(accurate_guest_rip, 0, &rip_vma) == 0) {
+                if (memory->TryVirtualQuery(accurate_guest_rip, 0, &rip_vma)) {
                     // Widened from a 16-byte peek to a 1KB window (512 before/after) to see the
                     // whole containing function, not just the faulting instruction itself --
                     // this same accurate RIP has now faulted identically across multiple runs
@@ -394,8 +397,8 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                     for (int depth = 0; depth < 8; ++depth) {
                         ::Libraries::Kernel::OrbisVirtualQueryInfo saved_rbp_vma{};
                         ::Libraries::Kernel::OrbisVirtualQueryInfo ret_addr_vma{};
-                        if (memory->VirtualQuery(frame_ptr, 0, &saved_rbp_vma) != 0 ||
-                            memory->VirtualQuery(frame_ptr + 8, 0, &ret_addr_vma) != 0) {
+                        if (!memory->TryVirtualQuery(frame_ptr, 0, &saved_rbp_vma) ||
+                            !memory->TryVirtualQuery(frame_ptr + 8, 0, &ret_addr_vma)) {
                             LOG_CRITICAL(Debug, "FEX rbp-chain[{}]: frame_ptr={:#x} not mapped, stopping",
                                          depth, frame_ptr);
                             break;
@@ -473,7 +476,7 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                     for (int i = 0; i < kStackWordsToScan; ++i) {
                         const auto word_addr = guest_rsp + static_cast<uint64_t>(i) * sizeof(uint64_t);
                         ::Libraries::Kernel::OrbisVirtualQueryInfo stack_vma{};
-                        if (memory->VirtualQuery(word_addr, 0, &stack_vma) != 0) {
+                        if (!memory->TryVirtualQuery(word_addr, 0, &stack_vma)) {
                             continue;
                         }
                         uint64_t word_value = 0;
@@ -508,8 +511,8 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
         if (auto* memory = Core::Memory::Instance()) {
             const auto guest_fault_addr = reinterpret_cast<VAddr>(info->si_addr);
             ::Libraries::Kernel::OrbisVirtualQueryInfo vma_info{};
-            const auto query_result = memory->VirtualQuery(guest_fault_addr, 0, &vma_info);
-            if (query_result == 0) {
+            const bool query_result = memory->TryVirtualQuery(guest_fault_addr, 0, &vma_info);
+            if (query_result) {
                 LOG_CRITICAL(Debug,
                              "FEX guest fault address classification: VMM says MAPPED "
                              "(vma {:#x}-{:#x}, prot={:#x}, name='{}', flexible={} direct={} "
@@ -556,9 +559,9 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
             } else {
                 LOG_CRITICAL(Debug,
                              "FEX guest fault address classification: VMM says NOT mapped "
-                             "(VirtualQuery returned {}) -- wild guest pointer, or a missing "
-                             "mmap the game expected to have happened by now",
-                             query_result);
+                             "(or its lock wasn't immediately available) -- wild guest pointer, "
+                             "a missing mmap the game expected to have happened by now, or this "
+                             "same thread already held the VMM lock when it faulted");
             }
         }
         // Classifies the actual faulting HOST address (not the guest state above) against
@@ -647,7 +650,7 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                     for (const auto& slot : kSraSlots) {
                         const auto value = static_cast<VAddr>(ts.__x[slot.host_reg]);
                         ::Libraries::Kernel::OrbisVirtualQueryInfo vma{};
-                        if (memory->VirtualQuery(value, 0, &vma) == 0) {
+                        if (memory->TryVirtualQuery(value, 0, &vma)) {
                             LOG_CRITICAL(Debug,
                                          "BACHATA_SRA_PROBE: guest {}=x{}={:#x} -- mapped VMA "
                                          "{:#x}-{:#x} offset_into_vma={:#x} name='{}' "
@@ -683,8 +686,8 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                         for (int depth = 0; depth < 8 && frame_ptr != 0; ++depth) {
                             ::Libraries::Kernel::OrbisVirtualQueryInfo saved_rbp_vma{};
                             ::Libraries::Kernel::OrbisVirtualQueryInfo ret_addr_vma{};
-                            if (memory->VirtualQuery(frame_ptr, 0, &saved_rbp_vma) != 0 ||
-                                memory->VirtualQuery(frame_ptr + 8, 0, &ret_addr_vma) != 0) {
+                            if (!memory->TryVirtualQuery(frame_ptr, 0, &saved_rbp_vma) ||
+                                !memory->TryVirtualQuery(frame_ptr + 8, 0, &ret_addr_vma)) {
                                 LOG_CRITICAL(Debug,
                                              "FEX rsp-corrupt rbp-chain[{}]: frame_ptr={:#x} not "
                                              "mapped, stopping",
@@ -800,6 +803,11 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                         kBytesBefore, kBytesAfter, fmt::ptr(reinterpret_cast<void*>(sp_addr)),
                         std::string_view(dump, dump_len));
         }
+        // Targeted flush right at the actual point of no return, not on every LOG_CRITICAL
+        // globally (see log.cpp's comment on flush_on) -- UNREACHABLE_MSG's own abort() skips
+        // every normal exit hook that would otherwise flush this, and everything logged above
+        // in this handler is worthless if it never reaches disk.
+        Common::Log::Flush();
         UNREACHABLE_MSG("Unhandled access violation at code address {}: {} address {}",
                         fmt::ptr(code_address), is_write ? "Write to" : "Read from",
                         fmt::ptr(info->si_addr));
@@ -886,7 +894,7 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                 }
                 if (auto* memory = Core::Memory::Instance()) {
                     ::Libraries::Kernel::OrbisVirtualQueryInfo ill_rip_vma{};
-                    if (memory->VirtualQuery(ill_accurate_guest_rip, 0, &ill_rip_vma) == 0) {
+                    if (memory->TryVirtualQuery(ill_accurate_guest_rip, 0, &ill_rip_vma)) {
                         constexpr uint64_t kIllWindowBefore = 256;
                         constexpr uint64_t kIllWindowAfter = 256;
                         const auto ill_window_start = static_cast<uintptr_t>(ill_accurate_guest_rip - kIllWindowBefore);
@@ -958,6 +966,7 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
             }
 #endif
 #endif
+            Common::Log::Flush();
             UNREACHABLE_MSG("Unhandled illegal instruction at code address {}: {}",
                             fmt::ptr(code_address), DisassembleInstruction(code_address));
         }
@@ -1127,7 +1136,49 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                         "against this build's binary): {}",
                         std::string_view(native_bt, native_bt_len));
         }
+        {
+            // Every native-stack address logged above sits somewhere in one of these images'
+            // runtime range -- without this, addresses far outside the main executable's own
+            // ~48MB __TEXT (as seen repeatedly for this exact crash) can't be attributed to a
+            // specific system framework, embedded dylib, or the dyld shared cache at all. The
+            // header pointer IS the image's actual runtime base address (it's mapped at the
+            // very start of the image), so subtracting it from a stack address directly gives
+            // a file offset symbolicatable against that image's own binary/dSYM offline --
+            // no need to reason about link-time vmaddr vs. slide separately.
+            // static, not a stack or heap buffer: a modern iOS process links well over a
+            // thousand images (1385 observed on-device, mostly the dyld shared cache's own
+            // frameworks), so this needs real room -- a stack array that size risks overrunning
+            // a signal's alternate stack, and malloc/new here risks re-entering an allocator
+            // that may itself be the very thing that just crashed (this exact crash has been
+            // tracked into libsystem_malloc.dylib more than once). A previous, much smaller
+            // buffer cut off after only 82 of the 1385 images, before ever reaching the base of
+            // whichever image the persistent 0x1ce8xxxxxxx-family addresses (recurring across
+            // this whole investigation) actually belong to.
+            static char images_buf[131072];
+            int images_len = 0;
+            const uint32_t image_count = _dyld_image_count();
+            for (uint32_t i = 0; i < image_count &&
+                 images_len < static_cast<int>(sizeof(images_buf)) - 160;
+                 i++) {
+                const char* path = _dyld_get_image_name(i);
+                const struct mach_header* header = _dyld_get_image_header(i);
+                if (path == nullptr || header == nullptr) {
+                    continue;
+                }
+                const char* base_name = std::strrchr(path, '/');
+                base_name = base_name != nullptr ? base_name + 1 : path;
+                images_len += std::snprintf(images_buf + images_len, sizeof(images_buf) - images_len,
+                                            "[%u]=%s@%#llx ", i, base_name,
+                                            static_cast<unsigned long long>(
+                                                reinterpret_cast<uintptr_t>(header)));
+            }
+            LOG_CRITICAL(Debug,
+                        "BACHATA_LOADED_IMAGES: ({} images total, name@runtime_base -- subtract "
+                        "from a stack/fault address to get that image's own file offset): {}",
+                        image_count, std::string_view(images_buf, images_len));
+        }
         Common::ReportCrash(raw_context, sig, info);
+        Common::Log::Flush();
         UNREACHABLE_MSG("Unhandled SIGTRAP at code address {} (not a JIT-mapping request, and not "
                         "a BRK instruction at all, or a BRK that repeated too many times to keep "
                         "recovering from)",

@@ -346,6 +346,7 @@ s32 MemoryManager::Free(PAddr phys_addr, u64 size, bool is_checked) {
 
     // Acquire writer lock
     std::scoped_lock lk2{mutex};
+    ValidateVmaMapIntegrity("Free");
     auto mapping_mutation = mapping_generation.BeginMutation();
 
     for (const auto& [addr, size] : remove_list) {
@@ -555,6 +556,43 @@ s32 MemoryManager::MapMemory(void** out_addr, VAddr virtual_addr, u64 size, Memo
         }
     }
 
+    if (True(flags & MemoryMapFlags::Fixed)) {
+        // See TranslateFixedMappingAddress's own comment: a Fixed request computed against the
+        // SDK-standard fixed layout can legitimately fall outside every region this platform
+        // actually reserved even though it's a real, valid address on other platforms/hardware.
+        const VAddr translated = impl.TranslateFixedMappingAddress(virtual_addr);
+        if (translated != virtual_addr) {
+            // Not already inside a real reserved region, but corresponds to a valid logical
+            // SDK region. Confirmed on-device (GTA V) that rebasing onto `translated` makes
+            // this mapping *syscall* succeed but is not sufficient by itself: the game went on
+            // to directly read from its original, un-rebased address via a plain JIT-compiled
+            // load a moment later (not through any syscall this code sees), which faulted
+            // since nothing was actually backing that original address -- only the rebased one
+            // was. Try to back the game's exact requested address with real memory first, and
+            // only fall back to the rebased address (better than crashing, even if some later
+            // direct access might still miss) if that fails.
+            const VAddr aligned_addr = Common::AlignDown(virtual_addr, 16_KB);
+            const u64 aligned_size =
+                Common::AlignUp(virtual_addr + size, 16_KB) - aligned_addr;
+            if (impl.TryReserveExactRegion(aligned_addr, aligned_size)) {
+                // vma_map is normally only mutated under `mutex` (see every other writer in
+                // this file) -- take it here too for this one insert, separately from the
+                // `mutex` acquisition further down for the main CreateArea call, since this
+                // happens earlier than that while only `unmap_mutex` (which serializes against
+                // other writers, but not shared_lock readers) is held.
+                std::unique_lock vma_lock{mutex};
+                vma_map.emplace(aligned_addr, VirtualMemoryArea{aligned_addr, aligned_size});
+                vma_lock.unlock();
+                LOG_INFO(Kernel_Vmm,
+                         "BACHATA_EXACT_RESERVE: backed a Fixed mapping at its exact requested "
+                         "address instead of rebasing: addr={:#x} size={:#x}",
+                         aligned_addr, aligned_size);
+            } else {
+                virtual_addr = translated;
+            }
+        }
+    }
+
     if (True(flags & MemoryMapFlags::Fixed) && True(flags & MemoryMapFlags::NoOverwrite)) {
         // Perform necessary error checking for Fixed & NoOverwrite case
         ASSERT_MSG(IsValidMapping(virtual_addr, size), "Attempted to access invalid address {:#x}",
@@ -565,7 +603,28 @@ s32 MemoryManager::MapMemory(void** out_addr, VAddr virtual_addr, u64 size, Memo
             LOG_ERROR(Kernel_Vmm, "Unable to map {:#x} bytes at address {:#x}", size, virtual_addr);
             return ORBIS_KERNEL_ERROR_ENOMEM;
         }
-    } else if (False(flags & MemoryMapFlags::Fixed)) {
+    } else if (True(flags & MemoryMapFlags::Fixed)) {
+        // Fixed without NoOverwrite skips both this branch and the SearchFree branch below,
+        // so unlike that case, virtual_addr was never checked against vma_map at all before
+        // reaching CreateArea/FindVMA. On iOS the reserved system-managed/reserved/user
+        // regions are packed together starting from wherever the OS's mmap(nullptr, ...)
+        // happened to place them (see address_space.cpp's TARGET_OS_IPHONE branch) rather
+        // than at the fixed SDK-standard addresses other platforms use, so a game's Fixed
+        // request for a legitimate-on-real-hardware address like a garlic/GPU heap offset
+        // can fall entirely outside every VMA this build actually tracks. FindVMA has no
+        // bounds check of its own (confirmed on-device: it hits std::prev(vma_map.begin()),
+        // undefined behavior, which reads other MemoryManager fields as if they were the
+        // found VMA and crashes deterministically deep inside CreateArea) -- so this has to
+        // be caught here, before that call, the same way the Fixed+NoOverwrite case above
+        // already does for itself.
+        if (!IsValidMapping(virtual_addr, size)) {
+            LOG_ERROR(Kernel_Vmm,
+                      "Fixed mapping requested outside any tracked address range: "
+                      "addr={:#x} size={:#x}",
+                      virtual_addr, size);
+            return ORBIS_KERNEL_ERROR_ENOMEM;
+        }
+    } else {
         // Find a free virtual addr to map
         alignment = alignment > 0 ? alignment : 16_KB;
         virtual_addr = virtual_addr == 0 ? DEFAULT_MAPPING_BASE : virtual_addr;
@@ -583,6 +642,7 @@ s32 MemoryManager::MapMemory(void** out_addr, VAddr virtual_addr, u64 size, Memo
 
     // Acquire writer lock.
     std::unique_lock lk2{mutex};
+    ValidateVmaMapIntegrity("MapMemory");
     auto mapping_mutation = mapping_generation.BeginMutation();
 
     // Create VMA representing this mapping.
@@ -768,6 +828,7 @@ s32 MemoryManager::MapFile(void** out_addr, VAddr virtual_addr, u64 size, Memory
 
     // Aquire writer lock
     std::scoped_lock lk2{mutex};
+    ValidateVmaMapIntegrity("MapFile");
     const auto mapping_mutation = mapping_generation.BeginMutation();
 
     // Update VMA map and map to address space.
@@ -821,6 +882,7 @@ s32 MemoryManager::PoolDecommit(VAddr virtual_addr, u64 size) {
 
     // Aquire writer mutex
     std::scoped_lock lk2{mutex};
+    ValidateVmaMapIntegrity("PoolDecommit");
     const auto mapping_mutation = mapping_generation.BeginMutation();
 
     // Loop through all vmas in the area, unmap them.
@@ -910,6 +972,7 @@ s32 MemoryManager::UnmapMemory(VAddr virtual_addr, u64 size) {
 
     // Acquire writer lock.
     std::scoped_lock lk2{mutex};
+    ValidateVmaMapIntegrity("UnmapMemory");
     const auto mapping_mutation = mapping_generation.BeginMutation();
     return UnmapMemoryImpl(virtual_addr, size);
 }
@@ -1130,6 +1193,7 @@ s32 MemoryManager::Protect(VAddr addr, u64 size, MemoryProt prot) {
 
     // Ensure the range to modify is valid
     std::scoped_lock lk{mutex, unmap_mutex};
+    ValidateVmaMapIntegrity("Protect");
     const auto mapping_mutation = mapping_generation.BeginMutation();
     ASSERT_MSG(IsValidMapping(addr, size), "Attempted to access invalid address {:#x}", addr);
 
@@ -1169,6 +1233,28 @@ s32 MemoryManager::VirtualQuery(VAddr addr, s32 flags,
     }
 
     std::shared_lock lk{mutex};
+    return VirtualQueryLocked(query_addr, flags, info);
+}
+
+bool MemoryManager::TryVirtualQuery(VAddr addr, s32 flags,
+                                    ::Libraries::Kernel::OrbisVirtualQueryInfo* info) {
+    auto query_addr =
+        addr < impl.SystemManagedVirtualBase() ? impl.SystemManagedVirtualBase() : addr;
+    if (addr < query_addr && flags == 0) {
+        return false;
+    }
+
+    std::shared_lock lk{mutex, std::try_to_lock};
+    if (!lk.owns_lock()) {
+        return false;
+    }
+    return VirtualQueryLocked(query_addr, flags, info) == ORBIS_OK;
+}
+
+// Shared by VirtualQuery and TryVirtualQuery -- everything that happens once the lock (however
+// it was acquired) is already held. Takes no lock of its own.
+s32 MemoryManager::VirtualQueryLocked(VAddr query_addr, s32 flags,
+                                      ::Libraries::Kernel::OrbisVirtualQueryInfo* info) {
     auto it = FindVMA(query_addr);
 
     while (it != vma_map.end() && it->second.type == VMAType::Free && flags == 1) {
@@ -1361,6 +1447,7 @@ s32 MemoryManager::DirectQueryAvailable(PAddr search_start, PAddr search_end, u6
 
 s32 MemoryManager::SetDirectMemoryType(VAddr addr, u64 size, s32 memory_type) {
     std::scoped_lock lk{mutex, unmap_mutex};
+    ValidateVmaMapIntegrity("SetDirectMemoryType");
     const auto mapping_mutation = mapping_generation.BeginMutation();
 
     ASSERT_MSG(IsValidMapping(addr, size), "Attempted to access invalid address {:#x}", addr);
@@ -1412,6 +1499,7 @@ s32 MemoryManager::SetDirectMemoryType(VAddr addr, u64 size, s32 memory_type) {
 
 void MemoryManager::NameVirtualRange(VAddr virtual_addr, u64 size, std::string_view name) {
     std::scoped_lock lk{mutex, unmap_mutex};
+    ValidateVmaMapIntegrity("NameVirtualRange");
     const auto mapping_mutation = mapping_generation.BeginMutation();
 
     // Sizes are aligned up to the nearest 16_KB

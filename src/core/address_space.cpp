@@ -1011,6 +1011,70 @@ AddressSpace::AddressSpace() : impl{std::make_unique<Impl>()} {
 
 AddressSpace::~AddressSpace() = default;
 
+VAddr AddressSpace::TranslateFixedMappingAddress(VAddr addr) const noexcept {
+    const VAddr system_managed_addr = reinterpret_cast<VAddr>(system_managed_base);
+    const VAddr system_reserved_addr = reinterpret_cast<VAddr>(system_reserved_base);
+    const VAddr user_addr = reinterpret_cast<VAddr>(user_base);
+
+    // Already inside one of the actual reserved regions -- nothing to translate.
+    if ((addr >= system_managed_addr && addr < system_managed_addr + system_managed_size) ||
+        (addr >= system_reserved_addr && addr < system_reserved_addr + system_reserved_size) ||
+        (addr >= user_addr && addr < user_addr + user_size)) {
+        return addr;
+    }
+
+    if (addr >= SYSTEM_MANAGED_MIN && addr <= SYSTEM_MANAGED_MAX) {
+        return system_managed_addr + (addr - SYSTEM_MANAGED_MIN);
+    }
+    if (addr >= SYSTEM_RESERVED_MIN && addr <= SYSTEM_RESERVED_MAX) {
+        return system_reserved_addr + (addr - SYSTEM_RESERVED_MIN);
+    }
+    if (addr >= USER_MIN && addr <= USER_MAX) {
+        return user_addr + (addr - USER_MIN);
+    }
+
+    // Doesn't correspond to any known logical region -- leave it as-is so the caller's own
+    // validation catches it the same way it would have before this translation existed.
+    return addr;
+}
+
+bool AddressSpace::TryReserveExactRegion(VAddr addr, u64 size) noexcept {
+#ifdef _WIN32
+    // Not observed to be needed on Windows -- TranslateFixedMappingAddress is a no-op there
+    // (its real bases already sit at the fixed constants), so callers never reach this.
+    return false;
+#else
+    // Confirmed on-device (GTA V) that TranslateFixedMappingAddress's rebase alone is not
+    // always enough: it makes the mapping *syscall* succeed, but some games recompute this
+    // exact address later via their own SDK-standard address arithmetic for direct JIT
+    // loads/stores, bypassing whatever the syscall actually returned in *out_addr entirely --
+    // those later accesses then read from a hole with nothing mapped there at all, since the
+    // real memory only exists at the rebased address. Try to back the game's exact requested
+    // address with real memory instead. Deliberately narrow (exactly [addr, addr+size), not
+    // the whole logical region this address falls in) to keep the blast radius small: this
+    // exact range was never part of any region this process reserved at startup, so nothing
+    // here already depends on it, but a broad fixed reservation across the whole logical
+    // region risks colliding with whatever the OS placed nearby (this binary's own
+    // already-ASLR'd load address included -- confirmed to land close enough in the same
+    // address neighborhood to be a real concern, not a theoretical one).
+    void* const requested = reinterpret_cast<void*>(addr);
+    int map_flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
+#if !defined(__FreeBSD__)
+    map_flags |= MAP_NORESERVE;
+#endif
+    void* const result = mmap(requested, size, PROT_READ | PROT_WRITE, map_flags, -1, 0);
+    if (result == MAP_FAILED) {
+        return false;
+    }
+    if (result != requested) {
+        // Should never happen with MAP_FIXED, but never leave a stray mapping behind if it does.
+        munmap(result, size);
+        return false;
+    }
+    return true;
+#endif
+}
+
 void* AddressSpace::Map(VAddr virtual_addr, u64 size, PAddr phys_addr, bool is_exec) {
 #if ARCH_X86_64
     const auto prot = is_exec ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE;

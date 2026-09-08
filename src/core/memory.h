@@ -11,7 +11,9 @@
 #ifndef _WIN32
 #include <pthread.h>
 #endif
+#include "common/assert.h"
 #include "common/enum.h"
+#include "common/logging/log.h"
 #include "common/shared_first_mutex.h"
 #include "common/singleton.h"
 #include "common/types.h"
@@ -281,6 +283,19 @@ public:
 
     s32 VirtualQuery(VAddr addr, s32 flags, ::Libraries::Kernel::OrbisVirtualQueryInfo* info);
 
+    // Crash-path only: identical to VirtualQuery, but never blocks. Confirmed on-device as a
+    // genuine self-deadlock, not just a theoretical risk (see DumpRecentPoolOps' own comment
+    // acknowledging this whole class of issue): a GTA V thread faulted while MapMemory still
+    // held `mutex` exclusively, and the SIGSEGV handler's own diagnostics -- running on that
+    // same thread -- called the blocking VirtualQuery to classify the fault, trying to acquire
+    // a shared lock on the very mutex this thread already held exclusively. The thread never
+    // reached its own fatal ReportCrash/UNREACHABLE_MSG afterward; it just went silent forever,
+    // indistinguishable in the log from an unrelated hang. Returns false (info left untouched)
+    // if the lock isn't immediately available, from either this same thread already holding it
+    // or genuine contention from another -- either way, skipping the diagnostic and letting the
+    // crash handler reach its fatal path is strictly better than deadlocking inside it.
+    bool TryVirtualQuery(VAddr addr, s32 flags, ::Libraries::Kernel::OrbisVirtualQueryInfo* info);
+
     s32 DirectMemoryQuery(PAddr addr, bool find_next,
                           ::Libraries::Kernel::OrbisQueryInfo* out_info);
 
@@ -329,6 +344,48 @@ public:
     void DumpRecentMapOps(VAddr fault_addr, char* out_buf, std::size_t out_buf_size) const;
 
 private:
+    // Body shared by VirtualQuery and TryVirtualQuery once whichever lock they took is already
+    // held -- see TryVirtualQuery's own comment for why this needed splitting out.
+    s32 VirtualQueryLocked(VAddr query_addr, s32 flags,
+                           ::Libraries::Kernel::OrbisVirtualQueryInfo* info);
+
+    // Confirmed on-device that vma_map's own red-black tree can end up corrupted (a node's
+    // sibling/parent pointer field holding garbage instead of a real address) by the time some
+    // later, unrelated MapMemory/CreateArea call walks into it and crashes -- but the corruption
+    // itself happens earlier, silently, in whatever call actually wrote the bad pointer. Cheap
+    // enough to call from every public entry point that holds `mutex` for writing before it
+    // touches vma_map: walking the map in key order and checking that every key matches its own
+    // VMA's base and that keys strictly increase is O(n) but n is the VMA count, not called from
+    // any per-instruction/JIT hot path. Deliberately fatal (not just logged) so the crash handler
+    // -- which can now actually complete a report since TryVirtualQuery stopped it deadlocking on
+    // this same `mutex` -- captures a stack pointing at the call that entered with a corrupt map,
+    // bracketing the real culprit to whatever vma_map-touching call came immediately before it.
+    void ValidateVmaMapIntegrity(const char* where) const {
+        VAddr prev_base = 0;
+        bool first = true;
+        std::size_t index = 0;
+        for (const auto& [key, vma] : vma_map) {
+            if (key != vma.base) {
+                LOG_CRITICAL(Kernel_Vmm,
+                             "BACHATA_VMA_CORRUPT: at {} entry #{} key={:#x} != vma.base={:#x}",
+                             where, index, key, vma.base);
+                Common::Log::Flush();
+                UNREACHABLE_MSG("vma_map corruption detected (key/base mismatch)");
+            }
+            if (!first && key <= prev_base) {
+                LOG_CRITICAL(Kernel_Vmm,
+                             "BACHATA_VMA_CORRUPT: at {} entry #{} key={:#x} not strictly "
+                             "increasing after prev={:#x}",
+                             where, index, key, prev_base);
+                Common::Log::Flush();
+                UNREACHABLE_MSG("vma_map corruption detected (ordering violated)");
+            }
+            prev_base = key;
+            first = false;
+            ++index;
+        }
+    }
+
     VMAHandle FindVMA(VAddr target) {
         return std::prev(vma_map.upper_bound(target));
     }
