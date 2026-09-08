@@ -7,7 +7,10 @@
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
+#include <exception>
 #include <mutex>
+#include "common/assert.h"
+#include "common/logging/log.h"
 
 namespace {
 thread_local Core::GuestCpu::HleCallFrame* ActiveHleCallFrame{};
@@ -104,7 +107,26 @@ AetherPS4::Fex::EngineResult<bool> HleGuestBridge::Invoke(HleCallFrame& frame) {
         return values;
     }();
     const ActiveHleCallScope active_frame{frame};
-    const auto result = adapter->Invoke(frame);
+    // Confirmed on-device (GTA V's thread-creation path: TcbCtor/ThreadState::Alloc, two
+    // separate throw sites found across two log cycles just within that one call chain -- an
+    // unguarded `new` anywhere downstream of any of the ~1000s of adapters this bridges to can
+    // throw) that an uncaught C++ exception from an HLE handler reaches libc++abi's
+    // terminate/abort with zero diagnostic value: signals.cpp's SIGTRAP handler only sees a
+    // "compiler/libc trap" at a fixed system-library address shared by every uncaught-exception
+    // termination on this platform, with no exception type, message, or indication of which
+    // operation was even running. Guarding this one dispatch point instead of every individual
+    // allocation site downstream of it catches all of them at once, and logs enough to identify
+    // the actual next one immediately instead of costing another full log-analysis cycle.
+    HleCallResult result{false};
+    try {
+        result = adapter->Invoke(frame);
+    } catch (const std::exception& e) {
+        LOG_CRITICAL(Debug,
+                     "BACHATA_HLE_INVOKE_THREW: operation={} name={} what=\"{}\"",
+                     frame.operation, adapter->Name(), e.what());
+        Common::Log::Flush();
+        UNREACHABLE_MSG("HLE adapter threw an uncaught exception");
+    }
     for (std::size_t i = 0; i < calleeSaved.size(); ++i) {
         if (frame.gpr[calleeSaved[i]] != beforeCalleeSaved[i]) {
             std::fprintf(stderr,
