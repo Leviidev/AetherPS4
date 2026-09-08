@@ -84,6 +84,18 @@ private:
     std::vector<MntPair> m_mnt_pairs;
     std::vector<std::filesystem::path> path_parts;
     tsl::robin_map<std::filesystem::path, std::filesystem::path> path_cache;
+    // Case-insensitive resolution failures were never cached, only successes -- see
+    // GetHostPath's own comment on this. A guest directory that's genuinely absent (RAGE-engine
+    // games store shaders/assets inside .rpf archives, not as loose files, and probe loose
+    // paths first expecting them to fail even on real hardware) paid a full parent-directory
+    // walk-up plus a linear directory_iterator scan on *every single* missing file underneath
+    // it -- confirmed on-device as the actual cause of GTA V never finishing its shader-probe
+    // loop within any reasonable wait: over 2000 always-failing lookups across two mount
+    // prefixes, most sharing the same few missing parent directories, each repeating that same
+    // expensive scan from scratch. Keyed by the exact guest path (parent-directory or leaf)
+    // that was confirmed unresolvable, so the very next lookup for a different file under an
+    // already-known-missing directory can fail immediately instead of re-walking.
+    tsl::robin_map<std::filesystem::path, bool> unresolvable_cache;
     std::mutex m_mutex;
 };
 

@@ -120,6 +120,13 @@ std::filesystem::path MntPoints::GetHostPath(std::string_view path, bool* is_rea
         // If the path does not exist attempt to verify this.
         // Retrieve parent path until we find one that exists.
         std::scoped_lock lk{m_mutex};
+        // Exact-path fast exit: helps the (less common) case of the identical full path being
+        // queried again, e.g. the same config file stat'd twice. The component-level cache
+        // below is what actually matters for the common case -- many different leaf files
+        // under the same missing directory.
+        if (unresolvable_cache.contains(host_path)) {
+            return std::optional<std::filesystem::path>({});
+        }
         path_parts.clear();
         auto current_path = host_path;
         while (!current_path.empty() && !std::filesystem::exists(current_path)) {
@@ -148,6 +155,16 @@ std::filesystem::path MntPoints::GetHostPath(std::string_view path, bool* is_rea
                     add_match(part);
                     continue;
                 }
+                // Confirmed on-device as the actual fix for GTA V never finishing its boot-time
+                // shader probe loop: hundreds of distinct shader files under the same missing
+                // "common/shaders/orbis_final"-style directory each independently paid for a
+                // full linear directory_iterator scan below before this cache existed. Once
+                // any one of them establishes this exact intermediate path is unresolvable,
+                // every other file sharing it short-circuits here instead of re-scanning.
+                const auto prospective_guest_path = guest_path / part;
+                if (unresolvable_cache.contains(prospective_guest_path)) {
+                    return std::optional<std::filesystem::path>({});
+                }
                 const auto part_low = Common::ToLower(part.string());
                 bool found_match = false;
                 for (const auto& path : std::filesystem::directory_iterator(current_path)) {
@@ -163,9 +180,12 @@ std::filesystem::path MntPoints::GetHostPath(std::string_view path, bool* is_rea
                     break;
                 }
                 if (!found_match) {
+                    unresolvable_cache[prospective_guest_path] = true;
                     return std::optional<std::filesystem::path>({});
                 }
             }
+        } else {
+            unresolvable_cache[host_path] = true;
         }
         return std::optional<std::filesystem::path>(current_path);
     };
