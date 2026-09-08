@@ -188,6 +188,14 @@ void Setup(std::string_view shadps4_filename) {
     for (auto& [name, logger] : ALL_LOGGERS) {
         logger = std::make_shared<spdlog::logger>(std::string(name));
         logger->set_level(spdlog::level::trace);
+        // Deliberately NOT flush_on(critical): plenty of call sites (internal_qsort's own
+        // comparator diagnostic among them) log at critical level on a genuine hot path,
+        // potentially thousands of times per second. Flushing synchronously on every one of
+        // those turned RenderThread's per-frame CPU work into blocking disk I/O per log line,
+        // confirmed on-device as the direct cause of a game that never crashes but never
+        // presents a frame again either. See Flush() below -- called explicitly from
+        // signals.cpp's actual fatal-crash paths instead, which is the only place a lost
+        // buffered line has mattered.
     }
 
     // Setup console
