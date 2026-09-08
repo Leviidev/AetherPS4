@@ -840,7 +840,15 @@ void Linker::Relocate(Module* module) {
                 UNREACHABLE_MSG("Unknown bind type {}", sym_bind);
             }
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
-            if (rel_sym_type == Loader::SymbolType::Function && symrec.hle_adapter != nullptr) {
+            // hle_adapter alone is sufficient: only AddFunction/AddFallbackFunction/
+            // AddUnsupportedFunction ever set it, and all three are function-only APIs. Gating
+            // on rel_sym_type too used to silently skip veneer allocation for a resolved HLE
+            // function whenever the guest ELF's own symbol-table entry was typed something
+            // other than STT_FUN (observed for compilerrt_abort_impl, a bare compiler-rt
+            // symbol typed STT_NOTYPE rather than STT_FUN in GTA V's eboot) -- Resolve() would
+            // report success, but the relocation stayed unpatched because the veneer that
+            // would have supplied its actual callable address never got allocated.
+            if (symrec.hle_adapter != nullptr) {
                 if (m_hle_veneers == nullptr) {
                     m_hle_veneers = std::make_unique<GuestCpu::HleVeneerAllocator>();
                 }
@@ -875,6 +883,35 @@ bool Linker::Resolve(const std::string& name, Loader::SymbolType sym_type, Modul
                      Loader::SymbolRecord* return_info) {
     const auto ids = Common::SplitString(name, '#');
     if (ids.size() != 3) {
+        // Not a NID#library#module PS4 SDK import -- some eboots (observed with GTA V,
+        // CUSA00419) carry a plain-named dynamic relocation for a compiler-rt/libc runtime
+        // helper (e.g. compilerrt_abort_impl, which compiler-generated overflow/divide-by-zero
+        // builtins call when they need to abort) instead of routing through Sony's NID export
+        // table. Retry it as a raw symbol name under the "libc"/"libc" tag this codebase
+        // already registers compiler-runtime helpers under (see RegisterFexLibcCxaAliases)
+        // rather than leaving the relocation permanently unpatched: a noreturn abort helper
+        // that silently resolves to nothing lets guest execution continue past a
+        // detected-fatal runtime-check failure in an undefined state instead of terminating
+        // there.
+        // Always looked up as Function regardless of the caller's sym_type: a bare compiler-rt
+        // symbol's ELF type is often NoType rather than STT_FUN (unlike a normal PS4 NID
+        // import), but LIB_FUNCTION always registers raw-name fallbacks with type=Function --
+        // GenerateName folds type into the lookup key, so matching sym_type here would silently
+        // miss every such registration.
+        Loader::SymbolResolver raw_sr{};
+        raw_sr.name = name;
+        raw_sr.library = "libc";
+        raw_sr.library_version = 1;
+        raw_sr.module = "libc";
+        raw_sr.type = Loader::SymbolType::Function;
+        if (const auto* raw_record = m_hle_symbols.FindSymbol(raw_sr); raw_record != nullptr
+#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
+            && !raw_record->hle_fallback
+#endif
+        ) {
+            *return_info = *raw_record;
+            return true;
+        }
         return_info->virtual_address = 0;
         return_info->name = name;
         LOG_ERROR(Core_Linker, "Not Resolved {}", name);

@@ -127,6 +127,20 @@ int PS4_SYSV_ABI fex_libc_cxa_atexit(void (*func)(void*), void* arg, void* dso_h
     std::abort();
 }
 
+// compilerrt_abort_impl: LLVM compiler-rt's builtins (e.g. the 128-bit integer divide and
+// signed-overflow-checked arithmetic routines) call this when they hit a runtime failure they
+// can't recover from. It has no NID -- the guest ELF references it by its plain linker symbol
+// name rather than through Sony's NID export table -- so it never reaches this table via the
+// normal NID#library#module resolution path; Linker::Resolve retries unresolved bare names
+// under this same "libc"/"libc" tag specifically so this registration can be found.
+[[noreturn]] void PS4_SYSV_ABI fex_compilerrt_abort_impl(const char* file, int line,
+                                                          const char* function) {
+    LOG_CRITICAL(Lib_LibcInternal,
+                 "compilerrt_abort_impl: compiler-rt builtin aborted at {}:{} in {}",
+                 file ? file : "(null)", line, function ? function : "(null)");
+    std::abort();
+}
+
 [[noreturn]] void PS4_SYSV_ABI fex_libc_xbad_alloc() {
     LOG_CRITICAL(Lib_LibcInternal, "std::bad_alloc thrown by guest code (no exception "
                                    "unwinding support -- terminating)");
@@ -181,6 +195,9 @@ void RegisterFexLibcCxaAliases(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("tsvEmnenz48", "libc", 1, "libc", fex_libc_cxa_atexit);
     LIB_FUNCTION("zr094EQ39Ww", "libc", 1, "libc", fex_libc_cxa_pure_virtual);
     LIB_FUNCTION("qYhnoevd9bI", "libc", 1, "libc", fex_libc_std_terminate);
+    // Not NID-hashed in the guest ELF (see fex_compilerrt_abort_impl's comment) -- registered
+    // by its literal name so Linker::Resolve's raw-symbol-name fallback can find it.
+    LIB_FUNCTION("compilerrt_abort_impl", "libc", 1, "libc", fex_compilerrt_abort_impl);
     LIB_FUNCTION("eT2UsmTewbU", "libc", 1, "libc", fex_libc_xbad_alloc);
     LIB_FUNCTION("tQIo+GIPklo", "libc", 1, "libc", fex_libc_xlength_error);
     LIB_FUNCTION("ozMAr28BwSY", "libc", 1, "libc", fex_libc_xout_of_range);
