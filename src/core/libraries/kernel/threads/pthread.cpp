@@ -1,7 +1,13 @@
 // SPDX-FileCopyrightText: Copyright 2025-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <span>
+#ifdef __APPLE__
+#include <pthread.h>
+#include <mach/mach.h>
+#include <mach/thread_policy.h>
+#endif
 
 #include "common/assert.h"
 #include "common/singleton.h"
@@ -597,6 +603,36 @@ int PS4_SYSV_ABI posix_pthread_setschedparam(PthreadT pthread, SchedPolicy polic
         return ret;
     }
 
+#ifdef __APPLE__
+    // Actually apply this to the host scheduler -- this used to be a TODO-stub ("_thr_setscheduler")
+    // that only updated pthread->attr's own bookkeeping below, silently discarding every
+    // priority a guest thread ever requested. RAGE engine games (confirmed with GTA V
+    // on-device) carefully assign relative thread priorities so their main logic thread stays
+    // responsive under heavy background worker load; with this a no-op, every guest thread
+    // instead competed at the host's default priority, and on a phone's limited core count
+    // that starved the main thread badly enough that it never finished its own boot sequence
+    // (it fell completely silent for the rest of the session after spawning its render
+    // thread, only ever caught mid-stall by the HLE watchdog).
+    // THREAD_PRECEDENCE_POLICY, not SCHED_FIFO/SCHED_OTHER's sched_priority, is the mechanism
+    // that actually works here: Darwin's SCHED_OTHER has no real priority range at all
+    // (sched_get_priority_min/max both return 0 -- see Common::SetCurrentThreadPriority's own
+    // generic POSIX branch, which is equally a no-op on this platform for the same reason),
+    // and SCHED_FIFO/SCHED_RR need real-time entitlements this sideloaded app doesn't have --
+    // but adjusting relative *precedence* within the existing scheduling class needs neither.
+    // PS4's own priority scale is inverted from what's intuitive here (0 is highest priority,
+    // 767 is lowest -- SCE_KERNEL_PRIO_FIFO_HIGHEST/LOWEST), so flip it before scaling down
+    // into Darwin's importance range, which the kernel clamps to a small window regardless of
+    // what's requested.
+    const auto native_thr = static_cast<pthread_t>(
+        reinterpret_cast<void*>(pthread->native_thr.GetHandle()));
+    const int clamped_prio = std::clamp(param->sched_priority, 0, 767);
+    const int importance = ((767 - clamped_prio) * 16) / 767 - 8; // -8..+8
+    thread_precedence_policy_data_t precedence{.importance = importance};
+    thread_policy_set(pthread_mach_thread_np(native_thr), THREAD_PRECEDENCE_POLICY,
+                      reinterpret_cast<thread_policy_t>(&precedence),
+                      THREAD_PRECEDENCE_POLICY_COUNT);
+#endif
+
     if (pthread->attr.sched_policy == policy &&
         (policy == SchedPolicy::Other || pthread->attr.prio == param->sched_priority)) {
         pthread->attr.prio = param->sched_priority;
@@ -604,7 +640,6 @@ int PS4_SYSV_ABI posix_pthread_setschedparam(PthreadT pthread, SchedPolicy polic
         return 0;
     }
 
-    // TODO: _thr_setscheduler
     pthread->attr.sched_policy = policy;
     pthread->attr.prio = param->sched_priority;
     pthread->lock.unlock();
