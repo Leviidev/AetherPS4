@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <new>
 #include "common/assert.h"
+#include "common/logging/log.h"
 #include "common/singleton.h"
 #include "core/libraries/kernel/threads/pthread.h"
 #include "core/libraries/libs.h"
@@ -25,7 +27,23 @@ Core::Tcb* TcbCtor(Pthread* thread, int initial) {
     // Initialize allocated memory and allocate DTV table.
     const u32 num_dtvs = linker->MaxTlsIndex();
     const auto static_tls_size = linker->StaticTlsSize();
-    auto* dtv_table = new Core::DtvEntry[num_dtvs + 2]{};
+    // Confirmed on-device that this can throw and reach libc++abi's terminate/abort with zero
+    // diagnostic info -- signals.cpp's SIGTRAP handler only sees a "compiler/libc trap" at a
+    // fixed system-library address shared by every uncaught-exception termination on this
+    // platform, with no way to tell what was actually thrown or why. Route it through our own,
+    // already-working crash path instead so the log actually says what num_dtvs/static_tls_size
+    // were when it failed, rather than leaving the next investigation to start from scratch.
+    Core::DtvEntry* dtv_table = nullptr;
+    try {
+        dtv_table = new Core::DtvEntry[num_dtvs + 2]{};
+    } catch (const std::exception& e) {
+        LOG_CRITICAL(Kernel_Pthread,
+                     "BACHATA_TCB_DTV_ALLOC_FAILED: {} (num_dtvs={} static_tls_size={:#x} "
+                     "initial={} thread={})",
+                     e.what(), num_dtvs, static_tls_size, initial, fmt::ptr(thread));
+        Common::Log::Flush();
+        UNREACHABLE_MSG("DTV table allocation threw");
+    }
 
     // Initialize thread control block
     u8* addr = reinterpret_cast<u8*>(addr_out);
