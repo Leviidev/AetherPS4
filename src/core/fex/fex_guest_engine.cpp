@@ -2490,6 +2490,89 @@ bool TryRecoverDirectMemoryAddressMismatch(int signal, siginfo_t* info, void* ra
 #endif
 }
 
+bool TryRecoverNullResourceTableLookup(int signal, siginfo_t* info, void* rawContext) noexcept {
+#if defined(__aarch64__) && defined(__APPLE__)
+  if ((signal != SIGBUS && signal != SIGSEGV) || rawContext == nullptr) {
+    return false;
+  }
+
+  auto* context = reinterpret_cast<ucontext_t*>(rawContext);
+  auto& ts = context->uc_mcontext->__ss;
+  void* const pc = reinterpret_cast<void*>(arm_thread_state64_get_pc(ts));
+
+  uint64_t guest_rip = 0;
+  if (!BachataReconstructAccurateGuestRIP(pc, &guest_rip)) {
+    return false;
+  }
+  // eboot.bin+0x1c08fba: confirmed identically across two independent on-device sessions --
+  // same accurate guest rip, same fault address (0x7350), same key (R14/RDX=0x690 at the fault,
+  // via FEXCore's own SRA mapping). This is one unrolled level of a 4-5 level nested table walk
+  // (mov rax,[rax+rcx]; mov rcx,r14; shr rcx,N; and rcx,0xfff0 at decreasing N -- a radix/
+  // page-table-style lookup indexed by a small key the game passes as this function's own 2nd
+  // argument, confirmed via the guest instruction bytes at this function's real entry,
+  // eboot.bin+0x1c08e80: push rbp; mov rbp,rsp; push r15; push r14; push r12; push rbx; mov
+  // r14,rsi). This specific level's intermediate table entry is null every time, and the walk
+  // never checks before dereferencing through it.
+  if (guest_rip != 0x7001c08fbaULL) {
+    return false;
+  }
+
+  // Same reasoning as TryRecoverKnownBadPropertyLink: decode the faulting load's destination
+  // register straight from the raw instruction bits (bits[4:0], true for every AArch64 load
+  // variant regardless of addressing mode) rather than hardcoding one, so this stays correct
+  // even if a future recompile picks a different register for this guest_rip's block. What a
+  // *successful* lookup would have produced there is exactly what this recovery substitutes:
+  // 0 (null / not-found), matching whatever downstream null-check this lookup's caller almost
+  // certainly has -- real gameplay only reaches this table walk after minutes of genuine
+  // progress, so the caller can't be assuming every key always hits.
+  const auto* writable_pc =
+      reinterpret_cast<const volatile uint32_t*>(FEXCore::Allocator::GetWritableAddress(pc));
+  const uint32_t instr = *writable_pc;
+  const uint32_t dest_reg = instr & 0x1F;
+  if (dest_reg == 31) {
+    return false;
+  }
+
+  // Bail to the real crash handler instead of "recovering" forever if this ever turns out to be
+  // a spin-retry loop (this exact rip re-faulting nonstop) rather than isolated, one-shot lookup
+  // misses -- mirrors the existing stuck-pc bailout in HandleUnalignedAccess above.
+  static std::atomic<std::uint32_t> consecutive_hits{0};
+  constexpr std::uint32_t kMaxConsecutiveHits = 200;
+  const auto hits = consecutive_hits.fetch_add(1, std::memory_order_relaxed) + 1;
+  if (hits > kMaxConsecutiveHits) {
+    SignalSafeLog("BACHATA_NULL_TABLE_LOOKUP_STUCK: guest_rip=%p fired %d times -- giving up "
+                  "and falling through to the real crash handler\n",
+                  reinterpret_cast<void*>(guest_rip), static_cast<int>(hits));
+    return false;
+  }
+
+  uint64_t old_value = 0;
+  if (dest_reg == 29) {
+    old_value = static_cast<uint64_t>(arm_thread_state64_get_fp(ts));
+    arm_thread_state64_set_fp(ts, 0);
+  } else if (dest_reg == 30) {
+    old_value = reinterpret_cast<uint64_t>(arm_thread_state64_get_lr(ts));
+    arm_thread_state64_set_lr_fptr(ts, nullptr);
+  } else {
+    old_value = ts.__x[dest_reg];
+    ts.__x[dest_reg] = 0;
+  }
+
+  SignalSafeLog("BACHATA_NULL_TABLE_LOOKUP_RECOVER: guest_rip=%p pc=%p instr=%#x dest_reg=x%d "
+                "old_value=%p hits=%d -> 0, resuming at %p\n",
+                reinterpret_cast<void*>(guest_rip), pc, instr, static_cast<int>(dest_reg),
+                reinterpret_cast<void*>(old_value), static_cast<int>(hits),
+                reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(pc) + 4));
+  arm_thread_state64_set_pc_fptr(ts, reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(pc) + 4));
+  return true;
+#else
+  static_cast<void>(signal);
+  static_cast<void>(info);
+  static_cast<void>(rawContext);
+  return false;
+#endif
+}
+
 class GuestEngine::Thread final {
 public:
   Thread(std::thread::id owner, Core::GuestExecutionRequest request)

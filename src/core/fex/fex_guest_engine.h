@@ -107,6 +107,21 @@ bool TryRecoverCallRetStackOverflow(int signal, siginfo_t* info, void* rawContex
 // instruction (not the next one -- this fixes a source operand a load/store is about to read
 // through, unlike the destination-register recoveries elsewhere in this file).
 bool TryRecoverDirectMemoryAddressMismatch(int signal, siginfo_t* info, void* rawContext) noexcept;
+// Pragmatic, narrowly-targeted recovery for one specific, fully-diagnosed, deterministic GTA V
+// (CUSA00419) crash: eboot.bin+0x1c08fba, the last of a 4-5 level nested table walk (mov
+// rax,[rax+rcx]; mov rcx,r14; shr rcx,N; and rcx,0xfff0 at decreasing N, one unrolled copy per
+// level -- a radix/page-table-style lookup indexed by a small key the game passes as this
+// function's 2nd argument, confirmed via FEXCore's own SRA register mapping to be R14/RDX). This
+// specific level's intermediate table entry is null every time execution reaches it (confirmed
+// identically across two independent on-device sessions: same guest rip, same key, 0x690), and
+// the walk never null-checks before dereferencing through it. Matches TryRecoverKnownBadPropertyLink's
+// same reasoning: the faulting load's destination is what a *successful* lookup would have
+// produced, so making it read as 0 (null/not-found) instead of crashing lets whatever downstream
+// null-check this lookup's caller almost certainly has (real gameplay reaches this point only
+// after ~2 minutes of genuine progress) take over instead of a hard crash. Only engages at this
+// one exact guest address; gives up and falls through to the real crash handler if it ever fires
+// enough times in a row to suggest a spin-retry loop rather than isolated lookup misses.
+bool TryRecoverNullResourceTableLookup(int signal, siginfo_t* info, void* rawContext) noexcept;
 // Queue Orbis guest exception handler for deferred FEX delivery (ARM64 host).
 // orbis_sig is the Orbis signal number (e.g. 30 / SIGUSR1). guest_handler is the
 // guest VA from Libraries::Kernel::Handlers. Actual run is HandleCallback at HLE

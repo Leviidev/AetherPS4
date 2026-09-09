@@ -228,6 +228,15 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
         if (::AetherPS4::Fex::TryRecoverDirectMemoryAddressMismatch(sig, info, raw_context)) {
             return;
         }
+        // A specific, confirmed-deterministic GTA V (CUSA00419) crash: eboot.bin+0x1c08fba, one
+        // level of a 4-5 level nested resource-table walk whose intermediate entry is null for
+        // this exact key every time (0x690, confirmed via FEXCore's SRA register mapping across
+        // two independent sessions) -- the walk itself never null-checks before dereferencing.
+        // Gated on the exact guest rip, so this can't mask an unrelated crash. See the function's
+        // own comment for the full diagnostic chain.
+        if (::AetherPS4::Fex::TryRecoverNullResourceTableLookup(sig, info, raw_context)) {
+            return;
+        }
         // TryRecoverCorruptedGuestRsp (guest RIP 0x7001342320's rsp-corrupted-to-SceGnmDriver-
         // address crash) was tried and pulled back out: repairing rsp from rbp let the faulting
         // instruction itself succeed, but whatever actually corrupts rsp does so again almost
