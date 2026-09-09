@@ -625,6 +625,40 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
             }
             LOG_CRITICAL(Debug, "FEX host ARM64 registers at fault: {}",
                         std::string_view(host_regs, host_regs_len));
+            // Confirmed on-device that manually re-deriving this mapping per-crash (as this
+            // whole comment block above already documents doing once, for RSP/x8 specifically)
+            // is a real, recurring cost -- a GTA V crash whose "guest registers at fault" line
+            // showed rcx=0x30 turned out, once actually cross-referenced against FEXCore's own
+            // x64::SRA table (Arm64Emitter.cpp -- Apple/non-arm64ec branch), to have the live
+            // RCX sitting in x7 reading 0x7350 instead: a completely different value, because
+            // the stale-checkpoint problem this comment block describes for guest_rip/guest
+            // registers applies to every SRA-mapped GPR, not just RSP. Doing that translation
+            // here automatically, from the same already-read ts.__x[], removes the need to
+            // redo it by hand next time. R15's slot is r29 (Apple's opaque fp field, not part
+            // of __x[0..28]), read via arm_thread_state64_get_fp same as this function already
+            // does for LR above.
+            LOG_CRITICAL(Debug,
+                        "FEX live x86 GPRs (via SRA, more reliable than the stale guest-state "
+                        "dump above for a fault deep in a block): RAX={:#x} RCX={:#x} "
+                        "RDX={:#x} RBX={:#x} RSP={:#x} RBP={:#x} RSI={:#x} "
+                        "RDI={:#x} R8={:#x} R9={:#x} R10={:#x} R11={:#x} R12={:#x} "
+                        "R13={:#x} R14={:#x} R15={:#x}",
+                        static_cast<unsigned long long>(ts.__x[4]),
+                        static_cast<unsigned long long>(ts.__x[7]),
+                        static_cast<unsigned long long>(ts.__x[5]),
+                        static_cast<unsigned long long>(ts.__x[6]),
+                        static_cast<unsigned long long>(ts.__x[8]),
+                        static_cast<unsigned long long>(ts.__x[9]),
+                        static_cast<unsigned long long>(ts.__x[10]),
+                        static_cast<unsigned long long>(ts.__x[11]),
+                        static_cast<unsigned long long>(ts.__x[12]),
+                        static_cast<unsigned long long>(ts.__x[13]),
+                        static_cast<unsigned long long>(ts.__x[14]),
+                        static_cast<unsigned long long>(ts.__x[15]),
+                        static_cast<unsigned long long>(ts.__x[16]),
+                        static_cast<unsigned long long>(ts.__x[17]),
+                        static_cast<unsigned long long>(ts.__x[19]),
+                        static_cast<unsigned long long>(arm_thread_state64_get_fp(ts)));
             // New crash class (guest RIP 0x7001342320): a SIGBUS write landing 8 bytes below
             // whatever this compiled block's host x8 register holds. x8 is guest RSP's fixed SRA
             // slot on this build -- FEXCore's x64::SRA table (Arm64Emitter.cpp) maps

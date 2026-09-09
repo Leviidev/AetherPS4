@@ -959,6 +959,16 @@ s32 MemoryManager::UnmapMemory(VAddr virtual_addr, u64 size) {
     }
 
     std::scoped_lock lk{unmap_mutex};
+    // See TranslateFixedMappingAddress's own comment. Confirmed on-device (GTA V): after a
+    // Fixed mapping at one of these logical-window addresses gets rebased and the game's
+    // direct JIT access to the original address gets redirected (fex_guest_engine.cpp's
+    // TryRecoverDirectMemoryAddressMismatch), the game goes on to sceKernelMunmap that same
+    // original, un-rebased address -- a genuine syscall, not a JIT memory fault, so that
+    // redirect doesn't cover it. IsValidMapping below only knows about the rebased VMA this
+    // process actually created, so an un-translated original address fails validation and
+    // asserts. Translate here too, same as MapMemory already does for the initial Fixed
+    // request, so the two ends of this address's lifecycle (map then unmap) agree.
+    virtual_addr = impl.TranslateFixedMappingAddress(virtual_addr);
     // Align address and size appropriately
     virtual_addr = Common::AlignDown(virtual_addr, 16_KB);
     size = Common::AlignUp(size, 16_KB);
@@ -1190,6 +1200,9 @@ s32 MemoryManager::Protect(VAddr addr, u64 size, MemoryProt prot) {
     if (size == 0) {
         return ORBIS_OK;
     }
+
+    // See UnmapMemory's own comment on why this translation is needed here too.
+    addr = impl.TranslateFixedMappingAddress(addr);
 
     // Ensure the range to modify is valid
     std::scoped_lock lk{mutex, unmap_mutex};
@@ -1446,6 +1459,9 @@ s32 MemoryManager::DirectQueryAvailable(PAddr search_start, PAddr search_end, u6
 }
 
 s32 MemoryManager::SetDirectMemoryType(VAddr addr, u64 size, s32 memory_type) {
+    // See UnmapMemory's own comment on why this translation is needed here too.
+    addr = impl.TranslateFixedMappingAddress(addr);
+
     std::scoped_lock lk{mutex, unmap_mutex};
     ValidateVmaMapIntegrity("SetDirectMemoryType");
     const auto mapping_mutation = mapping_generation.BeginMutation();
@@ -1498,6 +1514,9 @@ s32 MemoryManager::SetDirectMemoryType(VAddr addr, u64 size, s32 memory_type) {
 }
 
 void MemoryManager::NameVirtualRange(VAddr virtual_addr, u64 size, std::string_view name) {
+    // See UnmapMemory's own comment on why this translation is needed here too.
+    virtual_addr = impl.TranslateFixedMappingAddress(virtual_addr);
+
     std::scoped_lock lk{mutex, unmap_mutex};
     ValidateVmaMapIntegrity("NameVirtualRange");
     const auto mapping_mutation = mapping_generation.BeginMutation();
