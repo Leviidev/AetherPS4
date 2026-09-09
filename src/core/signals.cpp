@@ -242,35 +242,51 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
             // real guest RIP should be) just a few real instructions later, on the same thread,
             // with nothing else logged in between -- this function's own caller almost
             // certainly doesn't handle a "not found" (0) result the way real hardware would
-            // never need it to. [rsp+0x0] is the real return address into that caller (matches
-            // this function's own confirmed prologue: no extra stack manipulation happens
-            // before the fault, so nothing has moved rsp since entry), not a guess. Dumping a
-            // window of its own guest bytes here, once, should show exactly what it does with
-            // the returned 0 -- the same log-embedded-bytes technique that decoded this
-            // function itself, no separate extraction needed.
+            // never need it to. [rsp+0x0]'s own contents (confirmed via a first attempt at this
+            // diagnostic) turned out to be the address of a slot *inside* a jump/dispatch table
+            // eboot.bin uses to select between several sibling lookup functions -- not a return
+            // address at all, meaning this function's caller pushed an extra local variable
+            // before calling (a table-slot pointer, presumably for its own later use) and the
+            // real return address sits one or more slots deeper. Scanning several slots and
+            // classifying each with the same "inside a loaded module" check the existing guest-
+            // stack scan already uses elsewhere in this function -- rather than trusting exactly
+            // one offset -- gives multiple candidates to cross-reference by hand instead of
+            // guessing again.
 #if defined(__aarch64__) && defined(__APPLE__)
             auto* context = reinterpret_cast<ucontext_t*>(raw_context);
             auto& ts = context->uc_mcontext->__ss;
             const auto guest_rsp = static_cast<uintptr_t>(ts.__x[8]);
-            uintptr_t caller_addr = 0;
-            if (BachataSafeRead(guest_rsp, &caller_addr)) {
-                constexpr uint64_t kWindowBefore = 16;
-                constexpr uint64_t kWindowAfter = 496;
-                const auto window_start = static_cast<uintptr_t>(caller_addr - kWindowBefore);
-                static char hex[2 * (kWindowBefore + kWindowAfter) + 1] = {};
-                char* w = hex;
-                for (uint64_t i = 0; i < kWindowBefore + kWindowAfter; ++i) {
-                    uint8_t byte = 0;
-                    if (BachataSafeRead(window_start + i, &byte)) {
-                        w += std::snprintf(w, hex + sizeof(hex) - w, "%02x", byte);
-                    } else {
-                        w += std::snprintf(w, hex + sizeof(hex) - w, "??");
+            if (auto* linker = Common::Singleton<Core::Linker>::Instance()) {
+                constexpr int kSlotsToScan = 24;
+                for (int slot = 0; slot < kSlotsToScan; ++slot) {
+                    const auto slot_addr = guest_rsp + static_cast<uint64_t>(slot) * sizeof(uint64_t);
+                    uintptr_t candidate = 0;
+                    if (!BachataSafeRead(slot_addr, &candidate)) {
+                        continue;
                     }
+                    auto* module = linker->FindByAddress(candidate);
+                    if (module == nullptr) {
+                        continue;
+                    }
+                    constexpr uint64_t kWindowBefore = 16;
+                    constexpr uint64_t kWindowAfter = 112;
+                    const auto window_start = static_cast<uintptr_t>(candidate - kWindowBefore);
+                    static char hex[2 * (kWindowBefore + kWindowAfter) + 1] = {};
+                    char* w = hex;
+                    for (uint64_t i = 0; i < kWindowBefore + kWindowAfter; ++i) {
+                        uint8_t byte = 0;
+                        if (BachataSafeRead(window_start + i, &byte)) {
+                            w += std::snprintf(w, hex + sizeof(hex) - w, "%02x", byte);
+                        } else {
+                            w += std::snprintf(w, hex + sizeof(hex) - w, "??");
+                        }
+                    }
+                    LOG_CRITICAL(Debug,
+                                 "FEX null-table-lookup caller candidate: rsp+{:#x}={:#x} -- "
+                                 "inside module '{}', window_start={:#x} before={:#x} bytes={}",
+                                 slot * sizeof(uint64_t), candidate, module->name, window_start,
+                                 kWindowBefore, hex);
                 }
-                LOG_CRITICAL(Debug,
-                             "FEX null-table-lookup caller window: guest_rsp={:#x} "
-                             "caller_addr={:#x} window_start={:#x} before={:#x} bytes={}",
-                             guest_rsp, caller_addr, window_start, kWindowBefore, hex);
             }
 #endif
             return;
