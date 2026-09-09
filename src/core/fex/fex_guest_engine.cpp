@@ -2495,6 +2495,9 @@ bool TryRecoverNullResourceTableLookup(int signal, siginfo_t* info, void* rawCon
   if ((signal != SIGBUS && signal != SIGSEGV) || rawContext == nullptr) {
     return false;
   }
+  if (ActiveFexExecution.Thread == nullptr || ActiveFexExecution.Thread->CurrentFrame == nullptr) {
+    return false;
+  }
 
   auto* context = reinterpret_cast<ucontext_t*>(rawContext);
   auto& ts = context->uc_mcontext->__ss;
@@ -2504,38 +2507,41 @@ bool TryRecoverNullResourceTableLookup(int signal, siginfo_t* info, void* rawCon
   if (!BachataReconstructAccurateGuestRIP(pc, &guest_rip)) {
     return false;
   }
-  // eboot.bin+0x1c08fba: confirmed identically across two independent on-device sessions --
-  // same accurate guest rip, same fault address (0x7350), same key (R14/RDX=0x690 at the fault,
-  // via FEXCore's own SRA mapping). This is one unrolled level of a 4-5 level nested table walk
-  // (mov rax,[rax+rcx]; mov rcx,r14; shr rcx,N; and rcx,0xfff0 at decreasing N -- a radix/
-  // page-table-style lookup indexed by a small key the game passes as this function's own 2nd
-  // argument, confirmed via the guest instruction bytes at this function's real entry,
-  // eboot.bin+0x1c08e80: push rbp; mov rbp,rsp; push r15; push r14; push r12; push rbx; mov
-  // r14,rsi). This specific level's intermediate table entry is null every time, and the walk
-  // never checks before dereferencing through it.
-  if (guest_rip != 0x7001c08fbaULL) {
-    return false;
-  }
-
-  // Same reasoning as TryRecoverKnownBadPropertyLink: decode the faulting load's destination
-  // register straight from the raw instruction bits (bits[4:0], true for every AArch64 load
-  // variant regardless of addressing mode) rather than hardcoding one, so this stays correct
-  // even if a future recompile picks a different register for this guest_rip's block. What a
-  // *successful* lookup would have produced there is exactly what this recovery substitutes:
-  // 0 (null / not-found), matching whatever downstream null-check this lookup's caller almost
-  // certainly has -- real gameplay only reaches this table walk after minutes of genuine
-  // progress, so the caller can't be assuming every key always hits.
-  const auto* writable_pc =
-      reinterpret_cast<const volatile uint32_t*>(FEXCore::Allocator::GetWritableAddress(pc));
-  const uint32_t instr = *writable_pc;
-  const uint32_t dest_reg = instr & 0x1F;
-  if (dest_reg == 31) {
+  // eboot.bin+0x1c08f70: a real, disassembled (from this exact function's own byte dump, already
+  // captured in an earlier crash's log -- no separate extraction needed) x86 function that walks
+  // a 5-level radix table keyed on its own 2nd argument (rsi), confirmed on-device to be an
+  // ordinary-looking pointer inside a direct-memory region this session's own address-rebase fix
+  // touches (rsi=0x735806ebe8; the fault address 0x7350 is exactly (rsi>>0x18)&0xfff0, matching
+  // this walk's own bit-extraction math level-for-level) -- almost certainly RAGE's own internal
+  // address -> allocation-metadata lookup, which this platform's rebase leaves out of sync with
+  // whatever address the game later queries it with. None of the walk's 5 levels (or the [rax+
+  // 0x28] dereference immediately after) null-check before dereferencing -- confirmed on-device
+  // that patching only the first faulting load (mov dest,[rax+rcx], resume at pc+4) just moves
+  // the identical crash 18 bytes later to the next unrolled level, and no later level can be
+  // patched that way at all once execution reaches `cmp byte[rbx+0xa0],0` a few instructions
+  // after the walk -- skipping a compare corrupts the flags its very next instruction (a
+  // conditional branch) depends on. So this recovers the whole lookup at once instead of one
+  // instruction at a time: simulate the function returning 0 (not-found) by writing the guest
+  // CPU state directly (Frame->State.rip / State.gregs, exactly like this file's own thread-init
+  // code already does for REG_R12 above) and redirecting host pc to Pointers.DispatcherLoopTopFillSRA
+  // -- FEXCore's own "resume guest execution at an arbitrary address, refilling every SRA
+  // register from Frame->State first" entry point (confirmed live for this exact vendored build
+  // via BachataDumpDispatcherState's DispatcherLoopTopFillSRA field), the same class of redirect
+  // SafepointSignalHandler above already performs from a signal handler for a different bug.
+  // Landing on eboot.bin+0x1c09018 (`add rsp,8; pop rbx; pop r14; pop r15; pop rbp; ret`) is safe
+  // because nothing this function itself pushed has been touched -- the fault is a pure read
+  // partway through the walk, so the stack and every callee-saved register are exactly as this
+  // function's own prologue left them.
+  constexpr uint64_t kWalkFaultRangeLo = 0x7001c08f95ULL;
+  constexpr uint64_t kWalkFaultRangeHi = 0x7001c08fdfULL;
+  constexpr uint64_t kSafeEpilogueGuestRip = 0x7001c09018ULL;
+  if (guest_rip < kWalkFaultRangeLo || guest_rip > kWalkFaultRangeHi) {
     return false;
   }
 
   // Bail to the real crash handler instead of "recovering" forever if this ever turns out to be
-  // a spin-retry loop (this exact rip re-faulting nonstop) rather than isolated, one-shot lookup
-  // misses -- mirrors the existing stuck-pc bailout in HandleUnalignedAccess above.
+  // a spin-retry loop (this exact function re-entered nonstop) rather than isolated, one-shot
+  // lookup misses -- mirrors the existing stuck-pc bailout in HandleUnalignedAccess above.
   static std::atomic<std::uint32_t> consecutive_hits{0};
   constexpr std::uint32_t kMaxConsecutiveHits = 200;
   const auto hits = consecutive_hits.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -2546,24 +2552,17 @@ bool TryRecoverNullResourceTableLookup(int signal, siginfo_t* info, void* rawCon
     return false;
   }
 
-  uint64_t old_value = 0;
-  if (dest_reg == 29) {
-    old_value = static_cast<uint64_t>(arm_thread_state64_get_fp(ts));
-    arm_thread_state64_set_fp(ts, 0);
-  } else if (dest_reg == 30) {
-    old_value = reinterpret_cast<uint64_t>(arm_thread_state64_get_lr(ts));
-    arm_thread_state64_set_lr_fptr(ts, nullptr);
-  } else {
-    old_value = ts.__x[dest_reg];
-    ts.__x[dest_reg] = 0;
-  }
+  auto* frame = ActiveFexExecution.Thread->CurrentFrame;
+  frame->State.rip = kSafeEpilogueGuestRip;
+  frame->State.gregs[FEXCore::X86State::REG_RAX] = 0;
 
-  SignalSafeLog("BACHATA_NULL_TABLE_LOOKUP_RECOVER: guest_rip=%p pc=%p instr=%#x dest_reg=x%d "
-                "old_value=%p hits=%d -> 0, resuming at %p\n",
-                reinterpret_cast<void*>(guest_rip), pc, instr, static_cast<int>(dest_reg),
-                reinterpret_cast<void*>(old_value), static_cast<int>(hits),
-                reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(pc) + 4));
-  arm_thread_state64_set_pc_fptr(ts, reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(pc) + 4));
+  SignalSafeLog("BACHATA_NULL_TABLE_LOOKUP_RECOVER: fault_guest_rip=%p hits=%d -- simulating an "
+                "early return 0 from eboot.bin+0x1c08f70, resuming at guest_rip=%p via "
+                "DispatcherLoopTopFillSRA\n",
+                reinterpret_cast<void*>(guest_rip), static_cast<int>(hits),
+                reinterpret_cast<void*>(kSafeEpilogueGuestRip));
+  arm_thread_state64_set_pc_fptr(
+      ts, reinterpret_cast<void*>(frame->Pointers.DispatcherLoopTopFillSRA));
   return true;
 #else
   static_cast<void>(signal);

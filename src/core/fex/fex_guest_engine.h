@@ -108,19 +108,28 @@ bool TryRecoverCallRetStackOverflow(int signal, siginfo_t* info, void* rawContex
 // through, unlike the destination-register recoveries elsewhere in this file).
 bool TryRecoverDirectMemoryAddressMismatch(int signal, siginfo_t* info, void* rawContext) noexcept;
 // Pragmatic, narrowly-targeted recovery for one specific, fully-diagnosed, deterministic GTA V
-// (CUSA00419) crash: eboot.bin+0x1c08fba, the last of a 4-5 level nested table walk (mov
-// rax,[rax+rcx]; mov rcx,r14; shr rcx,N; and rcx,0xfff0 at decreasing N, one unrolled copy per
-// level -- a radix/page-table-style lookup indexed by a small key the game passes as this
-// function's 2nd argument, confirmed via FEXCore's own SRA register mapping to be R14/RDX). This
-// specific level's intermediate table entry is null every time execution reaches it (confirmed
-// identically across two independent on-device sessions: same guest rip, same key, 0x690), and
-// the walk never null-checks before dereferencing through it. Matches TryRecoverKnownBadPropertyLink's
-// same reasoning: the faulting load's destination is what a *successful* lookup would have
-// produced, so making it read as 0 (null/not-found) instead of crashing lets whatever downstream
-// null-check this lookup's caller almost certainly has (real gameplay reaches this point only
-// after ~2 minutes of genuine progress) take over instead of a hard crash. Only engages at this
-// one exact guest address; gives up and falls through to the real crash handler if it ever fires
-// enough times in a row to suggest a spin-retry loop rather than isolated lookup misses.
+// (CUSA00419) crash inside a real x86 function at eboot.bin+0x1c08f70 (disassembled directly
+// from that function's own byte dump, already captured in an earlier crash's log -- no separate
+// extraction needed): a 5-level radix table walk keyed on the function's own 2nd argument (rsi),
+// confirmed on-device to be an ordinary pointer inside a direct-memory region this platform's
+// own address-rebase fix touches (rsi=0x735806ebe8; the fault address 0x7350 is exactly
+// (rsi>>0x18)&0xfff0, matching this walk's own bit-extraction math) -- almost certainly RAGE's
+// own internal address -> allocation-metadata lookup, left out of sync with whatever address the
+// game later queries it with. None of the walk's 5 levels (or the dereference immediately after)
+// null-check before dereferencing. An earlier version of this recovery only patched the first
+// faulting load (zero the destination, resume at pc+4): confirmed on-device that this just moves
+// the identical crash 18 bytes later to the next unrolled level, and no later level can be
+// patched that way at all once execution reaches the `cmp`+conditional-branch a few instructions
+// after the walk -- skipping a compare corrupts the flags its branch depends on. This version
+// instead recovers the whole lookup at once: simulates the function returning 0 (not-found) by
+// writing the guest CPU state directly and redirecting host pc to
+// Pointers.DispatcherLoopTopFillSRA -- FEXCore's own "resume guest execution at an arbitrary
+// address, refilling every SRA register from Frame->State first" entry point, the same class of
+// redirect SafepointSignalHandler already performs from a signal handler for a different bug.
+// Landing on this function's own clean epilogue is safe because nothing it pushed has been
+// touched -- the fault is a pure read partway through the walk. Gives up and falls through to
+// the real crash handler if this ever fires enough times in a row to suggest a spin-retry loop
+// rather than isolated lookup misses.
 bool TryRecoverNullResourceTableLookup(int signal, siginfo_t* info, void* rawContext) noexcept;
 // Queue Orbis guest exception handler for deferred FEX delivery (ARM64 host).
 // orbis_sig is the Orbis signal number (e.g. 30 / SIGUSR1). guest_handler is the
