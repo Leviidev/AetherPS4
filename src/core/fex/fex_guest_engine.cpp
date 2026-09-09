@@ -1331,6 +1331,18 @@ public:
       frame->State.xmm.sse.data[index][0] = hleFrame.xmm[index][0];
       frame->State.xmm.sse.data[index][1] = hleFrame.xmm[index][1];
     }
+    // A prior call's Failure (set on the branch above) otherwise sits here for the rest of
+    // this thread's life -- InvocationScope's Reset() only runs once, at the very top of
+    // GuestEngine::Run, not per syscall. Confirmed on-device: a single harmless, early,
+    // unrelated "unregistered HLE operation" miss (ENOSYS) stayed recorded through the rest
+    // of a 600K-line GTA V session, so when a real, later, unrecoverable fault (FEXCore's own
+    // NoExec-entry-block check, RIP == 0xDEADBEEF54321ABC) made ExecuteThread return,
+    // GuestEngine::Run's "if there's a Failure, report it instead of inspecting the real stop
+    // reason" check below reported that ancient ENOSYS as the cause -- masking the one
+    // diagnostic block (this file's real-rip/module/wild-jump lookup) that would have shown
+    // what actually happened. Clearing it here means Failure only ever reflects the *most
+    // recent* call's own outcome.
+    invocation->Failure.reset();
     invocation->Result = frame->State.gregs[FEXCore::X86State::REG_RAX];
     invocation->WasInvoked = true;
     // Kill often lands while target is blocked inside host futex/HLE. Flush after
