@@ -89,6 +89,24 @@ bool TryRecoverKnownBadPropertyLink(int signal, siginfo_t* info, void* rawContex
 // for the bottom guard page specifically, so a fault at the *top* (a different, already-fixed
 // bug earlier this session) still falls through to the fatal path instead of being masked here.
 bool TryRecoverCallRetStackOverflow(int signal, siginfo_t* info, void* rawContext) noexcept;
+// Recovers a fault on a direct-memory address the guest computed against the SDK-standard
+// fixed layout (see AddressSpace::TranslateFixedMappingAddress) but that this platform never
+// actually backed at that exact address -- confirmed on-device (GTA V, CUSA00419) that
+// MapMemory's own rebase makes the *mapping syscall* succeed, real memory backing it
+// elsewhere, but the game separately dereferences the original, un-rebased address afterward
+// via a plain JIT load/store, since it never learns of the rebase (nothing tracks that the
+// game itself will recompute this same address independently rather than remembering whatever
+// the syscall returned). Placing real memory at the exact original address isn't achievable
+// here (mmap MAP_FIXED: EACCES; a plain hint: silently ignored; vm_allocate VM_FLAGS_FIXED:
+// KERN_INVALID_ADDRESS all confirmed refused), so this redirects the access itself instead:
+// gated on the fault address itself (from siginfo_t, not a guess) actually falling in one of
+// the narrow logical windows TranslateFixedMappingAddress recognizes -- windows this platform
+// never legitimately backs any other way, so a fault there is unambiguously this exact
+// situation, not a coincidental unrelated crash. Rewrites every live GPR holding a value in
+// that same family to its already-backed rebased equivalent and re-executes the same
+// instruction (not the next one -- this fixes a source operand a load/store is about to read
+// through, unlike the destination-register recoveries elsewhere in this file).
+bool TryRecoverDirectMemoryAddressMismatch(int signal, siginfo_t* info, void* rawContext) noexcept;
 // Queue Orbis guest exception handler for deferred FEX delivery (ARM64 host).
 // orbis_sig is the Orbis signal number (e.g. 30 / SIGUSR1). guest_handler is the
 // guest VA from Libraries::Kernel::Handlers. Actual run is HandleCallback at HLE

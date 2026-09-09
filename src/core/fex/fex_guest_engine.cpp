@@ -6,6 +6,7 @@
 // Ucontext layout only — do not include pthread.h here. pthread → semaphore →
 // assert → log → spdlog, which the FEXCore-only guest harness does not provide.
 #include "core/libraries/kernel/threads/exception.h"
+#include "core/memory.h"
 #include "Common/Config.h"
 #include "Common/HostFeatures.h"
 #include <FEXCore/Config/Config.h>
@@ -2413,6 +2414,73 @@ bool TryRecoverCallRetStackOverflow(int signal, siginfo_t* info, void* rawContex
   // guard-page-only check above) didn't write back its base register before faulting -- it's
   // still exactly the guest `call` that was in flight -- so simply retrying it with a valid
   // base now succeeds normally, no different from any other cache-reset push.
+  return true;
+#else
+  static_cast<void>(signal);
+  static_cast<void>(info);
+  static_cast<void>(rawContext);
+  return false;
+#endif
+}
+
+bool TryRecoverDirectMemoryAddressMismatch(int signal, siginfo_t* info, void* rawContext) noexcept {
+#if defined(__aarch64__) && defined(__APPLE__)
+  if ((signal != SIGBUS && signal != SIGSEGV) || info == nullptr || rawContext == nullptr) {
+    return false;
+  }
+
+  // Gate on the fault address itself, straight from the OS via siginfo_t -- not a guess. These
+  // logical windows (the SDK-standard system-managed/reserved/user ranges other platforms
+  // reserve verbatim, see AddressSpace::TranslateFixedMappingAddress) are never legitimately
+  // backed by anything else on this platform, so a fault landing in one is unambiguously this
+  // exact situation -- a real, unrelated wild-pointer crash would fault at some other address
+  // entirely, essentially never coincidentally inside this one narrow ~18GB slice of the full
+  // 64-bit space.
+  auto* memory = Core::Memory::Instance();
+  if (memory == nullptr) {
+    return false;
+  }
+  auto& address_space = memory->GetAddressSpace();
+  const auto fault_addr = reinterpret_cast<VAddr>(info->si_addr);
+  if (address_space.TranslateFixedMappingAddress(fault_addr) == fault_addr) {
+    return false;
+  }
+
+  // Confirmed on-device (GTA V, CUSA00419): MapMemory's own rebase (TranslateFixedMappingAddress
+  // / TryReserveExactRegion) makes the *mapping syscall* for one of these addresses succeed,
+  // real memory backed elsewhere -- but the game separately recomputes and dereferences the
+  // same original, un-rebased address later via a plain JIT load/store, which faults since
+  // nothing is actually backed there. Placing real memory at the exact original address isn't
+  // achievable here (mmap MAP_FIXED: EACCES; a plain hint: silently ignored, placed elsewhere;
+  // vm_allocate VM_FLAGS_FIXED: KERN_INVALID_ADDRESS -- all confirmed refused by this platform),
+  // so redirect the access itself instead: every live GPR holding a value in this same
+  // logical-window family gets rewritten to its already-backed rebased equivalent, and the
+  // *same* instruction re-executes -- unlike the destination-register recoveries elsewhere in
+  // this file, this fixes up a source operand a load/store is about to read/write through, so
+  // retrying at the same pc (not the next one) is required for the fix to actually take effect.
+  auto* context = reinterpret_cast<ucontext_t*>(rawContext);
+  auto& ts = context->uc_mcontext->__ss;
+
+  bool recovered_any = false;
+  for (int i = 0; i <= 28; ++i) {
+    const auto value = static_cast<VAddr>(ts.__x[i]);
+    const auto translated = address_space.TranslateFixedMappingAddress(value);
+    if (translated != value) {
+      ts.__x[i] = static_cast<uint64_t>(translated);
+      recovered_any = true;
+    }
+  }
+  if (!recovered_any) {
+    // The fault address itself needed rebasing, but nothing in x0-x28 held a value matching
+    // it -- the base must be in fp/lr/sp or computed some other way this can't fix up safely.
+    // Don't claim recovery and don't touch anything; let this fall through to the fatal path.
+    return false;
+  }
+
+  SignalSafeLog("BACHATA_DIRECT_MEM_REDIRECT: fault_addr=%p -- redirected register(s) holding "
+                "an un-rebased direct-memory address to their real, backed equivalents, "
+                "resuming at the same pc\n",
+                info->si_addr);
   return true;
 #else
   static_cast<void>(signal);

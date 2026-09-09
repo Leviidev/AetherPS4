@@ -219,6 +219,15 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
         if (::AetherPS4::Fex::TryRecoverCallRetStackOverflow(sig, info, raw_context)) {
             return;
         }
+        // A guest direct-memory address computed against the SDK-standard fixed layout, but
+        // never actually backed at that exact address on this platform -- see the function's
+        // own comment for the full chain (MapMemory's rebase makes the mapping syscall succeed
+        // elsewhere; the game separately dereferences the original address anyway) and why
+        // three different attempts to place real memory at that exact address all failed.
+        // Gated on the fault address itself, not a guess, so this can't mask an unrelated crash.
+        if (::AetherPS4::Fex::TryRecoverDirectMemoryAddressMismatch(sig, info, raw_context)) {
+            return;
+        }
         // TryRecoverCorruptedGuestRsp (guest RIP 0x7001342320's rsp-corrupted-to-SceGnmDriver-
         // address crash) was tried and pulled back out: repairing rsp from rbp let the faulting
         // instruction itself succeed, but whatever actually corrupts rsp does so again almost
