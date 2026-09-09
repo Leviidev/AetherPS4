@@ -236,6 +236,43 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
         // not by patching individual instructions. Gated on the exact guest rip range, so this
         // can't mask an unrelated crash. See the function's own comment for the full chain.
         if (::AetherPS4::Fex::TryRecoverNullResourceTableLookup(sig, info, raw_context)) {
+            // Diagnostic only, doesn't change the recovery: confirmed on-device that the very
+            // next thing to happen after this recovery first shipped was a wild jump to
+            // 0xDEADBEEF54321ABC (this codebase's own dummy stack-guard VALUE, landing where a
+            // real guest RIP should be) just a few real instructions later, on the same thread,
+            // with nothing else logged in between -- this function's own caller almost
+            // certainly doesn't handle a "not found" (0) result the way real hardware would
+            // never need it to. [rsp+0x0] is the real return address into that caller (matches
+            // this function's own confirmed prologue: no extra stack manipulation happens
+            // before the fault, so nothing has moved rsp since entry), not a guess. Dumping a
+            // window of its own guest bytes here, once, should show exactly what it does with
+            // the returned 0 -- the same log-embedded-bytes technique that decoded this
+            // function itself, no separate extraction needed.
+#if defined(__aarch64__) && defined(__APPLE__)
+            auto* context = reinterpret_cast<ucontext_t*>(raw_context);
+            auto& ts = context->uc_mcontext->__ss;
+            const auto guest_rsp = static_cast<uintptr_t>(ts.__x[8]);
+            uintptr_t caller_addr = 0;
+            if (BachataSafeRead(guest_rsp, &caller_addr)) {
+                constexpr uint64_t kWindowBefore = 16;
+                constexpr uint64_t kWindowAfter = 496;
+                const auto window_start = static_cast<uintptr_t>(caller_addr - kWindowBefore);
+                static char hex[2 * (kWindowBefore + kWindowAfter) + 1] = {};
+                char* w = hex;
+                for (uint64_t i = 0; i < kWindowBefore + kWindowAfter; ++i) {
+                    uint8_t byte = 0;
+                    if (BachataSafeRead(window_start + i, &byte)) {
+                        w += std::snprintf(w, hex + sizeof(hex) - w, "%02x", byte);
+                    } else {
+                        w += std::snprintf(w, hex + sizeof(hex) - w, "??");
+                    }
+                }
+                LOG_CRITICAL(Debug,
+                             "FEX null-table-lookup caller window: guest_rsp={:#x} "
+                             "caller_addr={:#x} window_start={:#x} before={:#x} bytes={}",
+                             guest_rsp, caller_addr, window_start, kWindowBefore, hex);
+            }
+#endif
             return;
         }
         // TryRecoverCorruptedGuestRsp (guest RIP 0x7001342320's rsp-corrupted-to-SceGnmDriver-
