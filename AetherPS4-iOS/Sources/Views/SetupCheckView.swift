@@ -111,16 +111,10 @@ struct SetupCheckView: View {
         VStack(spacing: 12) {
             if jitPhase == .failed {
                 VStack(spacing: 8) {
-                    Text("StikDebug isn't attached, or its JIT script isn't running. Open StikDebug to attach, then return here.")
+                    Text("StikDebug isn't attached, or its JIT script isn't running. Open StikDebug, run the Universal JIT Script, then return here.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
-                    Button {
-                        JITEnabler.requestStikDebugJIT()
-                    } label: {
-                        Label("Open StikDebug", systemImage: "arrow.up.forward.app")
-                    }
-                    .buttonStyle(.borderedProminent)
                 }
             }
             if memoryPhase == .failed {

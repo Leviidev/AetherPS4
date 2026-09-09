@@ -224,7 +224,9 @@ if (NOT TARGET libusb::usb)
         # using anything else will crash instantly, also freebsd will NOT like it
         # no you cant vendor this libusb, its builtin on freebsd
         find_package(libusb)
-    else()
+    elseif (NOT ${CMAKE_SYSTEM_NAME} STREQUAL "iOS")
+        # libusb's Darwin backend needs IOKit/IOCFBundle.h, unavailable on iOS.
+        # USB toy portals aren't a meaningful iOS feature anyway (no physical USB accessory port).
         add_subdirectory(libusb)
         add_library(libusb::usb ALIAS usb-1.0)
     endif()
