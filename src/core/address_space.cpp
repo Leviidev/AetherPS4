@@ -26,6 +26,7 @@
 
 #ifdef __APPLE__
 #include <TargetConditionals.h>
+#include <mach/mach.h>
 #endif
 
 #if defined(__APPLE__) && defined(ARCH_X86_64)
@@ -1058,16 +1059,62 @@ bool AddressSpace::TryReserveExactRegion(VAddr addr, u64 size) noexcept {
     // already-ASLR'd load address included -- confirmed to land close enough in the same
     // address neighborhood to be a real concern, not a theoretical one).
     void* const requested = reinterpret_cast<void*>(addr);
-    int map_flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
+#ifdef __APPLE__
+    // Confirmed on-device that POSIX mmap(MAP_FIXED, ...) fails outright with EACCES
+    // ("Permission denied") for this exact address -- iOS's sandbox refuses forced placement
+    // at an address the process never itself reserved, not just the very low addresses already
+    // ruled out in the constructor. vm_allocate with VM_FLAGS_FIXED goes through Mach's own VM
+    // subsystem rather than the BSD mmap() syscall layer mmap() itself is implemented on top
+    // of -- worth trying before falling back to a plain (non-fixed) hint below, in case the
+    // sandbox policy that blocks mmap's MAP_FIXED is specifically scoped to that syscall rather
+    // than to fixed placement in general. mach_vm_allocate/mach_vm.h (the 64-bit-address-native
+    // variant) is unavailable on the iOS SDK ("mach_vm.h unsupported") -- vm_allocate is the
+    // only variant actually exposed here, but vm_address_t is still the full pointer width on
+    // LP64 ARM64 (an unsigned long, not truncated to 32 bits), so it can carry this address
+    // range without loss.
+    {
+        vm_address_t mach_addr = static_cast<vm_address_t>(addr);
+        const kern_return_t kr = vm_allocate(mach_task_self(), &mach_addr, size, VM_FLAGS_FIXED);
+        if (kr == KERN_SUCCESS) {
+            if (static_cast<VAddr>(mach_addr) == addr) {
+                return true;
+            }
+            // Should not happen with VM_FLAGS_FIXED, but never leave a stray mapping behind.
+            vm_deallocate(mach_task_self(), mach_addr, size);
+        } else {
+            LOG_WARNING(Kernel_Vmm,
+                        "BACHATA_EXACT_RESERVE_MACH_FAILED: vm_allocate(VM_FLAGS_FIXED, {:#x}, "
+                        "{:#x}) failed: kern_return={:#x}",
+                        addr, size, static_cast<unsigned>(kr));
+        }
+    }
+#endif
+    // Confirmed on-device that MAP_FIXED here fails outright with EACCES ("Permission denied"),
+    // not ENOMEM/a collision -- iOS's sandbox refuses forced placement at an address the
+    // process never itself reserved, not just the very low addresses already ruled out in the
+    // constructor. A plain hint (no MAP_FIXED) asks the kernel for this address without
+    // demanding it, which doesn't trigger the same forced-placement check; the kernel is free
+    // to ignore the hint and place the mapping elsewhere, so the result address is checked
+    // below and anything that didn't land exactly on `requested` is unmapped and treated as
+    // failure, same as before.
+    int map_flags = MAP_PRIVATE | MAP_ANONYMOUS;
 #if !defined(__FreeBSD__)
     map_flags |= MAP_NORESERVE;
 #endif
     void* const result = mmap(requested, size, PROT_READ | PROT_WRITE, map_flags, -1, 0);
     if (result == MAP_FAILED) {
+        LOG_ERROR(Kernel_Vmm, "BACHATA_EXACT_RESERVE_FAILED: mmap({:#x}, {:#x}) failed: {}", addr,
+                  size, strerror(errno));
         return false;
     }
     if (result != requested) {
-        // Should never happen with MAP_FIXED, but never leave a stray mapping behind if it does.
+        // The kernel placed it somewhere else -- since this was only ever a hint (no
+        // MAP_FIXED), that's an expected possible outcome, not a bug. Don't leave the
+        // wrongly-placed mapping behind.
+        LOG_WARNING(Kernel_Vmm,
+                    "BACHATA_EXACT_RESERVE_MISS: asked for {:#x}, kernel placed it at {:#x} "
+                    "instead -- falling back to the rebase",
+                    addr, reinterpret_cast<VAddr>(result));
         munmap(result, size);
         return false;
     }
