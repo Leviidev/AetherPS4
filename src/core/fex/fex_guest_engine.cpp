@@ -791,17 +791,37 @@ private:
 
 class Mapping final {
 public:
+  // A new one of these is created and destroyed for every guest callback invocation (one per
+  // qsort comparator call, one per new pthread's start routine, etc.) -- over a multi-hour
+  // session that's a huge number of tiny mmap/munmap cycles. Tracking cumulative created-count
+  // and current-live-count here is diagnostic-only: it's what would confirm or rule out VM map
+  // fragmentation (macOS/iOS can return ENOMEM from mmap purely from too many distinct VM
+  // regions, independent of actual free memory) as an alternative to real memory pressure for
+  // the ENOMEM crash a long GTA V session hit at ~28 concurrent guest threads.
+  inline static std::atomic<uint64_t> TotalCreated{0};
+  inline static std::atomic<uint64_t> CurrentlyLive{0};
+
   Mapping(size_t size, int protection)
     : Size {size}
-    , Address {mmap(nullptr, size, protection, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)}
-    , LastError {Address == MAP_FAILED ? errno : 0} {}
+    , Address {mmap(nullptr, size, protection, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)} {
+    TotalCreated.fetch_add(1, std::memory_order_relaxed);
+    if (Address == MAP_FAILED) {
+      LastError = errno;
+    } else {
+      LastError = 0;
+      CurrentlyLive.fetch_add(1, std::memory_order_relaxed);
+    }
+  }
 
   Mapping(const Mapping&) = delete;
   Mapping& operator=(const Mapping&) = delete;
 
   ~Mapping() {
-    if (Address != MAP_FAILED && munmap(Address, Size) != 0) {
-      std::abort();
+    if (Address != MAP_FAILED) {
+      CurrentlyLive.fetch_sub(1, std::memory_order_relaxed);
+      if (munmap(Address, Size) != 0) {
+        std::abort();
+      }
     }
   }
 
@@ -831,6 +851,7 @@ public:
     if (munmap(Address, Size) != 0) {
       return Failure(EngineStage::Teardown, errno);
     }
+    CurrentlyLive.fetch_sub(1, std::memory_order_relaxed);
     Address = MAP_FAILED;
     return true;
   }
@@ -2630,8 +2651,24 @@ public:
 
     Mapping stackPage {PageSize, PROT_READ | PROT_WRITE};
     Mapping tlsPage {PageSize, PROT_READ | PROT_WRITE};
-    if (!stackPage.IsValid()) return Failure(EngineStage::Mapping, stackPage.Error());
-    if (!tlsPage.IsValid()) return Failure(EngineStage::Mapping, tlsPage.Error());
+    if (!stackPage.IsValid()) {
+      std::fprintf(stderr,
+                   "BACHATA_MAPPING_FAILED: stackPage mmap failed errno=%d total_created=%llu "
+                   "currently_live=%llu\n",
+                   stackPage.Error(),
+                   static_cast<unsigned long long>(Mapping::TotalCreated.load(std::memory_order_relaxed)),
+                   static_cast<unsigned long long>(Mapping::CurrentlyLive.load(std::memory_order_relaxed)));
+      return Failure(EngineStage::Mapping, stackPage.Error());
+    }
+    if (!tlsPage.IsValid()) {
+      std::fprintf(stderr,
+                   "BACHATA_MAPPING_FAILED: tlsPage mmap failed errno=%d total_created=%llu "
+                   "currently_live=%llu\n",
+                   tlsPage.Error(),
+                   static_cast<unsigned long long>(Mapping::TotalCreated.load(std::memory_order_relaxed)),
+                   static_cast<unsigned long long>(Mapping::CurrentlyLive.load(std::memory_order_relaxed)));
+      return Failure(EngineStage::Mapping, tlsPage.Error());
+    }
     std::memcpy(tlsPage.Get(), &kThreadSentinelA, sizeof(kThreadSentinelA));
 
     const uint64_t initialRip = reinterpret_cast<uint64_t>(code.Get());

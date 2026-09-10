@@ -9,12 +9,30 @@
 #include <string_view>
 #include <type_traits>
 
+#include <mach/mach.h>
+
 #include "common/logging/log.h"
 #include "common/singleton.h"
 #include "common/types.h"
 #include "core/linker.h"
 
 namespace AetherPS4::GuestCpu {
+
+// Real (resident) memory footprint, matching what iOS's Jetsam out-of-memory killer actually
+// tracks -- as opposed to virtual/reserved memory, which each guest thread's dedicated
+// LookupCache uses ~272MB of without necessarily consuming real memory (Commit=false; see
+// LookupCache.cpp). Logged at the point a guest callback fails to distinguish "genuine memory
+// pressure" from any other cause of the same ENOMEM/stage-1 failure. Returns 0 on failure
+// (never crashes/asserts -- this is diagnostic-only).
+inline u64 BachataResidentMemoryBytes() noexcept {
+    task_vm_info_data_t info{};
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&info), &count) !=
+        KERN_SUCCESS) {
+        return 0;
+    }
+    return static_cast<u64>(info.phys_footprint);
+}
 
 template <typename T>
 u64 EncodeGuestCallbackArgument(T value) {
@@ -44,8 +62,10 @@ inline u64 RunGuestFunctionOrAbort(const void* function, std::span<const u64> ar
                                                   stack_top);
     LOG_INFO(Core_Linker, "BACHATA_GUEST_CALL: returned label={}", label);
     if (const auto* failure = std::get_if<Core::GuestExecutionFailure>(&result)) {
-        LOG_CRITICAL(Core_Linker, "FEX guest callback {} failed at stage {}: {}", label,
-                     static_cast<int>(failure->Stage), failure->Error);
+        LOG_CRITICAL(Core_Linker,
+                     "FEX guest callback {} failed at stage {}: {} (resident_mb={})", label,
+                     static_cast<int>(failure->Stage), failure->Error,
+                     BachataResidentMemoryBytes() / (1024 * 1024));
         std::abort();
     }
     return std::get<u64>(result);
