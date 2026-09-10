@@ -130,6 +130,17 @@ bool TryRecoverDirectMemoryAddressMismatch(int signal, siginfo_t* info, void* ra
 // touched -- the fault is a pure read partway through the walk. Gives up and falls through to
 // the real crash handler if this ever fires enough times in a row to suggest a spin-retry loop
 // rather than isolated lookup misses.
+//
+// Confirmed on-device that an earlier version of this fix, which only wrote
+// Frame->State.gregs[REG_RAX] before the DispatcherLoopTopFillSRA redirect, corrupted execution:
+// FillSRA reloads *every* SRA-mapped register from Frame->State, which is a stale HLE/JIT-block
+// checkpoint, not the live ARM64 state -- leaving Frame->State.gregs[REG_RSP] stale meant the
+// redirected epilogue's pop sequence read off the wrong stack location entirely, producing a
+// wild jump (to 0xDEADBEEF54321ABC, this codebase's own dummy stack-guard value, landing where a
+// real guest RIP should be) a few instructions later. Fixed by syncing every SRA-mapped register
+// from the live ARM64 state into Frame->State before the redirect, so FillSRA's reload is a
+// no-op for everything except the one register (RAX) this recovery deliberately overrides.
+bool TryRecoverNullResourceTableLookup(int signal, siginfo_t* info, void* rawContext) noexcept;
 bool TryRecoverNullResourceTableLookup(int signal, siginfo_t* info, void* rawContext) noexcept;
 // Queue Orbis guest exception handler for deferred FEX delivery (ARM64 host).
 // orbis_sig is the Orbis signal number (e.g. 30 / SIGUSR1). guest_handler is the

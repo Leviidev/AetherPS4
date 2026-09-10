@@ -2585,13 +2585,47 @@ bool TryRecoverNullResourceTableLookup(int signal, siginfo_t* info, void* rawCon
     return false;
   }
 
+  // Confirmed on-device (root cause of a real DEADBEEF-wild-jump crash the first version of
+  // this fix produced): DispatcherLoopTopFillSRA reloads *every* SRA-mapped ARM64 register from
+  // Frame->State before resuming -- not just the ones this recovery cares about. Frame->State is
+  // only a checkpoint, updated at HLE/JIT-block boundaries, and is stale relative to the live
+  // ARM64 registers mid-block (the exact same staleness this file's "FEX live x86 GPRs"
+  // diagnostic in signals.cpp already exists to work around for crash *logging* -- this is the
+  // same problem, but for a *resume*, where stale data doesn't just mislead a log line, it
+  // corrupts execution). Concretely: leaving Frame->State.gregs[REG_RSP] stale meant the
+  // redirect resumed at the target function's epilogue with the WRONG live rsp, so its `pop
+  // rbx/r14/r15/rbp; ret` sequence popped garbage off an unrelated stack location -- garbage
+  // that included the wild 0xDEADBEEF54321ABC jump target. Fix: sync every SRA-mapped register
+  // from the live ARM64 state into Frame->State first (same mapping this file's own SRA-probe/
+  // live-GPR diagnostics already use: RAX=x4, RCX=x7, RDX=x5, RBX=x6, RSP=x8, RBP=x9, RSI=x10,
+  // RDI=x11, R8=x12, R9=x13, R10=x14, R11=x15, R12=x16, R13=x17, R14=x19, R15=x29/fp), so
+  // FillSRA's reload is a no-op for everything except the one register (RAX) this recovery
+  // deliberately overrides.
   auto* frame = ActiveFexExecution.Thread->CurrentFrame;
+  auto& gregs = frame->State.gregs;
+  gregs[FEXCore::X86State::REG_RAX] = ts.__x[4];
+  gregs[FEXCore::X86State::REG_RCX] = ts.__x[7];
+  gregs[FEXCore::X86State::REG_RDX] = ts.__x[5];
+  gregs[FEXCore::X86State::REG_RBX] = ts.__x[6];
+  gregs[FEXCore::X86State::REG_RSP] = ts.__x[8];
+  gregs[FEXCore::X86State::REG_RBP] = ts.__x[9];
+  gregs[FEXCore::X86State::REG_RSI] = ts.__x[10];
+  gregs[FEXCore::X86State::REG_RDI] = ts.__x[11];
+  gregs[FEXCore::X86State::REG_R8] = ts.__x[12];
+  gregs[FEXCore::X86State::REG_R9] = ts.__x[13];
+  gregs[FEXCore::X86State::REG_R10] = ts.__x[14];
+  gregs[FEXCore::X86State::REG_R11] = ts.__x[15];
+  gregs[FEXCore::X86State::REG_R12] = ts.__x[16];
+  gregs[FEXCore::X86State::REG_R13] = ts.__x[17];
+  gregs[FEXCore::X86State::REG_R14] = ts.__x[19];
+  gregs[FEXCore::X86State::REG_R15] = static_cast<uint64_t>(arm_thread_state64_get_fp(ts));
+  // The one deliberate override: what a *successful* lookup would have produced there.
+  gregs[FEXCore::X86State::REG_RAX] = 0;
   frame->State.rip = kSafeEpilogueGuestRip;
-  frame->State.gregs[FEXCore::X86State::REG_RAX] = 0;
 
   SignalSafeLog("BACHATA_NULL_TABLE_LOOKUP_RECOVER: fault_guest_rip=%p hits=%d -- simulating an "
                 "early return 0 from eboot.bin+0x1c08f70, resuming at guest_rip=%p via "
-                "DispatcherLoopTopFillSRA\n",
+                "DispatcherLoopTopFillSRA (with live registers synced first)\n",
                 reinterpret_cast<void*>(guest_rip), static_cast<int>(hits),
                 reinterpret_cast<void*>(kSafeEpilogueGuestRip));
   arm_thread_state64_set_pc_fptr(
