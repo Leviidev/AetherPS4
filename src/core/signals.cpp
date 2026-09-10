@@ -268,8 +268,19 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                     if (module == nullptr) {
                         continue;
                     }
-                    constexpr uint64_t kWindowBefore = 16;
-                    constexpr uint64_t kWindowAfter = 112;
+                    // Widened from a 128-byte peek to a 1KB window after the first attempt at
+                    // this diagnostic (rsp+0x28) landed on real code -- a `call qword ptr
+                    // [rax+0x70]` immediately followed by `mov qword ptr [r14], rax` (the
+                    // lookup's returned 0 stored with zero null-check) and, a few instructions
+                    // later, a compiler-generated stack-protector check that FAILS (comparing
+                    // __stack_chk_guard's live value against the copy saved at [rbp-0x30]).
+                    // That's too suspicious to leave uninvestigated: if r14 aliases the canary's
+                    // own stack slot, storing this recovery's synthetic 0 there would corrupt it
+                    // directly. Need this candidate's own function entry (prologue, where r14
+                    // and the real canary slot both get set up) to tell -- 128 bytes wasnt
+                    // enough to reach it.
+                    constexpr uint64_t kWindowBefore = 768;
+                    constexpr uint64_t kWindowAfter = 256;
                     const auto window_start = static_cast<uintptr_t>(candidate - kWindowBefore);
                     static char hex[2 * (kWindowBefore + kWindowAfter) + 1] = {};
                     char* w = hex;
