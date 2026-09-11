@@ -14,7 +14,10 @@
 #endif
 
 void assert_fail_impl() {
-    Common::Singleton<Core::Emulator>::Instance()->Shutdown();
+    // true: every caller of this function (every UNREACHABLE()/ASSERT_MSG() in this codebase)
+    // can fire directly from inside a POSIX signal handler -- see Shutdown()'s own comment for
+    // the real, on-device heap-corruption crash this avoids.
+    Common::Singleton<Core::Emulator>::Instance()->Shutdown(/*from_crash_handler=*/true);
     Crash();
 }
 

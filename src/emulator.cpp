@@ -98,14 +98,31 @@ Emulator::Emulator() {
 
 Emulator::~Emulator() {}
 
-void Emulator::Shutdown() {
+void Emulator::Shutdown(bool from_crash_handler) {
     static bool exit_done = false;
     std::scoped_lock l{exit_mutex};
     if (exit_done) {
         return;
     }
     Common::Log::Flush();
-    if (controllers) {
+    // Confirmed on-device: a genuine, if rare, heap corruption crash inside libdispatch's
+    // per-thread continuation-cache cleanup (_dispatch_cache_cleanup, reading a garbage pointer
+    // on an unrelated, unnamed thread sometime later) traced back to this exact call --
+    // ResetLightbarColors() -> SDL_SetGamepadLED() reaches into Apple's GameController
+    // framework, which talks to Bluetooth/HID hardware asynchronously via GCD internally. Every
+    // UNREACHABLE()/ASSERT_MSG() in this codebase calls assert_fail_impl() -> here, potentially
+    // directly from inside a POSIX signal handler (this is by far the most common way Shutdown()
+    // actually gets invoked, given how many recovery paths this file's own sibling files fall
+    // through to when nothing else can recover a fault) -- calling into GCD from that context is
+    // classic async-signal-unsafe territory, and can corrupt libdispatch's internal state in a
+    // way that only surfaces later, on a completely different thread, making it look unrelated.
+    // The lightbar reset is a cosmetic nicety (avoid leaving a physical controller lit some
+    // color after a crash) that isn't worth that risk when the process is already fatally
+    // crashing and about to be torn down by the OS regardless -- skip it specifically for that
+    // path. Log::Flush() above is kept: crash diagnostics depend on it, and plain buffered-I/O
+    // flushing to an already-open fd is far lower risk than reaching into a hardware-facing
+    // system framework.
+    if (controllers && !from_crash_handler) {
         controllers->ResetLightbarColors();
         // need to give SDL time to do this before the runtime exits
         std::this_thread::sleep_for(std::chrono::milliseconds{10});

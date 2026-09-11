@@ -48,7 +48,11 @@ public:
     void RunLoop();
 
     void UpdatePlayTime(const std::string& serial);
-    void Shutdown();
+    // from_crash_handler: true when called from assert_fail_impl(), i.e. potentially from
+    // directly inside a POSIX signal handler (every UNREACHABLE()/ASSERT_MSG() in this codebase
+    // can fire there). See this function's own comment for why that skips the controller
+    // lightbar reset specifically.
+    void Shutdown(bool from_crash_handler = false);
 
     /**
      * Requests that Run()'s event loop exit and return control to the caller. Safe to call
