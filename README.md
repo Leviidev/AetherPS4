@@ -8,17 +8,6 @@ Experimental PlayStation 4 emulation for iOS, built on [shadPS4](https://github.
 with an ARM64-ported [FEXCore](https://github.com/FEX-Emu/FEX) x86-64 → ARM64 JIT and a native
 SwiftUI front end. 
 
-## Supported games
-
-Reflects games actually tried on-device so far, not a target list -- compatibility work is
-ongoing and most titles are untested.
-
-| Game | Status |
-| --- | --- |
-| Sonic Mania | Playable |
-| Journey | Loads, but can't progress past its first chapter transition yet |
-| Rocket League | Currently being tested |
-
 ## File structure
 
 ```
