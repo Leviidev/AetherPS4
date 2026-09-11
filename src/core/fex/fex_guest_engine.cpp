@@ -919,16 +919,34 @@ private:
 
 class CallRetStack final {
 public:
+  // Same reasoning as Mapping's TotalCreated/CurrentlyLive above -- a new 16MB (kAllocationSize
+  // = CALLRET_STACK_SIZE + 2 guard pages) reservation is created and destroyed on every guest
+  // callback invocation too, a much bigger per-call footprint than Mapping's one-page stack/TLS
+  // trampolines. Diagnostic only, to tell whether THIS allocation (not Mapping's) is the one
+  // actually failing/accumulating at the ENOMEM crash seen after ~28 concurrent guest threads.
+  inline static std::atomic<uint64_t> TotalCreated{0};
+  inline static std::atomic<uint64_t> CurrentlyLive{0};
+
   CallRetStack()
-    : Address {mmap(nullptr, kAllocationSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)}
-    , LastError {Address == MAP_FAILED ? errno : 0} {}
+    : Address {mmap(nullptr, kAllocationSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)} {
+    TotalCreated.fetch_add(1, std::memory_order_relaxed);
+    if (Address == MAP_FAILED) {
+      LastError = errno;
+    } else {
+      LastError = 0;
+      CurrentlyLive.fetch_add(1, std::memory_order_relaxed);
+    }
+  }
 
   CallRetStack(const CallRetStack&) = delete;
   CallRetStack& operator=(const CallRetStack&) = delete;
 
   ~CallRetStack() {
-    if (Address != MAP_FAILED && munmap(Address, kAllocationSize) != 0) {
-      std::abort();
+    if (Address != MAP_FAILED) {
+      CurrentlyLive.fetch_sub(1, std::memory_order_relaxed);
+      if (munmap(Address, kAllocationSize) != 0) {
+        std::abort();
+      }
     }
   }
 
@@ -2674,10 +2692,31 @@ public:
       return Failure(EngineStage::Execute, EALREADY);
     }
 
+    // Diagnostic only: pins down exactly which of this function's four per-callback-invocation
+    // allocations is the one actually failing/accumulating at the ENOMEM crash seen after ~28
+    // concurrent guest threads -- Mapping's one-page stack/TLS trampolines (tiny, ~16KB each)
+    // vs. CallRetStack's 16MB call-return prediction stack (far bigger, same per-call
+    // frequency). Always logs both classes' counters together regardless of which one failed,
+    // so a single occurrence shows the full picture instead of needing another round-trip.
+    const auto logAllocFailure = [](const char* what, int err) {
+      std::fprintf(stderr,
+                   "BACHATA_MAPPING_FAILED: %s mmap failed errno=%d "
+                   "mapping_total_created=%llu mapping_currently_live=%llu "
+                   "callretstack_total_created=%llu callretstack_currently_live=%llu\n",
+                   what, err,
+                   static_cast<unsigned long long>(Mapping::TotalCreated.load(std::memory_order_relaxed)),
+                   static_cast<unsigned long long>(Mapping::CurrentlyLive.load(std::memory_order_relaxed)),
+                   static_cast<unsigned long long>(CallRetStack::TotalCreated.load(std::memory_order_relaxed)),
+                   static_cast<unsigned long long>(CallRetStack::CurrentlyLive.load(std::memory_order_relaxed)));
+    };
+
     GuestCode guest = BuildGuestCode();
     if (guest.Bytes.size() > PageSize) return Failure(EngineStage::Mapping, E2BIG);
     Mapping code {PageSize, PROT_READ | PROT_WRITE};
-    if (!code.IsValid()) return Failure(EngineStage::Mapping, code.Error());
+    if (!code.IsValid()) {
+      logAllocFailure("code", code.Error());
+      return Failure(EngineStage::Mapping, code.Error());
+    }
     std::memcpy(code.Get(), guest.Bytes.data(), guest.Bytes.size());
     __builtin___clear_cache(reinterpret_cast<char*>(code.Get()), reinterpret_cast<char*>(code.Get()) + PageSize);
     const auto codeProtection = code.Protect(PROT_READ);
@@ -2686,21 +2725,11 @@ public:
     Mapping stackPage {PageSize, PROT_READ | PROT_WRITE};
     Mapping tlsPage {PageSize, PROT_READ | PROT_WRITE};
     if (!stackPage.IsValid()) {
-      std::fprintf(stderr,
-                   "BACHATA_MAPPING_FAILED: stackPage mmap failed errno=%d total_created=%llu "
-                   "currently_live=%llu\n",
-                   stackPage.Error(),
-                   static_cast<unsigned long long>(Mapping::TotalCreated.load(std::memory_order_relaxed)),
-                   static_cast<unsigned long long>(Mapping::CurrentlyLive.load(std::memory_order_relaxed)));
+      logAllocFailure("stackPage", stackPage.Error());
       return Failure(EngineStage::Mapping, stackPage.Error());
     }
     if (!tlsPage.IsValid()) {
-      std::fprintf(stderr,
-                   "BACHATA_MAPPING_FAILED: tlsPage mmap failed errno=%d total_created=%llu "
-                   "currently_live=%llu\n",
-                   tlsPage.Error(),
-                   static_cast<unsigned long long>(Mapping::TotalCreated.load(std::memory_order_relaxed)),
-                   static_cast<unsigned long long>(Mapping::CurrentlyLive.load(std::memory_order_relaxed)));
+      logAllocFailure("tlsPage", tlsPage.Error());
       return Failure(EngineStage::Mapping, tlsPage.Error());
     }
     std::memcpy(tlsPage.Get(), &kThreadSentinelA, sizeof(kThreadSentinelA));
@@ -2709,7 +2738,10 @@ public:
     CallbackReturnScope callbackReturn {*SignalDelegator, initialRip + guest.CallbackReturnOffset};
     const uint64_t initialRsp = reinterpret_cast<uint64_t>(stackPage.Get()) + PageSize - 16;
     CallRetStack callRetStack;
-    if (!callRetStack.IsReserved()) return Failure(EngineStage::Mapping, callRetStack.Error());
+    if (!callRetStack.IsReserved()) {
+      logAllocFailure("callRetStack", callRetStack.Error());
+      return Failure(EngineStage::Mapping, callRetStack.Error());
+    }
     const auto callRetStackProtection = callRetStack.MakeWritable();
     if (const auto* error = std::get_if<EngineFailure>(&callRetStackProtection)) return *error;
 
