@@ -2558,37 +2558,66 @@ bool TryRecoverNullResourceTableLookup(int signal, siginfo_t* info, void* rawCon
   if (!BachataReconstructAccurateGuestRIP(pc, &guest_rip)) {
     return false;
   }
-  // eboot.bin+0x1c08f70: a real, disassembled (from this exact function's own byte dump, already
-  // captured in an earlier crash's log -- no separate extraction needed) x86 function that walks
-  // a 5-level radix table keyed on its own 2nd argument (rsi), confirmed on-device to be an
-  // ordinary-looking pointer inside a direct-memory region this session's own address-rebase fix
-  // touches (rsi=0x735806ebe8; the fault address 0x7350 is exactly (rsi>>0x18)&0xfff0, matching
-  // this walk's own bit-extraction math level-for-level) -- almost certainly RAGE's own internal
-  // address -> allocation-metadata lookup, which this platform's rebase leaves out of sync with
-  // whatever address the game later queries it with. None of the walk's 5 levels (or the [rax+
-  // 0x28] dereference immediately after) null-check before dereferencing -- confirmed on-device
-  // that patching only the first faulting load (mov dest,[rax+rcx], resume at pc+4) just moves
-  // the identical crash 18 bytes later to the next unrolled level, and no later level can be
-  // patched that way at all once execution reaches `cmp byte[rbx+0xa0],0` a few instructions
-  // after the walk -- skipping a compare corrupts the flags its very next instruction (a
-  // conditional branch) depends on. So this recovers the whole lookup at once instead of one
-  // instruction at a time: simulate the function returning 0 (not-found) by writing the guest
-  // CPU state directly (Frame->State.rip / State.gregs, exactly like this file's own thread-init
-  // code already does for REG_R12 above) and redirecting host pc to Pointers.DispatcherLoopTopFillSRA
-  // -- FEXCore's own "resume guest execution at an arbitrary address, refilling every SRA
-  // register from Frame->State first" entry point (confirmed live for this exact vendored build
-  // via BachataDumpDispatcherState's DispatcherLoopTopFillSRA field), the same class of redirect
-  // SafepointSignalHandler above already performs from a signal handler for a different bug.
-  // Landing on eboot.bin+0x1c09018 (`add rsp,8; pop rbx; pop r14; pop r15; pop rbp; ret`) is safe
-  // because nothing this function itself pushed has been touched -- the fault is a pure read
-  // partway through the walk, so the stack and every callee-saved register are exactly as this
-  // function's own prologue left them.
-  constexpr uint64_t kWalkFaultRangeLo = 0x7001c08f95ULL;
-  constexpr uint64_t kWalkFaultRangeHi = 0x7001c08fdfULL;
-  constexpr uint64_t kSafeEpilogueGuestRip = 0x7001c09018ULL;
-  if (guest_rip < kWalkFaultRangeLo || guest_rip > kWalkFaultRangeHi) {
+  // eboot.bin+0x1c08f70 was the first of these found: a real, disassembled (from this exact
+  // function's own byte dump, already captured in an earlier crash's log -- no separate
+  // extraction needed) x86 function that walks a 5-level radix table keyed on a guest pointer,
+  // confirmed on-device to be an ordinary-looking address inside a direct-memory region this
+  // session's own address-rebase fix touches (e.g. rsi=0x735806ebe8; the fault address 0x7350 is
+  // exactly (rsi>>0x18)&0xfff0, matching this walk's own bit-extraction math level-for-level) --
+  // almost certainly RAGE's own internal address -> allocation-metadata lookup, which this
+  // platform's rebase leaves out of sync with whatever address the game later queries it with.
+  // None of the walk's 5 levels (or the [_+0x28] dereference immediately after) null-check
+  // before dereferencing -- confirmed on-device that patching only the first faulting load (mov
+  // dest,[rax+rcx], resume at pc+4) just moves the identical crash 18 bytes later to the next
+  // unrolled level, and no later level can be patched that way at all once execution reaches
+  // `cmp byte[_+0xa0],0` a few instructions after the walk -- skipping a compare corrupts the
+  // flags its very next instruction (a conditional branch) depends on. So this recovers the
+  // whole lookup at once instead of one instruction at a time: simulate the function returning 0
+  // (not-found) by writing the guest CPU state directly (Frame->State.rip / State.gregs, exactly
+  // like this file's own thread-init code already does for REG_R12 above) and redirecting host
+  // pc to Pointers.DispatcherLoopTopFillSRA -- FEXCore's own "resume guest execution at an
+  // arbitrary address, refilling every SRA register from Frame->State first" entry point
+  // (confirmed live for this exact vendored build via BachataDumpDispatcherState's
+  // DispatcherLoopTopFillSRA field), the same class of redirect SafepointSignalHandler above
+  // already performs from a signal handler for a different bug. Landing on each entry's own
+  // clean epilogue (`[add rsp,8;] pop <callee-saved regs>; pop rbp; ret`) is safe because nothing
+  // that function itself pushed has been touched -- the fault is a pure read partway through the
+  // walk, so the stack and every callee-saved register are exactly as that function's own
+  // prologue left them.
+  //
+  // Confirmed on-device that eboot.bin+0x1c08f70 is not the only function built from this exact
+  // template -- a dispatch table found via an earlier crash's own stack dump lists dozens of
+  // similarly-shaped sibling accessors (e.g. eboot.bin+0x1c08680, +0x1c08e80, +0x1c09040, and
+  // more), and eboot.bin+0x1c08d90 has now independently crashed the identical way. Rather than
+  // add a brand new guest-rip-range check (and its own from-scratch disassembly writeup) every
+  // time a different sibling happens to be the one a session reaches first, this is a small,
+  // explicit table of verified (fault range, safe epilogue) pairs -- each entry individually
+  // disassembled and confirmed against a real crash before being added, same rigor as a single
+  // hardcoded pair, just structured to make adding the next confirmed sibling a one-line change
+  // instead of a copy-pasted function.
+  struct KnownSiblingRecovery {
+    uint64_t fault_range_lo;
+    uint64_t fault_range_hi;
+    uint64_t safe_epilogue_guest_rip;
+  };
+  static constexpr std::array<KnownSiblingRecovery, 2> kKnownSiblings{{
+      // eboot.bin+0x1c08f70: key in rsi; walk loads at +0x25..+0x6b; epilogue (`add rsp,8; pop
+      // rbx; pop r14; pop r15; pop rbp; ret`) at +0xa8. First confirmed instance of this bug.
+      {0x7001c08f95ULL, 0x7001c08fdfULL, 0x7001c09018ULL},
+      // eboot.bin+0x1c08d90: key in r13 (moved from rsi at entry, +0x11); walk loads at
+      // +0x2c..+0x75; epilogue (`add rsp,8; pop rbx; pop r12; pop r13; pop r14; pop r15; pop
+      // rbp; ret`) at +0xb8. Second confirmed instance -- same template, one more callee-saved
+      // register (r12/r13 vs. just r14) than the first.
+      {0x7001c08dbcULL, 0x7001c08e09ULL, 0x7001c08e48ULL},
+  }};
+  const auto* matched_sibling = std::find_if(
+      kKnownSiblings.begin(), kKnownSiblings.end(), [&](const KnownSiblingRecovery& entry) {
+        return guest_rip >= entry.fault_range_lo && guest_rip <= entry.fault_range_hi;
+      });
+  if (matched_sibling == kKnownSiblings.end()) {
     return false;
   }
+  const uint64_t kSafeEpilogueGuestRip = matched_sibling->safe_epilogue_guest_rip;
 
   // Bail to the real crash handler instead of "recovering" forever if this ever turns out to be
   // a spin-retry loop (this exact function re-entered nonstop) rather than isolated, one-shot
@@ -2642,8 +2671,8 @@ bool TryRecoverNullResourceTableLookup(int signal, siginfo_t* info, void* rawCon
   frame->State.rip = kSafeEpilogueGuestRip;
 
   SignalSafeLog("BACHATA_NULL_TABLE_LOOKUP_RECOVER: fault_guest_rip=%p hits=%d -- simulating an "
-                "early return 0 from eboot.bin+0x1c08f70, resuming at guest_rip=%p via "
-                "DispatcherLoopTopFillSRA (with live registers synced first)\n",
+                "early return 0 from the matching known sibling function, resuming at "
+                "guest_rip=%p via DispatcherLoopTopFillSRA (with live registers synced first)\n",
                 reinterpret_cast<void*>(guest_rip), static_cast<int>(hits),
                 reinterpret_cast<void*>(kSafeEpilogueGuestRip));
   arm_thread_state64_set_pc_fptr(

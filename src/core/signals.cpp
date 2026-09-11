@@ -228,13 +228,14 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
         if (::AetherPS4::Fex::TryRecoverDirectMemoryAddressMismatch(sig, info, raw_context)) {
             return;
         }
-        // A specific, confirmed-deterministic GTA V (CUSA00419) crash inside eboot.bin+0x1c08f70:
-        // a 5-level table walk (almost certainly RAGE's own address -> allocation-metadata
-        // lookup) whose entry is missing for a real, rebased direct-memory pointer, and which
-        // never null-checks before dereferencing. Recovers the whole lookup at once by
-        // simulating an early "return 0" via FEXCore's own DispatcherLoopTopFillSRA redirect,
-        // not by patching individual instructions. Gated on the exact guest rip range, so this
-        // can't mask an unrelated crash. See the function's own comment for the full chain.
+        // A family of confirmed-deterministic GTA V (CUSA00419) crashes, one per sibling accessor
+        // function (eboot.bin+0x1c08f70, +0x1c08d90, ...): a 5-level table walk (almost certainly
+        // RAGE's own address -> allocation-metadata lookup) whose entry is missing for a real,
+        // rebased direct-memory pointer, and which never null-checks before dereferencing.
+        // Recovers the whole lookup at once by simulating an early "return 0" via FEXCore's own
+        // DispatcherLoopTopFillSRA redirect, not by patching individual instructions. Gated on a
+        // small table of individually-verified exact guest rip ranges, so this can't mask an
+        // unrelated crash. See the function's own comment for the full chain.
         if (::AetherPS4::Fex::TryRecoverNullResourceTableLookup(sig, info, raw_context)) {
             // Diagnostic only, doesn't change the recovery: confirmed on-device that the very
             // next thing to happen after this recovery first shipped was a wild jump to

@@ -107,12 +107,12 @@ bool TryRecoverCallRetStackOverflow(int signal, siginfo_t* info, void* rawContex
 // instruction (not the next one -- this fixes a source operand a load/store is about to read
 // through, unlike the destination-register recoveries elsewhere in this file).
 bool TryRecoverDirectMemoryAddressMismatch(int signal, siginfo_t* info, void* rawContext) noexcept;
-// Pragmatic, narrowly-targeted recovery for one specific, fully-diagnosed, deterministic GTA V
-// (CUSA00419) crash inside a real x86 function at eboot.bin+0x1c08f70 (disassembled directly
-// from that function's own byte dump, already captured in an earlier crash's log -- no separate
-// extraction needed): a 5-level radix table walk keyed on the function's own 2nd argument (rsi),
-// confirmed on-device to be an ordinary pointer inside a direct-memory region this platform's
-// own address-rebase fix touches (rsi=0x735806ebe8; the fault address 0x7350 is exactly
+// Pragmatic, narrowly-targeted recovery for a family of fully-diagnosed, deterministic GTA V
+// (CUSA00419) crashes inside real x86 functions (disassembled directly from each function's own
+// byte dump, already captured in the crash logs that found them -- no separate extraction
+// needed) that all share the same template: a 5-level radix table walk keyed on a guest pointer,
+// confirmed on-device to be an ordinary address inside a direct-memory region this platform's
+// own address-rebase fix touches (e.g. rsi=0x735806ebe8; the fault address 0x7350 is exactly
 // (rsi>>0x18)&0xfff0, matching this walk's own bit-extraction math) -- almost certainly RAGE's
 // own internal address -> allocation-metadata lookup, left out of sync with whatever address the
 // game later queries it with. None of the walk's 5 levels (or the dereference immediately after)
@@ -126,10 +126,19 @@ bool TryRecoverDirectMemoryAddressMismatch(int signal, siginfo_t* info, void* ra
 // Pointers.DispatcherLoopTopFillSRA -- FEXCore's own "resume guest execution at an arbitrary
 // address, refilling every SRA register from Frame->State first" entry point, the same class of
 // redirect SafepointSignalHandler already performs from a signal handler for a different bug.
-// Landing on this function's own clean epilogue is safe because nothing it pushed has been
-// touched -- the fault is a pure read partway through the walk. Gives up and falls through to
-// the real crash handler if this ever fires enough times in a row to suggest a spin-retry loop
-// rather than isolated lookup misses.
+// Landing on the matching function's own clean epilogue is safe because nothing it pushed has
+// been touched -- the fault is a pure read partway through the walk. Gives up and falls through
+// to the real crash handler if this ever fires enough times in a row to suggest a spin-retry
+// loop rather than isolated lookup misses.
+//
+// Confirmed on-device that eboot.bin+0x1c08f70 (the first instance found) is one of dozens of
+// similarly-shaped sibling accessor functions listed in a dispatch table this codebase found via
+// an earlier crash's own stack dump -- eboot.bin+0x1c08d90 has since independently crashed the
+// identical way. Rather than one hardcoded (fault range, epilogue) pair, this checks a small,
+// explicit table of them (see kKnownSiblings in the .cpp) -- each entry individually
+// disassembled and confirmed against a real crash before being added, same rigor as a single
+// hardcoded pair, just structured so the next confirmed sibling is a one-line addition instead
+// of a copy-pasted function.
 //
 // Confirmed on-device that an earlier version of this fix, which only wrote
 // Frame->State.gregs[REG_RAX] before the DispatcherLoopTopFillSRA redirect, corrupted execution:
