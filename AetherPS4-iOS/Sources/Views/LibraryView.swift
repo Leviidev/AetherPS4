@@ -13,7 +13,7 @@ struct LibraryView: View {
     @State private var searchText = ""
     @State private var sortOrder: LibrarySortOrder = .dateAddedNewest
 
-    private let columns = [GridItem(.adaptive(minimum: 150, maximum: 180), spacing: 20)]
+    private let columns = [GridItem(.adaptive(minimum: 140, maximum: 170), spacing: 22)]
 
     private var visibleGames: [Game] {
         let filtered: [Game]
@@ -47,15 +47,16 @@ struct LibraryView: View {
                 noResultsState
             } else {
                 ScrollView {
-                    LazyVGrid(columns: columns, spacing: 20) {
+                    LazyVGrid(columns: columns, spacing: 26) {
                         ForEach(visibleGames) { game in
                             NavigationLink(value: game) {
                                 GameCardView(game: game, isSelected: false)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(CardPressStyle())
                         }
                     }
-                    .padding(20)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 24)
                 }
             }
         }
@@ -117,22 +118,35 @@ struct LibraryView: View {
     @State private var isImporterPresented = false
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "shippingbox")
-                .font(.system(size: 44))
-                .foregroundStyle(.secondary)
-            Text("No games yet")
-                .font(.headline)
-            Text("Use Add Game to import a .pkg file.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+        VStack(spacing: 16) {
+            Image(systemName: "square.grid.2x2")
+                .font(.system(size: 40))
+                .foregroundStyle(.tertiary)
+            VStack(spacing: 4) {
+                Text("No games yet")
+                    .font(.title3.weight(.semibold))
+                Text("Import a .pkg file to add your first game.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            Button {
+                isImporterPresented = true
+            } label: {
+                Label("Add Game", systemImage: "plus")
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 6)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 32)
     }
 
     private var importingState: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 14) {
             ProgressView()
+                .controlSize(.large)
             Text("Extracting game…")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -143,12 +157,13 @@ struct LibraryView: View {
     private var noResultsState: some View {
         VStack(spacing: 12) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 44))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 40))
+                .foregroundStyle(.tertiary)
             Text("No games match \"\(searchText)\"")
-                .font(.headline)
+                .font(.title3.weight(.semibold))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 32)
     }
 
 }
