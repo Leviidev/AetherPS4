@@ -479,17 +479,37 @@ private:
 
 class Mapping final {
 public:
+  // A new one of these is created and destroyed for every guest callback invocation (one per
+  // qsort comparator call, one per new pthread's start routine, etc.) -- over a multi-hour
+  // session that's a huge number of tiny mmap/munmap cycles. Tracking cumulative created-count
+  // and current-live-count here is diagnostic-only: it's what would confirm or rule out VM map
+  // fragmentation (macOS/iOS can return ENOMEM from mmap purely from too many distinct VM
+  // regions, independent of actual free memory) as an alternative to real memory pressure for
+  // the ENOMEM crash a long GTA V session hit at ~28 concurrent guest threads.
+  inline static std::atomic<uint64_t> TotalCreated{0};
+  inline static std::atomic<uint64_t> CurrentlyLive{0};
+
   Mapping(size_t size, int protection)
     : Size {size}
-    , Address {mmap(nullptr, size, protection, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)}
-    , LastError {Address == MAP_FAILED ? errno : 0} {}
+    , Address {mmap(nullptr, size, protection, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)} {
+    TotalCreated.fetch_add(1, std::memory_order_relaxed);
+    if (Address == MAP_FAILED) {
+      LastError = errno;
+    } else {
+      LastError = 0;
+      CurrentlyLive.fetch_add(1, std::memory_order_relaxed);
+    }
+  }
 
   Mapping(const Mapping&) = delete;
   Mapping& operator=(const Mapping&) = delete;
 
   ~Mapping() {
-    if (Address != MAP_FAILED && munmap(Address, Size) != 0) {
-      std::abort();
+    if (Address != MAP_FAILED) {
+      CurrentlyLive.fetch_sub(1, std::memory_order_relaxed);
+      if (munmap(Address, Size) != 0) {
+        std::abort();
+      }
     }
   }
 
@@ -519,6 +539,7 @@ public:
     if (munmap(Address, Size) != 0) {
       return Failure(EngineStage::Teardown, errno);
     }
+    CurrentlyLive.fetch_sub(1, std::memory_order_relaxed);
     Address = MAP_FAILED;
     return true;
   }
@@ -586,16 +607,34 @@ private:
 
 class CallRetStack final {
 public:
+  // Same reasoning as Mapping's TotalCreated/CurrentlyLive above -- a new 16MB (kAllocationSize
+  // = CALLRET_STACK_SIZE + 2 guard pages) reservation is created and destroyed on every guest
+  // callback invocation too, a much bigger per-call footprint than Mapping's one-page stack/TLS
+  // trampolines. Diagnostic only, to tell whether THIS allocation (not Mapping's) is the one
+  // actually failing/accumulating at the ENOMEM crash seen after ~28 concurrent guest threads.
+  inline static std::atomic<uint64_t> TotalCreated{0};
+  inline static std::atomic<uint64_t> CurrentlyLive{0};
+
   CallRetStack()
-    : Address {mmap(nullptr, kAllocationSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)}
-    , LastError {Address == MAP_FAILED ? errno : 0} {}
+    : Address {mmap(nullptr, kAllocationSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)} {
+    TotalCreated.fetch_add(1, std::memory_order_relaxed);
+    if (Address == MAP_FAILED) {
+      LastError = errno;
+    } else {
+      LastError = 0;
+      CurrentlyLive.fetch_add(1, std::memory_order_relaxed);
+    }
+  }
 
   CallRetStack(const CallRetStack&) = delete;
   CallRetStack& operator=(const CallRetStack&) = delete;
 
   ~CallRetStack() {
-    if (Address != MAP_FAILED && munmap(Address, kAllocationSize) != 0) {
-      std::abort();
+    if (Address != MAP_FAILED) {
+      CurrentlyLive.fetch_sub(1, std::memory_order_relaxed);
+      if (munmap(Address, kAllocationSize) != 0) {
+        std::abort();
+      }
     }
   }
 
@@ -2240,6 +2279,22 @@ EngineResult<GuestEngine::Thread*> GuestEngine::CreateThread(const Core::GuestEx
 
   auto thread = std::make_unique<Thread>(std::this_thread::get_id(), request);
   if (!thread->CallRet.IsReserved()) {
+    // This is a *separate* CallRetStack allocation from the one Impl::Run()'s own
+    // logAllocFailure already instruments (see that lambda's comment) -- CreateThread() is the
+    // path RunGuestFunction()/RunGuestFunctionOrAbort() actually goes through for pthread-start
+    // and heap_malloc/heap_free guest callbacks, so a failure here was previously invisible: the
+    // ENOMEM/stage-1 crashes seen in the field never printed BACHATA_MAPPING_FAILED because that
+    // diagnostic simply wasn't wired into this call site at all. Matches that lambda's format so
+    // both sites are greppable/comparable the same way.
+    std::fprintf(stderr,
+                 "BACHATA_MAPPING_FAILED: createThreadCallRet mmap failed errno=%d "
+                 "mapping_total_created=%llu mapping_currently_live=%llu "
+                 "callretstack_total_created=%llu callretstack_currently_live=%llu\n",
+                 thread->CallRet.Error(),
+                 static_cast<unsigned long long>(Mapping::TotalCreated.load(std::memory_order_relaxed)),
+                 static_cast<unsigned long long>(Mapping::CurrentlyLive.load(std::memory_order_relaxed)),
+                 static_cast<unsigned long long>(CallRetStack::TotalCreated.load(std::memory_order_relaxed)),
+                 static_cast<unsigned long long>(CallRetStack::CurrentlyLive.load(std::memory_order_relaxed)));
     return Failure(EngineStage::Mapping, thread->CallRet.Error());
   }
   const auto callRetWritable = thread->CallRet.MakeWritable();
