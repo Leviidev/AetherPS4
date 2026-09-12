@@ -48,7 +48,7 @@ public:
     void RunLoop();
 
     void UpdatePlayTime(const std::string& serial);
-    void Shutdown();
+    void Shutdown(bool from_crash_handler = false);
 
     /**
      * Requests that Run()'s event loop exit and return control to the caller. Safe to call
