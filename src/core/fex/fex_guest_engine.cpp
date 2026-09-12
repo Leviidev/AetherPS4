@@ -3348,6 +3348,22 @@ EngineResult<GuestEngine::Thread*> GuestEngine::CreateThread(const Core::GuestEx
 
   auto thread = std::make_unique<Thread>(std::this_thread::get_id(), request);
   if (!thread->CallRet.IsReserved()) {
+    // This is a *separate* CallRetStack allocation from the one Impl::Run()'s own
+    // logAllocFailure already instruments (see that lambda's comment) -- CreateThread() is the
+    // path RunGuestFunction()/RunGuestFunctionOrAbort() actually goes through for pthread-start
+    // and heap_malloc/heap_free guest callbacks, so a failure here was previously invisible: the
+    // ENOMEM/stage-1 crashes seen in the field never printed BACHATA_MAPPING_FAILED because that
+    // diagnostic simply wasn't wired into this call site at all. Matches that lambda's format so
+    // both sites are greppable/comparable the same way.
+    std::fprintf(stderr,
+                 "BACHATA_MAPPING_FAILED: createThreadCallRet mmap failed errno=%d "
+                 "mapping_total_created=%llu mapping_currently_live=%llu "
+                 "callretstack_total_created=%llu callretstack_currently_live=%llu\n",
+                 thread->CallRet.Error(),
+                 static_cast<unsigned long long>(Mapping::TotalCreated.load(std::memory_order_relaxed)),
+                 static_cast<unsigned long long>(Mapping::CurrentlyLive.load(std::memory_order_relaxed)),
+                 static_cast<unsigned long long>(CallRetStack::TotalCreated.load(std::memory_order_relaxed)),
+                 static_cast<unsigned long long>(CallRetStack::CurrentlyLive.load(std::memory_order_relaxed)));
     return Failure(EngineStage::Mapping, thread->CallRet.Error());
   }
   const auto callRetWritable = thread->CallRet.MakeWritable();
