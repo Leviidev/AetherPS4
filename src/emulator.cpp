@@ -80,8 +80,6 @@ Frontend::WindowSDL* g_window = nullptr;
 
 namespace Core {
 
-std::mutex exit_mutex{};
-
 Emulator::Emulator() {
     // Initialize NT API functions, set high priority and disable WER
 #ifdef _WIN32
@@ -99,9 +97,19 @@ Emulator::Emulator() {
 Emulator::~Emulator() {}
 
 void Emulator::Shutdown(bool from_crash_handler) {
-    static bool exit_done = false;
-    std::scoped_lock l{exit_mutex};
-    if (exit_done) {
+    // A plain mutex can't guard this function safely: every UNREACHABLE()/ASSERT_MSG() in this
+    // codebase calls assert_fail_impl() -> here -> Crash() (`brk 0` on ARM64) while this
+    // function's own lock is still held, and Crash() doesn't unwind the stack to release it --
+    // it's meant to be fatal. Confirmed on-device from a GTA V session that got permanently
+    // stuck (not crashed) with two guest CPU threads frozen forever on the same guest_rip: the
+    // SIGTRAP that fires Shutdown() didn't actually terminate the process outright, so once one
+    // thread's call left the old mutex locked and never released, every other thread that later
+    // also faulted and called Shutdown() (including, potentially, the very same thread calling
+    // back in recursively) blocked on it forever instead of the process dying cleanly. A
+    // lock-free atomic exchange has no ownership to abandon, so no caller can ever block here --
+    // it either wins the exchange once and proceeds, or loses it and returns immediately.
+    static std::atomic<bool> exit_done{false};
+    if (exit_done.exchange(true, std::memory_order_acq_rel)) {
         return;
     }
     Common::Log::Flush();
