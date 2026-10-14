@@ -1,0 +1,53 @@
+name: Mingw build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  BUILD_TYPE: Debug
+
+jobs:
+  mingw_build:
+    runs-on: ${{ matrix.arch }}
+    strategy:
+      matrix:
+        arch: [[self-hosted, ARM64, mingw], [self-hosted, ARM64EC, mingw, ARM64]]
+      fail-fast: false
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: '0'
+        fetch-tags: 'true'
+
+    - name: Set runner label
+      run: echo "runner_label=${{ matrix.arch[1] }}" >> $GITHUB_ENV
+
+    - name: Add MingGW to PATH
+      run: echo "$HOME/llvm-mingw/build/bin/" >> $GITHUB_PATH
+
+    - name: Set CC
+      run: |
+        case '${{ matrix.arch[1] }}' in
+          x64) _cpu=x86_64 ;;
+          ARM64) _cpu=aarch64 ;;
+          ARM64EC) _cpu=arm64ec ;;
+        esac
+        echo "MINGW_TRIPLE=${_cpu}-w64-mingw32" >> $GITHUB_ENV
+
+    - name: Setup Build Environment
+      uses: ./.github/workflows/setup-env
+
+    - name: Configure CMake
+      run: |
+        cmake -S . -B build -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/Data/CMake/toolchain_mingw.cmake \
+        -DMINGW_TRIPLE=$MINGW_TRIPLE -G Ninja -DENABLE_LTO=False -DENABLE_ASSERTIONS=True -DENABLE_X86_HOST_DEBUG=True -DBUILD_TESTING=False \
+        -DCMAKE_INSTALL_PREFIX="$PWD"/build/install
+
+    - name: Build
+      run: cmake --build build

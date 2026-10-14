@@ -1,0 +1,162 @@
+name: Build + Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
+  BUILD_TYPE: Release
+  CC: clang
+  CXX: clang++
+  FEX_PORTABLE: 1
+
+jobs:
+  build_plus_test:
+    runs-on: ${{ matrix.arch }}
+    strategy:
+      matrix:
+        arch: [[self-hosted, ARMv8.0], [self-hosted, ARMv8.2], [self-hosted, ARMv8.4]]
+      fail-fast: false
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: '0'
+        fetch-tags: 'true'
+
+    - name: Set runner info
+      run: |
+        echo "runner_label=${{ matrix.arch[1] }}" >> $GITHUB_ENV
+        echo "runner_name=$(hostname)" >> $GITHUB_ENV
+
+    - name: Setup Build Environment
+      uses: ./.github/workflows/setup-env
+
+    - name: Configure CMake
+      run: |
+        cmake -S . -B build -DCMAKE_BUILD_TYPE=$BUILD_TYPE -G Ninja -DENABLE_LTO=False -DENABLE_ASSERTIONS=True \
+          -DENABLE_X86_HOST_DEBUG=True -DBUILD_FEX_LINUX_TESTS=True -DBUILD_THUNKS=True \
+          -DCMAKE_INSTALL_PREFIX="$PWD"/build/install
+
+    # These steps make a lot of noise but rarely fail.
+    # Put them in a separate step to make normal build logs easier to parse
+    - name: Noisy Build Targets
+      run: cmake --build build --target asm_files 32bit_asm_files JemallocLibs Catch2 vixl cephes_128bit
+
+    - name: Build
+      id: build
+      run: cmake --build build
+
+    - name: Install
+      run: cmake --build build --target install
+
+    # GCC tests
+    - name: GCC64 Target Tests
+      if: steps.build.outcome == 'success'
+      uses: ./.github/workflows/test
+      with:
+        target: gcc_target_tests_64
+
+    - name: GCC32 Target Tests
+      if: steps.build.outcome == 'success'
+      uses: ./.github/workflows/test
+      with:
+        target: gcc_target_tests_32
+
+    # API tests
+    - name: API Tests
+      if: steps.build.outcome == 'success'
+      uses: ./.github/workflows/test
+      with:
+        target: api_tests
+
+    - name: FEXCore API Tests
+      if: steps.build.outcome == 'success'
+      uses: ./.github/workflows/test
+      with:
+        target: fexcore_apitests
+
+    # ARM emission tests
+    - name: ARM Emitter Tests
+      if: steps.build.outcome == 'success'
+      uses: ./.github/workflows/test
+      with:
+        target: emitter_tests
+
+    # Linux  tests
+    - name: FEX Linux Tests
+      if: steps.build.outcome == 'success'
+      uses: ./.github/workflows/test
+      with:
+        target: fex_linux_tests_all
+      env:
+        FEX_PORTABLE: 0
+
+    # Thunking
+    - name: Thunkgen tests
+      if: steps.build.outcome == 'success'
+      uses: ./.github/workflows/test
+      with:
+        target: thunkgen_tests
+
+    - name: Test GL No-Thunks
+      if: ${{ steps.build.outcome == 'success' && matrix.arch[1] == 'x64' }}
+      uses: ./.github/workflows/test
+      with:
+        target: thunk_functional_tests_nothunks
+      env:
+        DISPLAY: ':0'
+
+    - name: Test GL Thunks
+      if: ${{ steps.build.outcome == 'success' && matrix.arch[1] == 'x64' }}
+      uses: ./.github/workflows/test
+      with:
+        target: thunk_functional_tests_thunks
+      env:
+        DISPLAY: ':0'
+
+    # ASM tests
+    - name: ASM Tests
+      if: steps.build.outcome == 'success'
+      uses: ./.github/workflows/test
+      with:
+        target: asm_tests
+
+    # POSIX tests
+    - name: POSIX Tests
+      if: steps.build.outcome == 'success'
+      uses: ./.github/workflows/test
+      with:
+        target: posix_tests
+
+    # GVisor tests
+    - name: GVisor Tests
+      if: steps.build.outcome == 'success'
+      uses: ./.github/workflows/test
+      with:
+        target: gvisor_tests
+
+    # Struct verifier tests
+    - name: Struct verifier tests
+      if: steps.build.outcome == 'success'
+      uses: ./.github/workflows/test
+      with:
+        target: struct_verifier
+
+    - name: Remove old SHM regions
+      if: ${{ always() }}
+      run: cmake --build build --target remove_old_shm_regions
+
+    - name: Upload results
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v6
+      timeout-minutes: 1
+      with:
+        name: Results-${{ env.runner_name }}-${{ env.runner_label }}
+        path: results/*.log
+        retention-days: 3

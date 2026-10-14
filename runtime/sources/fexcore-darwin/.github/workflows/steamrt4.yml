@@ -1,0 +1,72 @@
+name: steamrt4 build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  DEBIAN_FRONTEND: noninteractive
+  BUILD_TYPE: Release
+  CC: clang
+  CXX: clang++
+
+jobs:
+  steamrt4_build:
+    runs-on: ${{ matrix.arch }}
+    strategy:
+      matrix:
+        arch: [[self-hosted, ARM64, distrobox]]
+      fail-fast: false
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: '0'
+        fetch-tags: 'true'
+
+    - name: Set runner label
+      run: echo "runner_label=${{ matrix.arch[1] }}" >> $GITHUB_ENV
+
+    - name: Setup Build Environment
+      uses: ./.github/workflows/setup-env
+      with:
+        setup-rootfs: false
+
+    # Setup everything required.
+    - name : distrobox setup
+      run: |
+        distrobox create -Y -i registry.gitlab.steamos.cloud/steamrt/steamrt4/sdk/arm64:4.0.20251117.183306 steamrt4 || true
+        distrobox upgrade steamrt4
+        distrobox enter --name steamrt4 -- sudo apt-get install -y \
+          git cmake ninja-build ccache \
+          lld clang \
+          libclang-dev llvm-dev \
+          libstdc++-14-dev-i386-cross libgcc-14-dev-i386-cross \
+          libstdc++-14-dev-amd64-cross libgcc-14-dev-amd64-cross
+
+    - name: Configure CMake
+      run: |
+        distrobox enter --name steamrt4 -- cmake -S . -B build -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
+          -G Ninja -DBUILD_STEAM_SUPPORT=True -DENABLE_LTO=True -DENABLE_ASSERTIONS=False -DBUILD_THUNKS=True \
+          -DBUILD_FEXCONFIG=False -DBUILD_TESTING=False -DENABLE_CLANG_THUNKS=True -DUSE_LINKER=lld \
+          -DCMAKE_INSTALL_PREFIX=/usr
+
+    - name: Build
+      run: distrobox enter --name steamrt4 -- cmake --build build
+
+    - name: install
+      run: DESTDIR="$PWD"/install distrobox enter --name steamrt4 -- cmake --build build -t install
+
+    - name: Upload libraries
+      uses: actions/upload-artifact@v6
+      timeout-minutes: 1
+      with:
+        overwrite: true
+        name: steamrt4_steampipe_depot
+        path: ${{ github.workspace }}/install/*
+        retention-days: 60
+        compression-level: 9

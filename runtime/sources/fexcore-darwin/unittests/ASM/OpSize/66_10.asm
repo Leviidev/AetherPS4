@@ -1,0 +1,18 @@
+%ifdef CONFIG
+{
+  "RegData": {
+    "XMM0": ["0x4142434445464748", "0x5152535455565758"]
+  }
+}
+%endif
+
+mov rdx, 0xe0000000
+
+mov rax, 0x4142434445464748
+mov [rdx + 8 * 0], rax
+mov rax, 0x5152535455565758
+mov [rdx + 8 * 1], rax
+
+movupd xmm0, [rdx]
+
+hlt

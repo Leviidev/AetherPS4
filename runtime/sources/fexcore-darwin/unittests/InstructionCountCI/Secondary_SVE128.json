@@ -1,0 +1,148 @@
+{
+  "Features": {
+    "Bitness": 64,
+    "EnabledHostFeatures": [
+      "SVE128"
+    ],
+    "DisabledHostFeatures": [
+      "SVE256",
+      "AFP"
+    ]
+  },
+  "Instructions": {
+    "movmskps eax, xmm0": {
+      "ExpectedInstructionCount": 5,
+      "Comment": "0x0f 0x50",
+      "ExpectedArm64ASM": [
+        "ushr v2.4s, v16.4s, #31",
+        "index z3.s, #0, #1",
+        "ushl v2.4s, v2.4s, v3.4s",
+        "addv s2, v2.4s",
+        "mov w4, v2.s[0]"
+      ]
+    },
+    "movmskps rax, xmm0": {
+      "ExpectedInstructionCount": 5,
+      "Comment": "0x0f 0x50",
+      "ExpectedArm64ASM": [
+        "ushr v2.4s, v16.4s, #31",
+        "index z3.s, #0, #1",
+        "ushl v2.4s, v2.4s, v3.4s",
+        "addv s2, v2.4s",
+        "mov w4, v2.s[0]"
+      ]
+    },
+    "psrlw mm0, mm1": {
+      "ExpectedInstructionCount": 8,
+      "Comment": "0x0f 0xd1",
+      "ExpectedArm64ASM": [
+        "strb wzr, [x28, #1051]",
+        "mov w20, #0xffff",
+        "strb w20, [x28, #1202]",
+        "ldr d2, [x28, #1056]",
+        "ldr d3, [x28, #1072]",
+        "lsr z2.h, p6/m, z2.h, z3.d",
+        "str d2, [x28, #1056]",
+        "strh w20, [x28, #1064]"
+      ]
+    },
+    "psrld mm0, mm1": {
+      "ExpectedInstructionCount": 8,
+      "Comment": "0x0f 0xd2",
+      "ExpectedArm64ASM": [
+        "strb wzr, [x28, #1051]",
+        "mov w20, #0xffff",
+        "strb w20, [x28, #1202]",
+        "ldr d2, [x28, #1056]",
+        "ldr d3, [x28, #1072]",
+        "lsr z2.s, p6/m, z2.s, z3.d",
+        "str d2, [x28, #1056]",
+        "strh w20, [x28, #1064]"
+      ]
+    },
+    "psrlq mm0, mm1": {
+      "ExpectedInstructionCount": 8,
+      "Comment": "0x0f 0xd3",
+      "ExpectedArm64ASM": [
+        "strb wzr, [x28, #1051]",
+        "mov w20, #0xffff",
+        "strb w20, [x28, #1202]",
+        "ldr d2, [x28, #1056]",
+        "ldr d3, [x28, #1072]",
+        "lsr z2.d, p6/m, z2.d, z3.d",
+        "str d2, [x28, #1056]",
+        "strh w20, [x28, #1064]"
+      ]
+    },
+    "psraw mm0, mm1": {
+      "ExpectedInstructionCount": 8,
+      "Comment": "0x0f 0xe1",
+      "ExpectedArm64ASM": [
+        "strb wzr, [x28, #1051]",
+        "mov w20, #0xffff",
+        "strb w20, [x28, #1202]",
+        "ldr d2, [x28, #1056]",
+        "ldr d3, [x28, #1072]",
+        "asr z2.h, p6/m, z2.h, z3.d",
+        "str d2, [x28, #1056]",
+        "strh w20, [x28, #1064]"
+      ]
+    },
+    "psrad mm0, mm1": {
+      "ExpectedInstructionCount": 8,
+      "Comment": "0x0f 0xe2",
+      "ExpectedArm64ASM": [
+        "strb wzr, [x28, #1051]",
+        "mov w20, #0xffff",
+        "strb w20, [x28, #1202]",
+        "ldr d2, [x28, #1056]",
+        "ldr d3, [x28, #1072]",
+        "asr z2.s, p6/m, z2.s, z3.d",
+        "str d2, [x28, #1056]",
+        "strh w20, [x28, #1064]"
+      ]
+    },
+    "psllw mm0, mm1": {
+      "ExpectedInstructionCount": 8,
+      "Comment": "0x0f 0xf1",
+      "ExpectedArm64ASM": [
+        "strb wzr, [x28, #1051]",
+        "mov w20, #0xffff",
+        "strb w20, [x28, #1202]",
+        "ldr d2, [x28, #1056]",
+        "ldr d3, [x28, #1072]",
+        "lsl z2.h, p6/m, z2.h, z3.d",
+        "str d2, [x28, #1056]",
+        "strh w20, [x28, #1064]"
+      ]
+    },
+    "pslld mm0, mm1": {
+      "ExpectedInstructionCount": 8,
+      "Comment": "0x0f 0xf2",
+      "ExpectedArm64ASM": [
+        "strb wzr, [x28, #1051]",
+        "mov w20, #0xffff",
+        "strb w20, [x28, #1202]",
+        "ldr d2, [x28, #1056]",
+        "ldr d3, [x28, #1072]",
+        "lsl z2.s, p6/m, z2.s, z3.d",
+        "str d2, [x28, #1056]",
+        "strh w20, [x28, #1064]"
+      ]
+    },
+    "psllq mm0, mm1": {
+      "ExpectedInstructionCount": 8,
+      "Comment": "0x0f 0xf3",
+      "ExpectedArm64ASM": [
+        "strb wzr, [x28, #1051]",
+        "mov w20, #0xffff",
+        "strb w20, [x28, #1202]",
+        "ldr d2, [x28, #1056]",
+        "ldr d3, [x28, #1072]",
+        "lsl z2.d, p6/m, z2.d, z3.d",
+        "str d2, [x28, #1056]",
+        "strh w20, [x28, #1064]"
+      ]
+    }
+  }
+}

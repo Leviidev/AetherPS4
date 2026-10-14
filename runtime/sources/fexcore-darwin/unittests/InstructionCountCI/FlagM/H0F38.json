@@ -1,0 +1,88 @@
+{
+  "Features": {
+    "Bitness": 64,
+    "EnabledHostFeatures": [
+      "FLAGM",
+      "FLAGM2"
+    ],
+    "DisabledHostFeatures": [
+      "SVE128",
+      "SVE256",
+      "AFP"
+    ]
+  },
+  "Instructions": {
+    "ptest xmm0, xmm1": {
+      "ExpectedInstructionCount": 12,
+      "Comment": [
+        "0x66 0x0f 0x38 0x17"
+      ],
+      "ExpectedArm64ASM": [
+        "and v2.16b, v16.16b, v17.16b",
+        "bic v3.16b, v17.16b, v16.16b",
+        "umaxv h2, v2.8h",
+        "umaxv h3, v3.8h",
+        "umov w20, v2.h[0]",
+        "umov w21, v3.h[0]",
+        "mov w27, #0x0",
+        "cmp x21, #0x0 (0)",
+        "cset x21, ne",
+        "cmp w20, #0x0 (0)",
+        "rmif x21, #63, #nzCv",
+        "mov w26, #0x1"
+      ]
+    },
+    "adcx eax, ebx": {
+      "ExpectedInstructionCount": 5,
+      "Comment": [
+        "0x66 0x0f 0x38 0xf6"
+      ],
+      "ExpectedArm64ASM": [
+        "mrs x20, nzcv",
+        "cfinv",
+        "adcs w4, w6, w4",
+        "rmif x20, #28, #NZcV",
+        "cfinv"
+      ]
+    },
+    "adcx rax, rbx": {
+      "ExpectedInstructionCount": 5,
+      "Comment": [
+        "0x66 REX.W 0x0f 0x38 0xf6"
+      ],
+      "ExpectedArm64ASM": [
+        "mrs x20, nzcv",
+        "cfinv",
+        "adcs x4, x6, x4",
+        "rmif x20, #28, #NZcV",
+        "cfinv"
+      ]
+    },
+    "adox eax, ebx": {
+      "ExpectedInstructionCount": 5,
+      "Comment": [
+        "0xf3 0x0f 0x38 0xf6"
+      ],
+      "ExpectedArm64ASM": [
+        "mrs x20, nzcv",
+        "ccmp wzr, #0, #nzcv, vs",
+        "adcs w4, w6, w4",
+        "ccmp wzr, #0, #nzcV, lo",
+        "rmif x20, #28, #NZCv"
+      ]
+    },
+    "adox rax, rbx": {
+      "ExpectedInstructionCount": 5,
+      "Comment": [
+        "0xf3 REX.W 0x0f 0x38 0xf6"
+      ],
+      "ExpectedArm64ASM": [
+        "mrs x20, nzcv",
+        "ccmp wzr, #0, #nzcv, vs",
+        "adcs x4, x6, x4",
+        "ccmp wzr, #0, #nzcV, lo",
+        "rmif x20, #28, #NZCv"
+      ]
+    }
+  }
+}

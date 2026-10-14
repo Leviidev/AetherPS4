@@ -1,0 +1,13 @@
+# Can't test this in a real environment
+Test_Primary/Primary_E8.asm
+Test_Primary/Primary_E9.asm
+
+# Relies on undefined behaviour
+Test_X87/D9_F9.asm
+Test_X87/D9_F2.asm
+
+# Relies on rounding correctness
+Test_X87/D9_F8.asm
+
+# This is basically a benchmark.
+FEX_bugs/XeSS_quadratic.asm

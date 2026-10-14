@@ -1,0 +1,105 @@
+{
+  "Features": {
+    "Bitness": 64,
+    "EnabledHostFeatures": [
+      "SVE128",
+      "SVE256",
+      "AFP",
+      "FCMA"
+    ],
+    "DisabledHostFeatures": []
+  },
+  "Instructions": {
+    "vaddsubpd xmm0, xmm1, xmm2": {
+      "ExpectedInstructionCount": 2,
+      "Comment": [
+        "Map 1 0b01 0xd0 128-bit"
+      ],
+      "ExpectedArm64ASM": [
+        "ext v2.16b, v18.16b, v18.16b, #8",
+        "fcadd v16.2d, v17.2d, v2.2d, #90"
+      ]
+    },
+    "vaddsubpd ymm0, ymm0, ymm2": {
+      "ExpectedInstructionCount": 3,
+      "Comment": [
+        "Aliasing source and destination",
+        "Map 1 0b01 0xd0 256-bit"
+      ],
+      "ExpectedArm64ASM": [
+        "movprfx z2, z18",
+        "ext z2.b, z2.b, z18.b, #8",
+        "fcadd z16.d, p7/m, z16.d, z2.d, #90"
+      ]
+    },
+    "vaddsubpd ymm0, ymm1, ymm0": {
+      "ExpectedInstructionCount": 4,
+      "Comment": [
+        "Aliasing source and destination",
+        "Map 1 0b01 0xd0 256-bit"
+      ],
+      "ExpectedArm64ASM": [
+        "movprfx z2, z16",
+        "ext z2.b, z2.b, z16.b, #8",
+        "movprfx z16, z17",
+        "fcadd z16.d, p7/m, z16.d, z2.d, #90"
+      ]
+    },
+    "vaddsubpd ymm0, ymm1, ymm2": {
+      "ExpectedInstructionCount": 4,
+      "Comment": [
+        "Map 1 0b01 0xd0 256-bit"
+      ],
+      "ExpectedArm64ASM": [
+        "movprfx z2, z18",
+        "ext z2.b, z2.b, z18.b, #8",
+        "movprfx z16, z17",
+        "fcadd z16.d, p7/m, z16.d, z2.d, #90"
+      ]
+    },
+    "vaddsubps xmm0, xmm1, xmm2": {
+      "ExpectedInstructionCount": 2,
+      "Comment": [
+        "Map 1 0b11 0xd0 128-bit"
+      ],
+      "ExpectedArm64ASM": [
+        "rev64 v2.4s, v18.4s",
+        "fcadd v16.4s, v17.4s, v2.4s, #90"
+      ]
+    },
+    "vaddsubps ymm0, ymm1, ymm0": {
+      "ExpectedInstructionCount": 3,
+      "Comment": [
+        "Aliasing source and destination",
+        "Map 1 0b11 0xd0 256-bit"
+      ],
+      "ExpectedArm64ASM": [
+        "revw z2.d, p7/m, z16.d",
+        "movprfx z16, z17",
+        "fcadd z16.s, p7/m, z16.s, z2.s, #90"
+      ]
+    },
+    "vaddsubps ymm0, ymm0, ymm2": {
+      "ExpectedInstructionCount": 2,
+      "Comment": [
+        "Aliasing source and destination",
+        "Map 1 0b11 0xd0 256-bit"
+      ],
+      "ExpectedArm64ASM": [
+        "revw z2.d, p7/m, z18.d",
+        "fcadd z16.s, p7/m, z16.s, z2.s, #90"
+      ]
+    },
+    "vaddsubps ymm0, ymm1, ymm2": {
+      "ExpectedInstructionCount": 3,
+      "Comment": [
+        "Map 1 0b11 0xd0 256-bit"
+      ],
+      "ExpectedArm64ASM": [
+        "revw z2.d, p7/m, z18.d",
+        "movprfx z16, z17",
+        "fcadd z16.s, p7/m, z16.s, z2.s, #90"
+      ]
+    }
+  }
+}

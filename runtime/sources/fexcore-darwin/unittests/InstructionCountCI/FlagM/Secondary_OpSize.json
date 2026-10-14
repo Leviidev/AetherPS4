@@ -1,0 +1,60 @@
+{
+  "Features": {
+    "Bitness": 64,
+    "EnabledHostFeatures": [
+      "FLAGM",
+      "FLAGM2"
+    ],
+    "DisabledHostFeatures": [
+      "SVE128",
+      "SVE256",
+      "AFP",
+      "FCMA"
+    ]
+  },
+  "Instructions": {
+    "ucomisd xmm0, xmm1": {
+      "ExpectedInstructionCount": 4,
+      "Comment": "0x66 0x0f 0x2e",
+      "ExpectedArm64ASM": [
+        "fcmp d16, d17",
+        "cset x26, vc",
+        "mov w27, #0x0",
+        "axflag"
+      ]
+    },
+    "comisd xmm0, xmm1": {
+      "ExpectedInstructionCount": 4,
+      "Comment": "0x66 0x0f 0x2f",
+      "ExpectedArm64ASM": [
+        "fcmp d16, d17",
+        "cset x26, vc",
+        "mov w27, #0x0",
+        "axflag"
+      ]
+    },
+    "pmovmskb eax, xmm0": {
+      "ExpectedInstructionCount": 7,
+      "Comment": "0x66 0x0f 0xd7",
+      "ExpectedArm64ASM": [
+        "ldr q2, [x28, #3408]",
+        "cmlt v3.16b, v16.16b, #0",
+        "and v2.16b, v3.16b, v2.16b",
+        "addp v2.16b, v2.16b, v2.16b",
+        "addp v2.8b, v2.8b, v2.8b",
+        "addp v2.8b, v2.8b, v2.8b",
+        "umov w4, v2.h[0]"
+      ]
+    },
+    "maskmovdqu xmm0, xmm1": {
+      "ExpectedInstructionCount": 4,
+      "Comment": "0x66 0x0f 0xf7",
+      "ExpectedArm64ASM": [
+        "cmlt v2.16b, v17.16b, #0",
+        "ldr q3, [x11]",
+        "bsl v2.16b, v16.16b, v3.16b",
+        "str q2, [x11]"
+      ]
+    }
+  }
+}

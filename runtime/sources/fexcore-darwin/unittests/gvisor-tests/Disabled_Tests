@@ -1,0 +1,231 @@
+# never terminates (even though we use timeout)
+kill_test
+
+# erratic test results
+xattr_test
+mlock_test
+
+# these are flaky on x86
+stat_times_test
+
+# This periodically fails on ARM hosts. `PosixError(errno=13 Permission denied) open(/proc/self/oom_score_adj, 0x1, 0)`
+proc_pid_oomscore_test
+
+# Spins forever
+ptrace_test
+
+# The behaviour of this is different between x86 and ARM
+# SIGSEGV kills a thread successfully on ARM but not on x86
+time_test
+
+# The behaviour of this test changes depending on if running inside the test harness or not
+# Works outside of the test harness but fails inside of it
+pause_test
+
+# This takes advantage of CLONE_VM in a way that breaks FEX's TLS usage
+# Need to workaround this somehow
+aio_test
+
+# The Solidrun CI board isn't running a kernel with namespaces enabled
+# gvisor doesn't error check correctly in this case and returns hard failure instead of correctly exiting
+proc_pid_uid_gid_map_test
+
+# This test is expecting the kernel to update the timeout variable but by default the kernel keeps time outs "sticky"
+# See personality flag STICKY_TIMEOUTS
+select_test
+
+# This test uses syscalls that a userspace process doesn't have access to
+syslog_test
+
+# This very specifically is testing bad pointers passed in to the kernel to test EFAULT
+access_test
+sigprocmask_test
+
+# Relies on some utility executables to be installed
+exec_test
+
+# This relies on splice behaviour that doesn't work even on x86 host
+eventfd_test
+
+# Fails even on host x86 device
+# Expects the tmp folder to be empty and cleaned up between CI runs by a system process
+# Does tests that removes user priveleges to touch those files
+open_create_test
+
+# Fails even on host x86 device
+# Expects the /tmp folder to be cleaned up between INDIVIDUAL tests
+# OpenTest.OTrunc creates /tmp/truncd
+# OpenTest.OTruncAndReadOnlyDir attempts to create the same directory just afterwards
+# Neither clean up after themselves
+open_test
+
+# This test doesn't correctly check to see if seccomp is enabled
+# Attempts using regardless of enabled or not
+seccomp_test
+
+# Relies on ptrace to execute very simple binaries
+exec_binary_test
+
+# Relies on ptrace to send the parent process a signal
+prctl_test
+
+# Doesn't event pass on real x86 host
+# GetrusageTest.IgnoreSIGCHLD is expecting memory usage to be zero, but it isn't
+getrusage_test
+
+# Doesn't event pass on real x86 host
+sendfile_test
+
+# Does a couple of things we don't support currently
+# ForkTest.SigAltStack : Fork should inherit altstack
+# ForkTest.Affinity : Affinity masks should be inherited
+fork_test
+
+# Requires accurate exit status from vfork
+# Which we currently don't achieve
+vfork_test
+
+# Doesn't even pass on real x86 host
+# Takes a long time to run as well
+pty_test
+
+# This syscall isn't implemented on ARM64
+mempolicy_test
+
+# Relies on namespaces to exist on the host (and user accessible) and isn't guaranteed by our CI
+prctl_setuid_test
+
+# This does 32-bit syscalls from a 64-bit process. Which we don't support yet
+32bit_test
+
+# We are lying to the guest application about true affinity. Missing some edges here
+affinity_test
+
+# Doesn't even pass on real x86 host
+# Uses some private sandbox socket system?
+# Seems like it needs some environment variables set that is google specific
+connect_external_test
+
+# Doesn't even pass on real x86 host
+# Needs some helper executable to work
+sigaltstack_test
+
+# Sets up an alarm to fire every 500ms
+# Sets up rcx and r11 to a known good value
+# sets a boolean in memory and spins until the signal handler sets another boolean
+# Stores the resulting values to a memory address
+# Then checks to ensure the signal handler picked up the correct context values
+# Seems like FEX currently doesn't?
+sigiret_test
+
+# Doesn't even pass on real x86 host
+# This relies on splice behaviour that doesn't work even on x86 host
+# Hangs after failing
+splice_test
+
+# Relies on ptrace to run
+wait_test
+sysret_test
+
+# Has race conditions in the code and takes a long time to run
+tcp_socket_test
+
+# Doesn't even pass on real x86 host
+socket_bind_to_device_test
+socket_netlink_route_test
+socket_bind_to_device_distribution_test
+socket_bind_to_device_sequence_test
+socket_inet_loopback_nogotsan_test
+socket_ipv4_udp_unbound_loopback_nogotsan_test
+socket_ipv4_udp_unbound_loopback_test
+
+# This takes forever even on x86 host
+socket_inet_loopback_test
+socket_ip_tcp_generic_loopback_test
+socket_stress_test
+alarm_test
+itimer_test
+futex_test
+fcntl_test
+
+# these take a long time
+ppoll_test
+flock_test
+pipe_test
+epoll_test
+concurrency_test
+
+# This requires partial read support in the kernel
+# Arm64 devices don't have this
+partial_bad_buffer_test
+
+# Depending on board can work or not, depending on kernel configuration
+# IPv6 maybe?
+socket_ipv6_udp_unbound_external_networking_test
+
+# This test is flaky
+proc_net_test
+rtsignal_test
+sigstop_test
+stat_test
+
+# These search for folders in /
+# Might need to rbind some folders to make it happy
+# This currently passes on x86-64 hosts
+# This fails on AArch64 because getdents isn't emulated
+getdents_test
+
+# Flaky
+udp_socket_test
+
+# This test checks for the header layout from `/proc/net/udp` which has changed slightly with newer kernels
+proc_net_udp_test
+
+# This test is broken since kernel commit: 36e2c7421f02
+# Upstream gvisor has the offending tests removed
+inotify_test
+
+# Needs testing
+semaphore_test
+
+# This test does an unsafe timer test. (NoTimeout subtest specifically).
+# Sets a timer for 100ms then starts a pselect with unlimited timeout.
+# If the timer fires before the pselect starts then pselect will hang forever.
+# Since we are running these tests on a fully loaded system, we tend to context switch,
+# causing the chance of a hang to occur quite frequently.
+pselect_test
+
+# Somewhere between kernel versions 5.15 and 6.0, timerfd lseek behaviour has changed.
+# On older kernels it would return -ESPIPE, on new kernels it returns 0.
+# This test expects -ESPIPE behaviour.
+timerfd_test
+
+# Sub-test SealGrowPartialWriteTruncated tests some behaviour of F_SEAL_GROW that changes behaviour depending on kernel version.
+#  - Grows the memfd region to 1 page
+#  - Seals it
+#  - Seeks to 3/4 in to the page
+#  - Tries to write one page of data
+#  - Expects the kernel to only write 1024 bytes
+#  - Newer kernels return EPERM instead
+# Sub-test SealWriteWithMmap tests behaviour of F_SEAL_WRITE that changes behaviour depending on kernel version
+# - Seals the memfd region
+# - Tries to map it with MAP_SHARED and PROT_WRITE - Expects failure
+# - Tries to map it with MAP_SHARED and PROT_READ - Expects failure
+# - Older Linux kernel versions accidentally allowed PROT_READ mappings through.
+memfd_test
+
+# Subtest `TestInvalidFlag` tests expected invalid flag 0x80.
+# With a new enough kernel this is now RWF_NOAPPEND
+preadv2_test
+pwritev2_test
+
+# Tries to set a bunch of socket options that used to work on older kernels, but now the get rejected with EOPNOTSUPP
+socket_abstract_test
+socket_domain_test
+socket_filesystem_test
+socket_ip_tcp_loopback_test
+socket_ip_udp_loopback_test
+
+# Does some tricky signal masking and signal timer setup to try and ensure `sigtimedwait` still sends a timedwait signal when signals are blocked
+# With a new enough kernel it seems `sigtimedwait` now immediately return in this situation.
+timers_test
