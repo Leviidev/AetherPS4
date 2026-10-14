@@ -8,6 +8,7 @@
 #include "core/emulator_settings.h"
 #include "core/memory.h"
 #include "imgui_impl_sdl3.h"
+#include "platform/husk/host_surface.h"
 #include "input/controller.h"
 #include "input/input_handler.h"
 #include "sdl_window.h"
@@ -884,6 +885,15 @@ void NewFrame(bool is_reusing_frame) {
         io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
     }
 
+    if (bd->window == nullptr) {
+        // Host surface (no SDL window): the display size comes from the host; there is no SDL
+        // mouse or cursor to track.
+        const auto surface = Frontend::GetHostSurface();
+        const float scale = surface.scale > 0.0f ? surface.scale : 1.0f;
+        io.DisplaySize = ImVec2((float)surface.width_px / scale, (float)surface.height_px / scale);
+        io.DisplayFramebufferScale = ImVec2(scale, scale);
+        return;
+    }
     UpdateMouseData();
     UpdateMouseCursor();
 
@@ -897,6 +907,13 @@ void OnResize() {
 
     int w, h;
     int display_w, display_h;
+    if (bd->window == nullptr) {
+        const auto surface = Frontend::GetHostSurface();
+        const float scale = surface.scale > 0.0f ? surface.scale : 1.0f;
+        io.DisplaySize = ImVec2((float)surface.width_px / scale, (float)surface.height_px / scale);
+        io.DisplayFramebufferScale = ImVec2(scale, scale);
+        return;
+    }
     SDL_GetWindowSize(bd->window, &w, &h);
     if (SDL_GetWindowFlags(bd->window) & SDL_WINDOW_MINIMIZED) {
         w = h = 0;

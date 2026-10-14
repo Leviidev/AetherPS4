@@ -8,6 +8,7 @@
 #include <common/path_util.h>
 #include <common/scm_rev.h>
 #include <toml.hpp>
+#include "platform/husk/host_surface.h"
 #include "common/logging/formatter.h"
 #include "common/logging/log.h"
 #include "emulator_settings.h"
@@ -383,7 +384,8 @@ bool EmulatorSettingsImpl::Load(const std::string& serial) {
                 mergeGroup(m_gpu, "GPU");
                 mergeGroup(m_vulkan, "Vulkan");
             } else {
-                if (std::filesystem::exists(Common::FS::GetUserPath(Common::FS::PathType::UserDir) /
+                if (!Frontend::IsHuskHosted() &&
+                    std::filesystem::exists(Common::FS::GetUserPath(Common::FS::PathType::UserDir) /
                                             "config.toml")) {
                     SDL_MessageBoxButtonData btns[2]{
                         {0, 0, "Update"},

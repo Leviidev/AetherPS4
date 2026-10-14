@@ -57,7 +57,8 @@ int PS4_SYSV_ABI sceMouseGetDeviceInfo() {
 }
 
 int PS4_SYSV_ABI sceMouseInit() {
-    if (EmulatorSettings.IsMiceUsedAsMice()) {
+    if (EmulatorSettings.IsMiceUsedAsMice() && g_window != nullptr &&
+        g_window->GetSDLWindow() != nullptr) {
         SDL_WarpMouseInWindow(g_window->GetSDLWindow(), 1, 1);
         SDL_SetWindowRelativeMouseMode(g_window->GetSDLWindow(), true);
     }

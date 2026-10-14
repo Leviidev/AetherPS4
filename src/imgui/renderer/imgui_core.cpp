@@ -6,6 +6,7 @@
 #include <SDL3/SDL_events.h>
 #include <imgui.h>
 
+#include "platform/husk/host_surface.h"
 #include "common/path_util.h"
 #include "core/debug_state.h"
 #include "core/devtools/layer.h"
@@ -134,7 +135,10 @@ void Initialize(const ::Vulkan::Instance& instance, const Frontend::WindowSDL& w
     ImFormatString(label, IM_ARRAYSIZE(label), "WindowOverViewport_%08X", GetMainViewport()->ID);
     dock_id = ImHashStr(label);
 
-    if (const auto dpi = SDL_GetWindowDisplayScale(window.GetSDLWindow()); dpi > 0.0f) {
+    const float dpi = window.GetSDLWindow() != nullptr
+                          ? SDL_GetWindowDisplayScale(window.GetSDLWindow())
+                          : Frontend::GetHostSurface().scale;
+    if (dpi > 0.0f) {
         GetIO().FontGlobalScale *= dpi;
     }
 

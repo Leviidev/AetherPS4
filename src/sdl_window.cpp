@@ -39,6 +39,7 @@
 #include "input/input_handler.h"
 #include "input/input_mouse.h"
 #include "platform/ios/touch_controls_layer.h"
+#include "platform/husk/host_surface.h"
 #include "sdl_window.h"
 #include "video_core/renderdoc.h"
 
@@ -135,6 +136,28 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, Input::GameControllers* controller
     }
     if (!SDL_SetHint(SDL_HINT_APP_NAME, "shadPS4")) {
         UNREACHABLE_MSG("Failed to set SDL window hint: {}", SDL_GetError());
+    }
+    if (Frontend::HasHostSurface()) {
+        // The embedding app (Husk) owns the window: render into its CAMetalLayer and start no
+        // SDL video. Audio implies events, so RunLoop's WaitEvent and Stop()'s pushed
+        // SDL_EVENT_QUIT keep working; pads come from the host (ApplyRemoteState), not SDL.
+        const auto surface = Frontend::GetHostSurface();
+        LOG_INFO(Input, "Host surface: rendering into the host's CAMetalLayer, {}x{} px, no "
+                        "SDL window",
+                 surface.width_px, surface.height_px);
+        if (!SDL_Init(SDL_INIT_AUDIO)) {
+            LOG_ERROR(Input, "SDL audio/events init failed: {}", SDL_GetError());
+        }
+        width = surface.width_px;
+        height = surface.height_px;
+        window_info.type = WindowSystemType::Metal;
+        window_info.render_surface = surface.metal_layer;
+        Input::ControllerOutput::LinkJoystickAxes();
+        Input::ParseInputConfig(std::string(Common::ElfInfo::Instance().GameSerial()));
+        // No SDL gamepads here; its first check logs the PS4 user in on controller 0, which
+        // the host's pads (ApplyRemoteState) then drive.
+        controllers.TryOpenSDLControllers();
+        return;
     }
     LOG_INFO(Input, "Initializing SDL video subsystem");
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -244,6 +267,9 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, Input::GameControllers* controller
 WindowSDL::~WindowSDL() = default;
 
 void WindowSDL::SetIcon(const std::filesystem::path& path) {
+    if (window == nullptr) {
+        return;
+    }
 #ifdef ENABLE_BACHATA_RUNTIME
     // Desktop X11 icons become a megabyte-scale property request. The embedded Android X server
     // does not need window-manager metadata, and processing it blocks Vulkan WSI negotiation.
@@ -354,6 +380,9 @@ void WindowSDL::WaitEvent() {
         Overlay::ToggleQuitWindow();
         break;
     case SDL_EVENT_TOGGLE_FULLSCREEN: {
+        if (window == nullptr) {
+            break;
+        }
         if (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) {
             SDL_SetWindowFullscreen(window, 0);
         } else {
@@ -440,7 +469,7 @@ void WindowSDL::InitTimers() {
 }
 
 void WindowSDL::RequestKeyboard() {
-    if (keyboard_grab == 0) {
+    if (keyboard_grab == 0 && window != nullptr) {
         SDL_RunOnMainThread(
             [](void* userdata) { SDL_StartTextInput(static_cast<SDL_Window*>(userdata)); }, window,
             true);
@@ -451,7 +480,7 @@ void WindowSDL::RequestKeyboard() {
 void WindowSDL::ReleaseKeyboard() {
     ASSERT(keyboard_grab > 0);
     keyboard_grab--;
-    if (keyboard_grab == 0) {
+    if (keyboard_grab == 0 && window != nullptr) {
         SDL_RunOnMainThread(
             [](void* userdata) { SDL_StopTextInput(static_cast<SDL_Window*>(userdata)); }, window,
             true);
@@ -459,7 +488,13 @@ void WindowSDL::ReleaseKeyboard() {
 }
 
 void WindowSDL::OnResize() {
-    SDL_GetWindowSizeInPixels(window, &width, &height);
+    if (window == nullptr) {
+        const auto surface = Frontend::GetHostSurface();
+        width = surface.width_px;
+        height = surface.height_px;
+    } else {
+        SDL_GetWindowSizeInPixels(window, &width, &height);
+    }
     ImGui::Core::OnResize();
 }
 

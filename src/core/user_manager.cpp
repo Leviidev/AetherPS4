@@ -8,6 +8,7 @@
 #include <common/logging/log.h>
 #include <common/path_util.h>
 #include <pugixml.hpp>
+#include "platform/husk/host_surface.h"
 #include "emulator_settings.h"
 #include "libraries/system/userservice.h"
 #include "user_manager.h"
@@ -103,6 +104,9 @@ enum class TransferOption : s32 {
 };
 TransferOption AskMigrationOption() {
     TransferOption user_choice = TransferOption::Nothing;
+    if (Frontend::IsHuskHosted()) {
+        return user_choice; // no dialogs inside Husk, and no legacy shadPS4 data there
+    }
 #ifndef _WIN32
     SDL_MessageBoxButtonData btns[4]
 #else
