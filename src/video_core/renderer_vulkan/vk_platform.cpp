@@ -13,6 +13,7 @@
 #define VK_USE_PLATFORM_XLIB_KHR
 #endif
 
+#include <cstdlib>
 #include <vector>
 #include <fmt/ranges.h>
 
@@ -260,6 +261,11 @@ vk::UniqueInstance CreateInstance(Frontend::WindowSystemType window_type, bool e
                                   bool enable_crash_diagnostic) {
     LOG_INFO(Render_Vulkan, "Creating vulkan instance");
 
+    // Harness knob: AETHER_VULKAN_LIBRARY=<path> loads that Vulkan implementation directly, with
+    // no loader in between -- how the phone loads MoltenVK (Frameworks/libvulkan.dylib). On the
+    // Mac this runs the phone's driver (e.g. Homebrew's libMoltenVK.dylib). sdl_window.cpp gives
+    // SDL the same library so the surface and the instance come from one driver.
+    static const char* direct_library = std::getenv("AETHER_VULKAN_LIBRARY");
 #if defined(__APPLE__)
     // Initialize the environment with the path to the included ICD, so that the loader will
     // find it.
@@ -269,10 +275,17 @@ vk::UniqueInstance CreateInstance(Frontend::WindowSystemType window_type, bool e
         _NSGetExecutablePath(path, &length);
         return std::filesystem::path(path).parent_path();
     }();
-    setenv("VK_DRIVER_FILES", icd_path.c_str(), true);
+    if (direct_library == nullptr) {
+        setenv("VK_DRIVER_FILES", icd_path.c_str(), true);
+    }
 #endif
 
-    static vk::detail::DynamicLoader dl;
+    static vk::detail::DynamicLoader dl = direct_library != nullptr
+                                              ? vk::detail::DynamicLoader(direct_library)
+                                              : vk::detail::DynamicLoader();
+    if (direct_library != nullptr) {
+        LOG_INFO(Render_Vulkan, "Loading Vulkan directly from {}", direct_library);
+    }
     VULKAN_HPP_DEFAULT_DISPATCHER.init(
         dl.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr"));
 

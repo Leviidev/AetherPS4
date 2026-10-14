@@ -7,6 +7,7 @@
 // documented pairing for this: it tells SDL_Init()'s startup guard "main was handled
 // properly elsewhere" without going through SDL_main.h's own main -> SDL_main macro path.
 #define SDL_MAIN_HANDLED
+#include <cstdlib>
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_hints.h>
 #include <SDL3/SDL_init.h>
@@ -128,6 +129,10 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, Input::GameControllers* controller
         LOG_ERROR(Input, "Failed to set SDL Vulkan library hint: {}", SDL_GetError());
     }
 #endif
+    // See CreateInstance's AETHER_VULKAN_LIBRARY (vk_platform.cpp): SDL must load the same driver.
+    if (const char* direct_library = std::getenv("AETHER_VULKAN_LIBRARY")) {
+        SDL_SetHint(SDL_HINT_VULKAN_LIBRARY, direct_library);
+    }
     if (!SDL_SetHint(SDL_HINT_APP_NAME, "shadPS4")) {
         UNREACHABLE_MSG("Failed to set SDL window hint: {}", SDL_GetError());
     }
