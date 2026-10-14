@@ -14,6 +14,7 @@
 #include "core/libraries/videoout/driver.h"
 #include "core/libraries/videoout/videoout_error.h"
 #include "imgui/renderer/imgui_core.h"
+#include "platform/husk/host_surface.h"
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/renderer_vulkan/vk_presenter.h"
 
@@ -438,7 +439,11 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
         timer.Start();
 
         if (DebugState.IsGuestThreadsPaused()) {
-            DrawLastFrame();
+            // Redrawn for the pause menu. Inside Husk there is none, and a paused game may be in
+            // the background, where iOS refuses GPU work and the device is lost.
+            if (!Frontend::IsHuskHosted()) {
+                DrawLastFrame();
+            }
             timer.End();
             continue;
         }
