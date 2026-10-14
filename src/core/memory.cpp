@@ -4,6 +4,7 @@
 #include "common/alignment.h"
 #include "common/assert.h"
 #include "common/debug.h"
+#include "common/phone_path.h"
 #include <cstdio>
 #ifndef _WIN32
 #include <unistd.h>
@@ -32,7 +33,15 @@ MemoryManager::MemoryManager() {
     }
 
     // Pre-initialize direct backing
+#if defined(AETHER_PHONE_PATH)
+    // Sized for the largest model this configuration can become, a retail PS4 Pro unless a dev kit
+    // is set: the backing view (address_space.cpp) takes address space from iOS's one 64GB window
+    // for large mappings, and a dev kit's extra 2GB of it would go unused.
+    auto total_size =
+        EmulatorSettings.IsDevKit() ? ORBIS_KERNEL_TOTAL_MEM_DEV_PRO : ORBIS_KERNEL_TOTAL_MEM_PRO;
+#else
     auto total_size = ORBIS_KERNEL_TOTAL_MEM_DEV_PRO;
+#endif
     s32 extra_dmem = EmulatorSettings.GetExtraDmemInMBytes();
     if (extra_dmem != 0) {
         total_size += extra_dmem * 1_MB;

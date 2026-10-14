@@ -660,6 +660,12 @@ enum PosixPageProtection {
 
 struct AddressSpace::Impl {
     Impl() {
+#if defined(AETHER_PHONE_PATH)
+        // Matches MemoryManager's direct memory total (memory.cpp): no dev kit, no dev kit's 2GB.
+        BackingSize = (EmulatorSettings.IsDevKit() ? ORBIS_KERNEL_TOTAL_MEM_DEV_PRO
+                                                   : ORBIS_KERNEL_TOTAL_MEM_PRO) +
+                      ORBIS_KERNEL_FLEXIBLE_MEMORY_SIZE;
+#endif
         BackingSize += EmulatorSettings.GetExtraDmemInMBytes() * 1_MB;
         // Allocate virtual address placeholder for our address space.
         system_managed_size = SystemManagedSize;
