@@ -2,6 +2,7 @@
 #include "Utils/Allocator/HostAllocator.h"
 #include "Utils/Allocator.h"
 #include <FEXCore/Utils/Allocator.h>
+#include <FEXCore/Utils/AllocatorHooks.h>
 #include <FEXCore/Utils/CompilerDefs.h>
 #include <FEXCore/Utils/LogManager.h>
 #include <FEXCore/Utils/MathUtils.h>
@@ -29,7 +30,7 @@
 #endif
 #ifdef __APPLE__
 #include <TargetConditionals.h>
-#if TARGET_OS_IPHONE
+#if defined(FEX_APPLE_DUAL_MAPPED_JIT)
 #include <atomic>
 #include <dlfcn.h>
 #include <mach/mach.h>
@@ -344,7 +345,7 @@ void SetupHooks(size_t PageSize, HookPtrs Ptrs) {
 
 #endif
 
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(FEX_APPLE_DUAL_MAPPED_JIT)
 // iOS JIT allocation: no MAP_JIT-equivalent is available to a sideloaded/free-provisioned
 // app, so executable memory instead comes from an externally-attached StikDebug session
 // servicing the same BRK #0xf00d protocol as src/core/ios/ios_jit_allocator.cpp in the
@@ -378,7 +379,26 @@ struct BreakpointJITSymbols {
   BreakJITDetachFn jit_detach = nullptr;
 };
 
+#if !TARGET_OS_IPHONE
+// Mac harness of the phone (FEX_MAC_PHONE_PATH): the process maps anonymous read+execute pages
+// itself, standing in for StikDebug's fresh-allocation branch; iOSJITAlloc then makes the
+// writable alias with vm_remap exactly as on the phone. A MAP_JIT region would not do: it
+// cannot be vm_remap'd, and the phone has no MAP_JIT either.
+void* MacGetJITMapping(void* Addr, size_t Len) {
+  if (Addr != nullptr) {
+    return nullptr;
+  }
+  void* RX = ::mmap(nullptr, Len, PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_ANON, -1, 0);
+  return RX == MAP_FAILED ? nullptr : RX;
+}
+void MacJITDetach() {}
+#endif
+
 const BreakpointJITSymbols& GetBreakpointJITSymbols() noexcept {
+#if !TARGET_OS_IPHONE
+  static const BreakpointJITSymbols MacSymbols {MacGetJITMapping, MacJITDetach};
+  return MacSymbols;
+#endif
   static const BreakpointJITSymbols symbols = [] {
     BreakpointJITSymbols s;
     void* handle =

@@ -865,7 +865,7 @@ void CodeCache::FinalizeCodePages(MappedCodeCacheFile& Code, std::span<std::byte
 
   FEXCORE_PROFILE_SCOPED("FinalizeCodePages");
 
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(FEX_APPLE_DUAL_MAPPED_JIT)
   // The persistent disk code cache isn't supported on iOS: iOS's SDK hard-blocks mach_vm.h
   // entirely (a deliberate platform restriction, not a portability gap), and the whole
   // remap-onto-a-PROT_NONE-placeholder scheme below relies on it. This is an optional

@@ -15,6 +15,14 @@
 #ifdef __APPLE__
 #include <pthread.h>
 #include <TargetConditionals.h>
+// FEX_APPLE_DUAL_MAPPED_JIT: executable memory is a dual-mapped RW/RX pair (see the iOS section
+// below). True on iOS, and on macOS when FEXCore is built for the Mac harness of the phone
+// (-DFEX_MAC_PHONE_PATH=1), where the execute side comes from the process itself instead of
+// StikDebug. Every TU that includes this header must agree on FEX_MAC_PHONE_PATH: the embedding
+// app has to pass the same definition that FEXCore was built with.
+#if TARGET_OS_IPHONE || defined(FEX_MAC_PHONE_PATH)
+#define FEX_APPLE_DUAL_MAPPED_JIT 1
+#endif
 #endif
 #else
 #define NTDDI_VERSION 0x0A000005
@@ -121,7 +129,7 @@ FEX_DEFAULT_VISIBILITY extern void VirtualName(const char* Name, void* Ptr, size
 
 // All commit parameters are ignored here, they are unnecessary as Linux supports overcommit
 
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(FEX_APPLE_DUAL_MAPPED_JIT)
 // iOS has no MAP_JIT-equivalent available to a sideloaded/free-provisioned app (no
 // dynamic-codesigning entitlement). Executable allocations here instead go through Bachata's
 // StikDebug BreakpointJIT protocol (see iOSJITAlloc/iOSJITFreeIfOwned below, implemented in
@@ -213,7 +221,7 @@ public:
 constexpr int PlatformExecuteFlag = 0;
 #endif
 
-#if !(defined(__APPLE__) && TARGET_OS_IPHONE)
+#if !defined(FEX_APPLE_DUAL_MAPPED_JIT)
 // Identity on every platform except iOS, which has a real dual-mapped RW/RX split -- see this
 // file's iOS section above, which declares real (non-identity) versions of both functions
 // instead of these. Kept as a named function (rather than removing every call site) so a
@@ -231,7 +239,7 @@ inline void* GetWritableAddress(void* ExecAddr) {
 #endif
 
 inline void* VirtualAlloc(size_t Size, bool Execute = false, bool Commit = true) {
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(FEX_APPLE_DUAL_MAPPED_JIT)
   // A plain executable mmap is rejected outright on iOS too (EACCES), same as macOS, just
   // without a MAP_JIT to reach for -- this must never fall through to the mmap below.
   if (Execute) {
@@ -243,7 +251,7 @@ inline void* VirtualAlloc(size_t Size, bool Execute = false, bool Commit = true)
 }
 
 inline void* VirtualAlloc(void* Base, size_t Size, bool Execute = false, bool Commit = true) {
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(FEX_APPLE_DUAL_MAPPED_JIT)
   if (Execute) {
     // None of this build's Execute=true callers pass a real fixed Base (verified: all either
     // omit it or pass nullptr) -- MAP_FIXED was never requested by the mmap call below either,
@@ -256,7 +264,7 @@ inline void* VirtualAlloc(void* Base, size_t Size, bool Execute = false, bool Co
 }
 
 inline void VirtualFree(void* Ptr, size_t Size) {
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(FEX_APPLE_DUAL_MAPPED_JIT)
   // iOSJITFree recognizes and fully handles (munmaps) its own RW allocations, returning false
   // for anything else so the caller falls through to the ordinary munmap below -- callers here
   // don't track which VirtualAlloc path an address originally came from.

@@ -21,7 +21,7 @@ namespace FEXCore {
 namespace CPU {
 
   static constexpr size_t INITIAL_CODE_SIZE = 1024 * 1024 * 16;
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(FEX_APPLE_DUAL_MAPPED_JIT)
   // Every JIT allocation on iOS has to be individually granted execute permission by
   // StikDebug's external BreakpointJIT mechanism (a slow, page-by-page GDB-remote-mediated
   // protocol -- see AllocatorHooks.h's iOS section). Confirmed on-device: the initial 16MB
@@ -351,7 +351,7 @@ namespace CPU {
       // Keep a reference to the old code buffer to delay deallocation
       SignalHandlerCodeBuffers.push_back(std::move(CodeBuffer));
     } else {
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(FEX_APPLE_DUAL_MAPPED_JIT)
       // Dropping CodeBuffer here (the caller's only remaining reference, since CurrentCodeBuffer
       // already points at the new buffer) runs its destructor immediately, unmapping the
       // physical pages -- vs. on other platforms, correctly assuming that once
@@ -392,7 +392,7 @@ namespace CPU {
 
   CodeBuffer::CodeBuffer(size_t Size)
     : AllocatedSize(Size) {
-#if defined(__APPLE__) && !TARGET_OS_IPHONE
+#if defined(__APPLE__) && !defined(FEX_APPLE_DUAL_MAPPED_JIT)
     // Two Darwin MAP_JIT restrictions rule out a trailing guard page here entirely (both
     // confirmed empirically): (1) mprotect() refuses to change protection on a sub-range of
     // an existing MAP_JIT mapping (EACCES) -- so the guard can't be carved out of the code

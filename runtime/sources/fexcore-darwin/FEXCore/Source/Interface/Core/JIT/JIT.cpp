@@ -1336,7 +1336,7 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
       SetCursorOffset(CodeBuffers.LatestOffset);
       Align16B();
       if ((GetCursorOffset() + TempSize) > CurrentCodeBuffer->UsableSize()) {
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(FEX_APPLE_DUAL_MAPPED_JIT)
         // NewCodeBuffer=true (the default) requests a brand new dual-mapped allocation from
         // StikDebug's external BreakpointJIT mechanism every time the cache fills, which fails
         // on a session's 3rd+ such request (confirmed on-device, independent of the requested
