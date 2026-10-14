@@ -266,6 +266,9 @@ struct PageManager::Impl {
         bool is_write = Common::IsWriteError(context);
         size_t write_watcher_count = 0;
         size_t read_watcher_count = 0;
+        // A write to an unwatched 4KB page still faults while a sibling on its host page is
+        // watched; invalidating that sibling is what lifts the protection.
+        bool sibling_handled = false;
         if (s_instance) {
             const size_t page = addr >> PM_PAGE_BITS;
             // On 16KB host page systems (Darwin ARM64), 4 4KB PS4 pages share 1 host page.
@@ -279,7 +282,8 @@ struct PageManager::Impl {
                 if (state.num_write_watchers > 0) {
                     is_write = true;
                     if (p != page) {
-                        rasterizer->InvalidateMemory(p << PM_PAGE_BITS, PM_PAGE_SIZE);
+                        sibling_handled |=
+                            rasterizer->InvalidateMemory(p << PM_PAGE_BITS, PM_PAGE_SIZE);
                     }
                 }
             }
@@ -288,13 +292,55 @@ struct PageManager::Impl {
             return false;
         }
         if (is_write) {
-            return rasterizer->InvalidateMemory(addr, 8);
+            return rasterizer->InvalidateMemory(addr, 8) || sibling_handled;
         } else {
             return rasterizer->ReadMemory(addr, 8);
         }
         return false;
     }
 #endif
+
+    // Applies `perms`, the watcher state of every 4KB page in [addr, addr + size), to that range.
+    void ProtectWatched(VAddr addr, u64 size, Core::MemoryPermission perms) {
+#ifdef __APPLE__
+        // AddressSpace::Protect (address_space.cpp) rounds every mprotect() call out to the full
+        // enclosing HOST page on Apple platforms (16KB on Apple Silicon/iOS ARM64), not the PS4's
+        // own 4KB page granularity `perms` was computed at. Only the first and last host page of
+        // the range can hold sibling 4KB pages from outside it, so only those get the intersection
+        // (most-restrictive) of every sub-page sharing them -- what GuestFaultSignalHandler's
+        // SUBPAGES_PER_HOST_PAGE loop expects. The host pages between are wholly this range's and
+        // take `perms` as they are: widening the whole range from one watched sibling at an edge
+        // left megabytes read-only that the bookkeeping counted as unwatched, and the next write
+        // there faulted with no handler to claim it.
+        const u64 host_page_size = static_cast<u64>(sysconf(_SC_PAGESIZE));
+        if (host_page_size > PM_PAGE_SIZE) {
+            const auto host_page_perms = [&](u64 host_addr) {
+                auto effective = perms;
+                for (u64 a = host_addr; a < host_addr + host_page_size; a += PM_PAGE_SIZE) {
+                    const size_t p = a >> PM_PAGE_BITS;
+                    if (p < NUM_ADDRESS_PAGES) {
+                        effective &= cached_pages[p].Perms();
+                    }
+                }
+                return effective;
+            };
+            const u64 end = addr + size;
+            const u64 head = addr & ~(host_page_size - 1);
+            const u64 tail = (end - 1) & ~(host_page_size - 1);
+            if (head == tail) {
+                Protect(addr, size, host_page_perms(head));
+                return;
+            }
+            Protect(addr, head + host_page_size - addr, host_page_perms(head));
+            if (head + host_page_size < tail) {
+                Protect(head + host_page_size, tail - head - host_page_size, perms);
+            }
+            Protect(tail, end - tail, host_page_perms(tail));
+            return;
+        }
+#endif
+        Protect(addr, size, perms);
+    }
 
     template <bool track, bool is_read>
     void UpdatePageWatchers(VAddr addr, u64 size) {
@@ -316,38 +362,8 @@ struct PageManager::Impl {
         const auto release_pending = [&] {
             if (range_bytes > 0) {
                 RENDERER_TRACE;
-                auto effective_perms = perms;
-#ifdef __APPLE__
-                // AddressSpace::Protect (address_space.cpp) rounds every mprotect() call out to
-                // the full enclosing HOST page on Apple platforms (16KB on Apple Silicon/iOS
-                // ARM64), not the PS4's own 4KB page granularity `perms` was computed at above.
-                // Passing `perms` (this range's own watcher state only) straight through would
-                // silently also change the REAL hardware permission of up to 3 sibling 4KB
-                // PS4-pages sharing that host page, with no update to THEIR watcher bookkeeping
-                // in `cached_pages` -- leaving them mprotected in a state their own watcher
-                // count doesn't reflect. GuestFaultSignalHandler already aggregates watcher
-                // counts across a full host page when deciding whether a fault belongs to it
-                // (see the SUBPAGES_PER_HOST_PAGE loop above); mirror that here on the write
-                // side, widening the permission actually applied to the intersection
-                // (most-restrictive) of every sub-page sharing a host page with this range, so
-                // the real hardware state always matches what that aggregate check expects.
-                const size_t host_page_size = sysconf(_SC_PAGESIZE);
-                if (host_page_size > PM_PAGE_SIZE) {
-                    const u64 range_addr = range_begin << PM_PAGE_BITS;
-                    const u64 range_end_addr = range_addr + range_bytes;
-                    const u64 host_aligned_begin =
-                        range_addr & ~(static_cast<u64>(host_page_size) - 1);
-                    const u64 host_aligned_end = Common::AlignUp(range_end_addr, host_page_size);
-                    for (u64 a = host_aligned_begin; a < host_aligned_end; a += PM_PAGE_SIZE) {
-                        const size_t p = a >> PM_PAGE_BITS;
-                        if (p < NUM_ADDRESS_PAGES) {
-                            effective_perms &= cached_pages[p].Perms();
-                        }
-                    }
-                }
-#endif
                 // Perform pending (un)protect action
-                Protect(range_begin << PM_PAGE_BITS, range_bytes, effective_perms);
+                ProtectWatched(range_begin << PM_PAGE_BITS, range_bytes, perms);
                 range_bytes = 0;
                 potential_range_bytes = 0;
             }
@@ -427,7 +443,7 @@ struct PageManager::Impl {
             if (range_bytes > 0) {
                 RENDERER_TRACE;
                 // Perform pending (un)protect action
-                Protect((range_begin << PM_PAGE_BITS), range_bytes, perms);
+                ProtectWatched(range_begin << PM_PAGE_BITS, range_bytes, perms);
                 range_bytes = 0;
                 potential_range_bytes = 0;
             }
