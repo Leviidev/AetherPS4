@@ -1354,6 +1354,21 @@ if (AETHER_MAC_PHONE_PATH)
     # See src/common/phone_path.h. The allocator's execute side comes from the process itself
     # on the Mac (no StikDebug); the rest of it is the phone's code.
     target_compile_definitions(shadps4 PRIVATE AETHER_MAC_PHONE_PATH=1)
+    if (ENABLE_FEX_GUEST_CPU)
+        # FEXCore's AllocatorHooks.h switches to the phone's dual-mapped JIT on FEX_MAC_PHONE_PATH,
+        # and this target includes that header too, so both sides must agree: FEXCore has to be
+        # a build made with -DFEX_MAC_PHONE_PATH=1 (runtime/build/fexcore-darwin-macos-phone).
+        set(_fex_cache "${FEXCORE_GUEST_CPU_BUILD_DIR}/CMakeCache.txt")
+        set(_fex_flags "")
+        if (EXISTS "${_fex_cache}")
+            file(STRINGS "${_fex_cache}" _fex_flags REGEX "^CMAKE_CXX_FLAGS:STRING=")
+        endif()
+        if (NOT _fex_flags MATCHES "FEX_MAC_PHONE_PATH")
+            message(FATAL_ERROR "AETHER_MAC_PHONE_PATH needs a FEXCore built with "
+                                "-DFEX_MAC_PHONE_PATH=1; ${FEXCORE_GUEST_CPU_BUILD_DIR} is not")
+        endif()
+        target_compile_definitions(shadps4 PRIVATE FEX_MAC_PHONE_PATH=1)
+    endif()
     target_sources(shadps4 PRIVATE
         src/common/phone_path.h
         src/core/ios/ios_jit_allocator.cpp

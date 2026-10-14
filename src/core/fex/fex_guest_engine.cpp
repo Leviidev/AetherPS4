@@ -1668,7 +1668,7 @@ void BachataRecordKnownBlockSnapshot(uintptr_t writable_code_ptr, const unsigned
 // narrows the search to whatever else touches code memory (invalidation, a second compile of
 // the same or an overlapping range, etc).
 bool BachataCompareKnownBlockSnapshot(char* out_buf, std::size_t out_buf_size) noexcept {
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(AETHER_PHONE_PATH)
   if (out_buf == nullptr || out_buf_size == 0) {
     return false;
   }
@@ -1716,7 +1716,7 @@ bool BachataCompareKnownBlockSnapshot(char* out_buf, std::size_t out_buf_size) n
 }
 
 bool BachataDumpHostCodeWords(void* fault_pc, char* out_buf, std::size_t out_buf_size) noexcept {
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(AETHER_PHONE_PATH)
   if (fault_pc == nullptr || out_buf == nullptr || out_buf_size == 0) {
     return false;
   }
@@ -1818,7 +1818,7 @@ bool BachataReconstructAccurateGuestRIP(void* fault_pc, uint64_t* out_rip) noexc
 }
 
 bool BachataDescribeHostFaultAddress(void* fault_addr, char* out_buf, std::size_t out_buf_size) noexcept {
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(AETHER_PHONE_PATH)
   if (out_buf == nullptr || out_buf_size == 0) {
     return false;
   }
