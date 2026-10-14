@@ -7,6 +7,7 @@
 
 #include "imgui/imgui_std.h"
 #include "notifications_layer.h"
+#include "platform/husk/host_surface.h"
 
 CMRC_DECLARE(res);
 namespace shadNotifications {
@@ -143,6 +144,11 @@ void QueueNotification(std::string message, float timer, position pos, stockIcon
 
 void QueueNotification(std::string message, float timer, position pos, std::vector<u8> pngData,
                        bool addBackground) {
+    // Inside Husk these would only draw over the game, and each holds a decoded icon in GPU memory
+    // (a full-screen image for a screenshot).
+    if (Frontend::IsHuskHosted()) {
+        return;
+    }
     std::lock_guard<std::mutex> lock(queueMtx);
 
     NotificationInfo info;
