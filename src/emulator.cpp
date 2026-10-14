@@ -15,6 +15,7 @@
 
 #ifdef __APPLE__
 #include <TargetConditionals.h>
+#include <dlfcn.h>
 #include <mach-o/dyld.h>
 #endif
 
@@ -376,6 +377,11 @@ void Emulator::PrepareWindow(std::filesystem::path file, std::vector<std::string
     // every one of shadPS4/FEXCore's own native (non-JIT, non-veneer) code lives in.
     LOG_INFO(Loader, "Main executable ASLR slide {:#x}",
              static_cast<uintptr_t>(_dyld_get_image_vmaddr_slide(0)));
+    // Hosted in Husk, the core is a dylib rather than image 0: log where it was loaded too.
+    if (Dl_info info{}; dladdr(reinterpret_cast<const void*>(&Common::g_version), &info) != 0) {
+        LOG_INFO(Loader, "Core image base {:#x} ({})", reinterpret_cast<uintptr_t>(info.dli_fbase),
+                 info.dli_fname != nullptr ? info.dli_fname : "?");
+    }
 #endif
 
     LOG_INFO(Config, "Game-specific config used: {}",
