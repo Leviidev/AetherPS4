@@ -203,7 +203,10 @@ public:
   }
 
 private:
-  std::array<FEXCore::Core::CPUState::gdt_segment, 32> GDT {};
+  // Every selector a test can load (16 bits, the low 3 are flags): a test such as Primary_8C
+  // loads selector 0x4142, and a shorter table made that read land past the array, so the
+  // result depended on what the stack held there.
+  std::array<FEXCore::Core::CPUState::gdt_segment, 8192> GDT {};
 };
 
 std::vector<uint8_t> ReadFile(const std::string& path) {
