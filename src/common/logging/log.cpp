@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <vector>
 #include <fmt/std.h>
 #include <spdlog/sinks/async_sink.h>
 #include <spdlog/sinks/dup_filter_sink.h>
@@ -33,6 +34,18 @@ bool g_should_append = false;
 
 static std::shared_ptr<spdlog_stdout> g_console_sink;
 static std::shared_ptr<LogFileSink> g_shad_file_sink;
+static bool g_console_output = true;
+
+void SetConsoleOutput(bool enabled) {
+    g_console_output = enabled;
+}
+
+static std::vector<spdlog::sink_ptr> ActiveSinks() {
+    if (g_console_output) {
+        return {g_console_sink, g_shad_file_sink};
+    }
+    return {g_shad_file_sink};
+}
 
 std::unordered_map<std::string_view, std::shared_ptr<spdlog::logger>> ALL_LOGGERS{
     {Class::Common, nullptr},
@@ -292,12 +305,12 @@ void Terminate() {
 }
 
 void UpdateSinks() {
-    std::initializer_list<spdlog::sink_ptr> sinks{g_console_sink, g_shad_file_sink};
+    const auto sinks = ActiveSinks();
 
-    std::initializer_list<spdlog::sink_ptr> async_sink{std::make_shared<spdlog::sinks::async_sink>(
+    const std::vector<spdlog::sink_ptr> async_sink{std::make_shared<spdlog::sinks::async_sink>(
         spdlog::sinks::async_sink::config{.sinks = sinks})};
 
-    std::initializer_list<spdlog::sink_ptr> dup_filter{
+    const std::vector<spdlog::sink_ptr> dup_filter{
         std::make_shared<spdlog::sinks::dup_filter_sink_mt>(
             std::chrono::milliseconds(EmulatorSettings.GetLogMaxSkipDuration()),
             EmulatorSettings.IsLogSync() ? sinks : async_sink)};

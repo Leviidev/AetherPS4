@@ -274,6 +274,16 @@ extern "C" void shadps4_stop() {
     Common::Singleton<Core::Emulator>::Instance()->Stop();
 }
 
+extern "C" void shadps4_set_log_console(int enabled) {
+    Common::Log::SetConsoleOutput(enabled != 0);
+}
+
+extern "C" void shadps4_set_log_filter(const char* filter) {
+    if (filter != nullptr && g_init_ok) {
+        EmulatorSettings.SetLogFilter(filter);
+    }
+}
+
 extern "C" void shadps4_toggle_pause() {
     if (!g_init_ok) {
         return;

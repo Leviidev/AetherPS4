@@ -158,7 +158,7 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
         // succeeds either way, so this is invisible until something actually touches the
         // out-of-range page. Both cases funnel through this same switch arm, so without this
         // it's impossible to tell them apart from the rest of this handler's logging alone.
-        LOG_CRITICAL(Debug, "SignalHandler: received {} ({})", sig,
+        LOG_TRACE(Debug, "SignalHandler: received {} ({})", sig,
                      sig == SIGBUS ? "SIGBUS" : (sig == SIGSEGV ? "SIGSEGV" : "?"));
         const bool is_write = Common::IsWriteError(raw_context);
         // Diagnostic: confirming whether DispatchAccessViolation's fan-out (GPU buffer
@@ -167,7 +167,7 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
         // recovery) ever gets a chance to run. If it does, HandleGuestSignal is never
         // reached at all regardless of whether its own logic is correct.
         const bool dav_handled = signals->DispatchAccessViolation(raw_context, info->si_addr);
-        LOG_CRITICAL(Debug, "SignalHandler: DispatchAccessViolation returned {}", dav_handled);
+        LOG_TRACE(Debug, "SignalHandler: DispatchAccessViolation returned {}", dav_handled);
         if (dav_handled) {
             return;
         }

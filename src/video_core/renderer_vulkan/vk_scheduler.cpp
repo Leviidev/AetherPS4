@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "common/assert.h"
-#include "common/phone_path.h"
 #include "common/debug.h"
 #include "common/thread.h"
 #include "imgui/renderer/texture_manager.h"
@@ -11,13 +10,7 @@
 
 namespace Vulkan {
 
-#if defined(AETHER_PHONE_PATH)
-// Every submission still on the GPU holds MoltenVK's scratch for it (tessellation emulation for quad
-// and rect lists above all), which iOS cannot purge: the pool's high water is what stays resident.
-constexpr u64 MAX_IN_FLIGHT_SUBMISSIONS = 2;
-#else
 constexpr u64 MAX_IN_FLIGHT_SUBMISSIONS = 8;
-#endif
 
 std::mutex Scheduler::submit_mutex;
 

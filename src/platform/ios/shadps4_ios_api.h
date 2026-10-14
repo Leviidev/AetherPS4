@@ -102,6 +102,12 @@ int shadps4_take_pending_restart(char* path_buf, int path_buf_size, char* args_b
 void shadps4_stop(void);
 
 // Toggles guest-thread pause. Safe to call from any thread.
+// Whether log lines also go to stdout (an app that captures stdout into its own log turns it off),
+// and the log filter ("<class>:<level> ..."), replacing the config's. Call before shadps4_init /
+// after it respectively.
+void shadps4_set_log_console(int enabled);
+void shadps4_set_log_filter(const char* filter);
+
 void shadps4_toggle_pause(void);
 
 // Returns non-zero if guest threads are currently paused.

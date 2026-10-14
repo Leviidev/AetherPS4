@@ -109,7 +109,7 @@ void PS4_SYSV_ABI internal_qsort(void* base, u64 nmemb, u64 size,
         const auto peek_len = std::min<u64>(size, sizeof(u64));
         if (in_range_a) std::memcpy(&contents_a, a, peek_len);
         if (in_range_b) std::memcpy(&contents_b, b, peek_len);
-        LOG_CRITICAL(Lib_LibcInternal,
+        LOG_TRACE(Lib_LibcInternal,
                     "BACHATA_QSORT_CALL: #{} a={:#x} (in_range={} contents={:#x}) b={:#x} "
                     "(in_range={} contents={:#x})",
                     call_index, addr_a, in_range_a, contents_a, addr_b, in_range_b, contents_b);

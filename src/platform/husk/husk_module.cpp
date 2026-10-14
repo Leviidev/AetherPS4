@@ -90,10 +90,15 @@ int Init(const HuskHostV1* host, const char* user_dir) {
     options.show_fps = 0;
     options.fullscreen = -1;
     options.network_enabled = 0;
+    // Husk captures stdout into its own log, so lines go to the PS4 log file only, and by default
+    // only warnings and worse: the core's trace output costs whole frames on a phone.
+    shadps4_set_log_console(0);
     if (shadps4_init(&options) != 0) {
         HostLog("huskps4: core init failed (user dir %s)", user_dir);
         return -1;
     }
+    const char* log_filter = std::getenv("AETHER_LOG_FILTER");
+    shadps4_set_log_filter(log_filter != nullptr ? log_filter : "*:Warning");
     shadps4_register_first_frame_callback(&OnFirstFrame);
     g_initialized.store(true);
     HostLog("huskps4: ready (user dir %s, JIT region %zu MiB, ceiling %zu MiB)", user_dir,

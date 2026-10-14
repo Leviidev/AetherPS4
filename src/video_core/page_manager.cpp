@@ -386,7 +386,7 @@ struct PageManager::Impl {
 
             if constexpr (!track && !is_read) {
                 if (new_count != 0) {
-                    LOG_CRITICAL(Render_Vulkan,
+                    LOG_TRACE(Render_Vulkan,
                                  "BACHATA_STILL_PROTECTED: addr={:#x} new_count={} -- another "
                                  "reference is still holding write-protection on this page",
                                  page << PM_PAGE_BITS, new_count);
@@ -460,7 +460,7 @@ struct PageManager::Impl {
 
             if constexpr (!track && !is_read) {
                 if (update && new_count != 0) {
-                    LOG_CRITICAL(Render_Vulkan,
+                    LOG_TRACE(Render_Vulkan,
                                  "BACHATA_STILL_PROTECTED: addr={:#x} new_count={} -- another "
                                  "reference is still holding write-protection on this page",
                                  (base_page + page) << PM_PAGE_BITS, new_count);

@@ -29,6 +29,10 @@ extern std::unordered_map<std::string_view, std::shared_ptr<spdlog::logger>> ALL
 
 void Setup(std::string_view shadps4_filename);
 
+/// Whether log lines also go to stdout. An embedding app that captures stdout into its own log
+/// (Husk) turns this off so each line is written once.
+void SetConsoleOutput(bool enabled);
+
 void Switch(std::string_view game_filename);
 
 void Shutdown();
