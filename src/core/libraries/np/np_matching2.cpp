@@ -13,7 +13,28 @@
 #include "core/libraries/np/np_types.h"
 #include "core/libraries/system/userservice.h"
 
+#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
+#include "core/guest_cpu/guest_callback.h"
+#endif
+
 namespace Libraries::Np::NpMatching2 {
+
+// The game's callbacks are guest code: under the FEX guest CPU they run through the translator,
+// not as a native call.
+template <typename Fn, typename... Args>
+static void CallGuest(Fn func, std::string_view label, Args... args) {
+    if (func == nullptr) {
+        return;
+    }
+#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
+    if (AetherPS4::GuestCpu::IsGuestFunctionAddress(reinterpret_cast<const void*>(func))) {
+        AetherPS4::GuestCpu::RunGuestFunctionOrAbort(reinterpret_cast<const void*>(func), label,
+                                                     args...);
+        return;
+    }
+#endif
+    func(args...);
+}
 
 static bool g_initialized = false;
 static OrbisNpMatching2ContextId contextId = 1;
@@ -262,9 +283,8 @@ int PS4_SYSV_ABI sceNpMatching2CreateJoinRoomA(OrbisNpMatching2ContextId ctxId,
                                                   nullptr,
                                                   0};
             OrbisNpMatching2CreateJoinRoomResponseA resp{&room, {&me, 1, &me, &me}};
-            optParam->callback(ctxId, reqIdCopy,
-                               ORBIS_NP_MATCHING2_REQUEST_EVENT_CREATE_JOIN_ROOM_A, 0, &resp,
-                               optParam->arg);
+            CallGuest(optParam->callback, "sceNpMatching2RequestCallback", ctxId, reqIdCopy,
+                      ORBIS_NP_MATCHING2_REQUEST_EVENT_CREATE_JOIN_ROOM_A, 0, &resp, optParam->arg);
         });
     }
     return ORBIS_OK;
@@ -286,7 +306,8 @@ int PS4_SYSV_ABI sceNpMatching2RegisterContextCallback(OrbisNpMatching2ContextCa
     }
 
     npMatching2ContextCallback = [callback, userdata](auto arg) {
-        callback(arg->contextId, arg->event, arg->cause, arg->errorCode, userdata);
+        CallGuest(callback, "sceNpMatching2ContextCallback", arg->contextId, arg->event, arg->cause,
+                  arg->errorCode, userdata);
     };
 
     return ORBIS_OK;
@@ -307,7 +328,8 @@ int PS4_SYSV_ABI sceNpMatching2RegisterLobbyEventCallback(
     }
 
     npMatching2LobbyCallback = [callback, userdata](auto arg) {
-        callback(arg->contextId, arg->lobbyId, arg->event, arg->data, userdata);
+        CallGuest(callback, "sceNpMatching2LobbyEventCallback", arg->contextId, arg->lobbyId,
+                  arg->event, arg->data, userdata);
     };
 
     return ORBIS_OK;
@@ -330,7 +352,8 @@ int PS4_SYSV_ABI sceNpMatching2RegisterRoomEventCallback(OrbisNpMatching2Context
     }
 
     npMatching2RoomCallback = [callback, userdata](auto arg) {
-        callback(arg->contextId, arg->roomId, arg->event, arg->data, userdata);
+        CallGuest(callback, "sceNpMatching2RoomEventCallback", arg->contextId, arg->roomId,
+                  arg->event, arg->data, userdata);
     };
 
     return ORBIS_OK;
@@ -361,8 +384,8 @@ int PS4_SYSV_ABI sceNpMatching2RegisterSignalingCallback(OrbisNpMatching2Context
     }
 
     npMatching2SignalingCallback = [callback, userdata](auto arg) {
-        callback(arg->contextId, arg->roomId, arg->roomMemberId, arg->event, arg->errorCode,
-                 userdata);
+        CallGuest(callback, "sceNpMatching2SignalingCallback", arg->contextId, arg->roomId,
+                  arg->roomMemberId, arg->event, arg->errorCode, userdata);
     };
 
     return ORBIS_OK;
@@ -529,9 +552,9 @@ int PS4_SYSV_ABI sceNpMatching2GetWorldInfoList(OrbisNpMatching2ContextId ctxId,
         g_responses.emplace_back([=]() {
             OrbisNpMatching2World w{nullptr, 1, 10, 0, 10, 0, {}};
             OrbisNpMatching2GetWorldInfoListResponse resp{&w, 1};
-            optParam->callback(ctxId, reqIdCopy,
-                               ORBIS_NP_MATCHING2_REQUEST_EVENT_GET_WORLD_INFO_LIST, 0, &resp,
-                               optParam->arg);
+            CallGuest(optParam->callback, "sceNpMatching2RequestCallback", ctxId, reqIdCopy,
+                      ORBIS_NP_MATCHING2_REQUEST_EVENT_GET_WORLD_INFO_LIST, 0, &resp,
+                      optParam->arg);
         });
     }
 
@@ -570,8 +593,8 @@ int PS4_SYSV_ABI sceNpMatching2LeaveRoom(OrbisNpMatching2ContextId ctxId,
         std::scoped_lock lk{g_responses_mutex};
         auto reqIdCopy = *requestId;
         g_responses.emplace_back([=]() {
-            optParam->callback(ctxId, reqIdCopy, ORBIS_NP_MATCHING2_REQUEST_EVENT_LEAVE_ROOM, 0,
-                               nullptr, optParam->arg);
+            CallGuest(optParam->callback, "sceNpMatching2RequestCallback", ctxId, reqIdCopy,
+                      ORBIS_NP_MATCHING2_REQUEST_EVENT_LEAVE_ROOM, 0, nullptr, optParam->arg);
         });
     }
 
@@ -634,8 +657,8 @@ int PS4_SYSV_ABI sceNpMatching2SearchRoom(OrbisNpMatching2ContextId ctxId,
         auto requestCopy = *request;
         g_responses.emplace_back([=]() {
             OrbisNpMatching2SearchRoomResponseA resp{{0, 0, 0, {}}, nullptr};
-            optParam->callback(ctxId, reqIdCopy, ORBIS_NP_MATCHING2_REQUEST_EVENT_SEARCH_ROOM_A, 0,
-                               &resp, optParam->arg);
+            CallGuest(optParam->callback, "sceNpMatching2RequestCallback", ctxId, reqIdCopy,
+                      ORBIS_NP_MATCHING2_REQUEST_EVENT_SEARCH_ROOM_A, 0, &resp, optParam->arg);
         });
     }
 
@@ -671,8 +694,8 @@ int PS4_SYSV_ABI sceNpMatching2SetUserInfo(OrbisNpMatching2ContextId ctxId,
         std::scoped_lock lk{g_responses_mutex};
         auto reqIdCopy = *requestId;
         g_responses.emplace_back([=]() {
-            optParam->callback(ctxId, reqIdCopy, ORBIS_NP_MATCHING2_REQUEST_EVENT_SET_USER_INFO, 0,
-                               nullptr, optParam->arg);
+            CallGuest(optParam->callback, "sceNpMatching2RequestCallback", ctxId, reqIdCopy,
+                      ORBIS_NP_MATCHING2_REQUEST_EVENT_SET_USER_INFO, 0, nullptr, optParam->arg);
         });
     }
 
@@ -700,8 +723,9 @@ int PS4_SYSV_ABI sceNpMatching2SendRoomMessage(OrbisNpMatching2ContextId ctxId, 
         std::scoped_lock lk{g_responses_mutex};
         auto reqIdCopy = *requestId;
         g_responses.emplace_back([=]() {
-            optParam->callback(ctxId, reqIdCopy, ORBIS_NP_MATCHING2_REQUEST_EVENT_SEND_ROOM_MESSAGE,
-                               0, nullptr, optParam->arg);
+            CallGuest(optParam->callback, "sceNpMatching2RequestCallback", ctxId, reqIdCopy,
+                      ORBIS_NP_MATCHING2_REQUEST_EVENT_SEND_ROOM_MESSAGE, 0, nullptr,
+                      optParam->arg);
         });
     }
 
@@ -729,9 +753,9 @@ int PS4_SYSV_ABI sceNpMatching2SetRoomDataExternal(OrbisNpMatching2ContextId ctx
         std::scoped_lock lk{g_responses_mutex};
         auto reqIdCopy = *requestId;
         g_responses.emplace_back([=]() {
-            optParam->callback(ctxId, reqIdCopy,
-                               ORBIS_NP_MATCHING2_REQUEST_EVENT_SET_ROOM_DATA_EXTERNAL, 0, nullptr,
-                               optParam->arg);
+            CallGuest(optParam->callback, "sceNpMatching2RequestCallback", ctxId, reqIdCopy,
+                      ORBIS_NP_MATCHING2_REQUEST_EVENT_SET_ROOM_DATA_EXTERNAL, 0, nullptr,
+                      optParam->arg);
         });
     }
 
@@ -759,9 +783,9 @@ int PS4_SYSV_ABI sceNpMatching2SetRoomDataInternal(OrbisNpMatching2ContextId ctx
         std::scoped_lock lk{g_responses_mutex};
         auto reqIdCopy = *requestId;
         g_responses.emplace_back([=]() {
-            optParam->callback(ctxId, reqIdCopy,
-                               ORBIS_NP_MATCHING2_REQUEST_EVENT_SET_ROOM_DATA_INTERNAL, 0, nullptr,
-                               optParam->arg);
+            CallGuest(optParam->callback, "sceNpMatching2RequestCallback", ctxId, reqIdCopy,
+                      ORBIS_NP_MATCHING2_REQUEST_EVENT_SET_ROOM_DATA_INTERNAL, 0, nullptr,
+                      optParam->arg);
         });
     }
 
@@ -837,10 +861,9 @@ int PS4_SYSV_ABI sceNpMatching2KickoutRoomMember(OrbisNpMatching2ContextId ctxId
     return ORBIS_OK;
 }
 
-int PS4_SYSV_ABI sceNpMatching2SetRoomMemberDataInternal(OrbisNpMatching2ContextId ctxId,
-                                                         void* request,
-                                                         OrbisNpMatching2RequestOptParam* requestOpt,
-                                                         OrbisNpMatching2RequestId* requestId) {
+int PS4_SYSV_ABI sceNpMatching2SetRoomMemberDataInternal(
+    OrbisNpMatching2ContextId ctxId, void* request, OrbisNpMatching2RequestOptParam* requestOpt,
+    OrbisNpMatching2RequestId* requestId) {
     LOG_DEBUG(Lib_NpMatching2, "called, ctxId = {}, requestOpt = {}", ctxId, fmt::ptr(requestOpt));
     if (!g_initialized) {
         return ORBIS_NP_MATCHING2_ERROR_NOT_INITIALIZED;
@@ -885,7 +908,7 @@ int PS4_SYSV_ABI sceNpMatching2RegisterRoomMessageCallback(
     }
     npMatching2RoomMessageCallback = [callback, userdata](auto ctx, auto room, auto from,
                                                           auto data) {
-        callback(ctx, room, from, data, userdata);
+        CallGuest(callback, "sceNpMatching2RoomMessageCallback", ctx, room, from, data, userdata);
     };
     return ORBIS_OK;
 }
@@ -935,9 +958,9 @@ int PS4_SYSV_ABI sceNpMatching2SignalingGetLocalNetInfo(OrbisNpMatching2ContextI
 }
 
 int PS4_SYSV_ABI sceNpMatching2SignalingGetPingInfo(OrbisNpMatching2ContextId ctxId,
-                                                     OrbisNpMatching2RoomId roomId,
-                                                     OrbisNpMatching2RoomMemberId peerMemberId,
-                                                     void* pingInfo) {
+                                                    OrbisNpMatching2RoomId roomId,
+                                                    OrbisNpMatching2RoomMemberId peerMemberId,
+                                                    void* pingInfo) {
     LOG_DEBUG(Lib_NpMatching2, "called, ctxId = {}, roomId = {}, peerMemberId = {}", ctxId, roomId,
               peerMemberId);
     if (!g_initialized) {
@@ -971,8 +994,8 @@ int PS4_SYSV_ABI sceNpMatching2CreateJoinRoom(OrbisNpMatching2ContextId ctxId, v
         std::scoped_lock lk{g_responses_mutex};
         auto reqIdCopy = *requestId;
         g_responses.emplace_back([=]() {
-            optParam->callback(ctxId, reqIdCopy, ORBIS_NP_MATCHING2_REQUEST_EVENT_CREATE_JOIN_ROOM,
-                               0, nullptr, optParam->arg);
+            CallGuest(optParam->callback, "sceNpMatching2RequestCallback", ctxId, reqIdCopy,
+                      ORBIS_NP_MATCHING2_REQUEST_EVENT_CREATE_JOIN_ROOM, 0, nullptr, optParam->arg);
         });
     }
     return ORBIS_OK;
