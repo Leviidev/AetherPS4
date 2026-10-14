@@ -77,6 +77,7 @@ void VideoOutDriver::Close(s32 handle) {
     main_port.is_open = false;
     main_port.flip_rate = 0;
     main_port.prev_index = -1;
+    main_port.prev_generation = FlipLabelTracker::kInvalidGeneration;
     main_port.flip_labels.ResetAll();
 
     // Clear port information
@@ -295,17 +296,29 @@ void VideoOutDriver::Flip(const Request& req) {
         }
     }
 
-    // Reset prev flip label
+    // Reset prev flip label -- unless the GPU has locked that buffer again since it was flipped.
+    // The next-vblank retirement (ApplyDueLabelRetirement) can free a presented buffer before
+    // its replacement flip arrives; the game may then reuse it and the GPU write its label 1
+    // again. Clearing it here would wipe that new lock, and the flip IRQ for the new frame then
+    // finds label 0 (Sonic Mania: "Out of order flip IRQ"). Check and clear under port_mutex,
+    // which the GPU's label write takes too (liverpool.cpp), so the two cannot interleave.
     if (port->prev_index != -1) {
-        port->buffer_labels[port->prev_index] = 0;
         {
             std::scoped_lock lock{port->port_mutex};
+            const bool relocked =
+                port->prev_generation != FlipLabelTracker::kInvalidGeneration &&
+                port->flip_labels.Generation(port->prev_index) != port->prev_generation;
+            if (!relocked) {
+                port->buffer_labels[port->prev_index] = 0;
+            }
             port->flip_labels.CancelRetirementForIndex(port->prev_index);
         }
         port->SignalVoLabel();
     }
     // save to prev buf index
     port->prev_index = req.index;
+    port->prev_generation = (req.eop && req.index >= 0) ? req.lock_generation
+                                                         : FlipLabelTracker::kInvalidGeneration;
     if (req.eop && req.lock_generation != FlipLabelTracker::kInvalidGeneration && req.index >= 0) {
         std::scoped_lock lock{port->port_mutex};
         port->flip_labels.ScheduleRetirement(req.index, req.lock_generation,
@@ -485,13 +498,17 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
 void VideoOutDriver::ApplyDueLabelRetirement() {
     std::optional<s32> index;
     {
+        // The clear stays under the lock with the generation check, for the same reason as
+        // Flip's prev-label reset: the GPU must not lock the buffer again in between.
         std::scoped_lock lock{main_port.port_mutex};
         index = main_port.flip_labels.ConsumeDueRetirement(main_port.vblank_status.count);
+        if (index.has_value()) {
+            main_port.buffer_labels[*index] = 0;
+        }
     }
     if (!index.has_value()) {
         return;
     }
-    main_port.buffer_labels[*index] = 0;
     main_port.SignalVoLabel();
     LOG_INFO(Lib_VideoOut, "retired scanout label index={}", *index);
 }

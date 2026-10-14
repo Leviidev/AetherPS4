@@ -34,6 +34,8 @@ struct VideoOutPort {
     std::condition_variable vblank_cv;
     int flip_rate = 0;
     int prev_index = -1;
+    // FlipLabelTracker generation prev_index's buffer had when it was flipped (EOP flips only).
+    u64 prev_generation = FlipLabelTracker::kInvalidGeneration;
     bool is_open = false;
     bool is_hdr = false;
     FlipLabelTracker flip_labels;

@@ -27,18 +27,23 @@
 
 namespace AmdGpu {
 
-static void MaybeRecordVideoOutLabelLock(Libraries::VideoOut::VideoOutPort* vo_port, u64* address,
-                                         const void* data, u32 data_size) {
-    if (vo_port == nullptr || address == nullptr || !vo_port->IsVoLabel(address)) {
-        return;
+// WriteData's memory write. A VideoOut flip label set to 1 (the GPU locking a display buffer) is
+// recorded with FlipLabelTracker and written under port_mutex in one step, so VideoOut's label
+// clears (driver.cpp), which check the generation under the same lock, cannot slip in between.
+static void WriteDataTrackingVoLabel(Libraries::VideoOut::VideoOutPort* vo_port, void* address,
+                                     const void* data, u32 data_size) {
+    auto* label = static_cast<u64*>(address);
+    if (vo_port != nullptr && label != nullptr && vo_port->IsVoLabel(label)) {
+        u64 value = 0;
+        std::memcpy(&value, data, std::min<size_t>(data_size, sizeof(value)));
+        if (value == 1) {
+            std::scoped_lock lock{vo_port->port_mutex};
+            vo_port->flip_labels.RecordGpuLock(vo_port->LabelIndex(label));
+            std::memcpy(address, data, data_size);
+            return;
+        }
     }
-    u64 value = 0;
-    std::memcpy(&value, data, std::min<size_t>(data_size, sizeof(value)));
-    if (value != 1) {
-        return;
-    }
-    std::scoped_lock lock{vo_port->port_mutex};
-    vo_port->flip_labels.RecordGpuLock(vo_port->LabelIndex(address));
+    std::memcpy(address, data, data_size);
 }
 
 static const char* dcb_task_name{"DCB_TASK"};
@@ -857,8 +862,7 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 const u32 data_size = (header->type3.count.Value() - 2) * 4;
                 u64* address = write_data->Address<u64*>();
                 if (!write_data->wr_one_addr.Value()) {
-                    MaybeRecordVideoOutLabelLock(vo_port, address, write_data->data, data_size);
-                    std::memcpy(address, write_data->data, data_size);
+                    WriteDataTrackingVoLabel(vo_port, address, write_data->data, data_size);
                 } else {
                     UNREACHABLE();
                 }
@@ -1273,9 +1277,8 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
             ASSERT(write_data->dst_sel.Value() == 2 || write_data->dst_sel.Value() == 5);
             const u32 data_size = (header->type3.count.Value() - 2) * 4;
             if (!write_data->wr_one_addr.Value()) {
-                MaybeRecordVideoOutLabelLock(vo_port, write_data->Address<u64*>(),
-                                             write_data->data, data_size);
-                std::memcpy(write_data->Address<void*>(), write_data->data, data_size);
+                WriteDataTrackingVoLabel(vo_port, write_data->Address<void*>(), write_data->data,
+                                         data_size);
             } else {
                 UNREACHABLE();
             }
