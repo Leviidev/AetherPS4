@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <bit>
 #include <chrono>
 #include "common/alignment.h"
 #include "common/assert.h"
@@ -282,6 +283,70 @@ void BufferCache::BindIndexBuffer(u32 index_offset) {
     const auto [vk_buffer, offset] = ObtainBuffer(index_address, index_buffer_size, false);
     const auto cmdbuf = scheduler.CommandBuffer();
     cmdbuf.bindIndexBuffer(vk_buffer->Handle(), offset, index_type);
+}
+
+u32 BufferCache::BindQuadListIndices(bool is_indexed, u32 index_offset) {
+    const auto& regs = liverpool->regs;
+    const u32 num_quads = regs.num_indices / 4;
+    if (num_quads == 0) {
+        return 0;
+    }
+    if (!is_indexed) {
+        if (num_quads > quad_indices_quads) {
+            const u32 quads = std::max<u32>(std::bit_ceil(num_quads), 16384);
+            auto grown = std::make_unique<Buffer>(instance, scheduler, MemoryUsage::Upload, 0,
+                                                  ReadFlags, u64(quads) * 6 * sizeof(u32));
+            u32* out = reinterpret_cast<u32*>(grown->mapped_data.data());
+            for (u32 q = 0; q < quads; ++q) {
+                const u32 v = q * 4;
+                *out++ = v;
+                *out++ = v + 1;
+                *out++ = v + 2;
+                *out++ = v;
+                *out++ = v + 2;
+                *out++ = v + 3;
+            }
+            if (quad_indices) {
+                // Earlier draws may still read the old one.
+                scheduler.DeferOperation(
+                    [old = std::shared_ptr<Buffer>(std::move(quad_indices))] {});
+            }
+            quad_indices = std::move(grown);
+            quad_indices_quads = quads;
+        }
+        scheduler.CommandBuffer().bindIndexBuffer(quad_indices->Handle(), 0,
+                                                  vk::IndexType::eUint32);
+        return num_quads * 6;
+    }
+    const bool in16 = regs.index_buffer_type.index_type == AmdGpu::IndexType::Index16;
+    const bool out16 = in16;
+    const u32 out_size = out16 ? sizeof(u16) : sizeof(u32);
+    const u32 num_indices = num_quads * 6;
+    const auto [data, offset] = stream_buffer.Map(u64(num_indices) * out_size, out_size);
+    const auto expand = [&]<typename Out>(Out* out, auto&& vertex) {
+        for (u32 q = 0; q < num_quads; ++q) {
+            const u32 v = q * 4;
+            *out++ = static_cast<Out>(vertex(v));
+            *out++ = static_cast<Out>(vertex(v + 1));
+            *out++ = static_cast<Out>(vertex(v + 2));
+            *out++ = static_cast<Out>(vertex(v));
+            *out++ = static_cast<Out>(vertex(v + 2));
+            *out++ = static_cast<Out>(vertex(v + 3));
+        }
+    };
+    const VAddr address =
+        regs.index_base_address.Address<VAddr>() + u64(index_offset) * (in16 ? 2 : 4);
+    if (in16) {
+        const u16* in = reinterpret_cast<const u16*>(address);
+        expand(reinterpret_cast<u16*>(data), [in](u32 i) { return in[i]; });
+    } else {
+        const u32* in = reinterpret_cast<const u32*>(address);
+        expand(reinterpret_cast<u32*>(data), [in](u32 i) { return in[i]; });
+    }
+    stream_buffer.Commit();
+    scheduler.CommandBuffer().bindIndexBuffer(
+        stream_buffer.Handle(), offset, out16 ? vk::IndexType::eUint16 : vk::IndexType::eUint32);
+    return num_indices;
 }
 
 void BufferCache::FillBuffer(VAddr address, u32 num_bytes, u32 value, bool is_gds) {
@@ -909,6 +974,8 @@ void BufferCache::ChangeRegister(BufferId buffer_id) {
     }
     if constexpr (insert) {
         total_used_memory += Common::AlignUp(size, CACHING_PAGESIZE);
+        registered_bytes += size;
+        ++registered_count;
         buffer.SetLRUId(lru_cache.Insert(buffer_id, gc_tick));
         boost::container::small_vector<vk::DeviceAddress, 128> bda_addrs;
         bda_addrs.reserve(size_pages);
@@ -921,6 +988,8 @@ void BufferCache::ChangeRegister(BufferId buffer_id) {
         buffer_ranges.Add(buffer.CpuAddr(), buffer.SizeBytes(), buffer_id);
     } else {
         total_used_memory -= Common::AlignUp(size, CACHING_PAGESIZE);
+        registered_bytes -= size;
+        --registered_count;
         lru_cache.Free(buffer.LRUId());
         const u64 offset = bda_pagetable_buffer.Offset(page_begin * sizeof(vk::DeviceAddress));
         bda_pagetable_buffer.Fill(offset, size_pages * sizeof(vk::DeviceAddress), 0);

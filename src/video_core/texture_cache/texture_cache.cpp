@@ -981,6 +981,8 @@ void TextureCache::RegisterImage(ImageId image_id) {
                "Trying to register an already registered image");
     image.flags |= ImageFlagBits::Registered;
     total_used_memory += Common::AlignUp(image.info.guest_size, 1024);
+    registered_bytes += image.info.guest_size;
+    ++registered_count;
     image.lru_id = lru_cache.Insert(image_id, gc_tick);
     ForEachPage(image.info.guest_address, image.info.guest_size,
                 [this, image_id](u64 page) { page_table[page].push_back(image_id); });
@@ -993,6 +995,8 @@ void TextureCache::UnregisterImage(ImageId image_id) {
     image.flags &= ~ImageFlagBits::Registered;
     lru_cache.Free(image.lru_id);
     total_used_memory -= Common::AlignUp(image.info.guest_size, 1024);
+    registered_bytes -= image.info.guest_size;
+    --registered_count;
     ForEachPage(image.info.guest_address, image.info.guest_size, [this, image_id](u64 page) {
         const auto page_it = page_table.find(page);
         if (page_it == nullptr) {

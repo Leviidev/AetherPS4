@@ -140,7 +140,8 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(Stage stage, LogicalS
             regs.clipper_control.clip_space == AmdGpu::ClipSpace::MinusWToW;
         info.vs_info.tess_emulated_primitive =
             regs.primitive_type == AmdGpu::PrimitiveType::RectList ||
-            regs.primitive_type == AmdGpu::PrimitiveType::QuadList;
+            (regs.primitive_type == AmdGpu::PrimitiveType::QuadList &&
+             !LiverpoolToVK::QuadListAsTriangles());
         info.vs_info.clip_disable = regs.IsClipDisabled();
         if (l_stage == LogicalStage::TessellationEval) {
             info.es_vs_info.tess_type = regs.tess_config.type;

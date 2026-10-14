@@ -149,6 +149,14 @@ private:
     using ImageBindingInfo = std::pair<VideoCore::ImageId, VideoCore::TextureCache::ImageDesc>;
     boost::container::small_vector<ImageBindingInfo, Shader::NUM_IMAGES> image_bindings;
     bool fault_process_pending{};
+    u64 memory_report_tick{};
+    struct DrawStats {
+        u64 draws;
+        u64 vertices;
+        u64 largest;
+        u64 indexed;
+    };
+    std::array<DrawStats, 32> draw_stats{};
     bool attachment_feedback_loop{};
 };
 

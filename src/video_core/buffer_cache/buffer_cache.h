@@ -124,6 +124,10 @@ public:
     /// Bind host index buffer for the current draw.
     void BindIndexBuffer(u32 index_offset);
 
+    /// Binds a triangle-list index buffer for the current quad-list draw, made from its index
+    /// buffer or, unindexed, from its vertex count; returns the number of indices to draw.
+    u32 BindQuadListIndices(bool is_indexed, u32 index_offset);
+
     /// Writes a value to GPU buffer. (uses command buffer to temporarily store the data)
     void FillBuffer(VAddr address, u32 num_bytes, u32 value, bool is_gds);
 
@@ -170,6 +174,14 @@ public:
 
     /// Runs the garbage collector.
     void RunGarbageCollector();
+
+    /// Bytes and buffers registered right now, for memory diagnostics.
+    u64 RegisteredBytes() const {
+        return registered_bytes;
+    }
+    u64 RegisteredCount() const {
+        return registered_count;
+    }
 
 private:
     template <typename Func>
@@ -224,6 +236,10 @@ private:
     std::unique_ptr<MemoryTracker> memory_tracker;
     StreamBuffer staging_buffer;
     StreamBuffer stream_buffer;
+    /// Triangle-list indices for unindexed quad lists, 0,1,2,0,2,3, 4,5,6,4,6,7, ..., shared by
+    /// every such draw and grown when one needs more quads.
+    std::unique_ptr<Buffer> quad_indices;
+    u32 quad_indices_quads = 0;
     StreamBuffer download_buffer;
     StreamBuffer device_buffer;
     Buffer gds_buffer;
@@ -261,6 +277,8 @@ private:
     u64 detile_source_stats_unsafe{};
 
     u64 total_used_memory = 0;
+    u64 registered_bytes = 0;
+    u64 registered_count = 0;
     u64 trigger_gc_memory = 0;
     u64 critical_gc_memory = 0;
     u64 gc_tick = 0;

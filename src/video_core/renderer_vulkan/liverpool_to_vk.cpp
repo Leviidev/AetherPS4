@@ -132,6 +132,8 @@ vk::PrimitiveTopology PrimitiveType(AmdGpu::PrimitiveType type) {
     case AmdGpu::PrimitiveType::PatchPrimitive:
         return vk::PrimitiveTopology::ePatchList;
     case AmdGpu::PrimitiveType::QuadList:
+        return QuadListAsTriangles() ? vk::PrimitiveTopology::eTriangleList
+                                     : vk::PrimitiveTopology::ePatchList;
     case AmdGpu::PrimitiveType::RectList:
         return vk::PrimitiveTopology::ePatchList;
     default:

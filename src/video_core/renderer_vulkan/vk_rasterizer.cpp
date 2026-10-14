@@ -238,14 +238,27 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
                     is_indexed, regs.num_indices, regs.num_instances.NumInstances());
     }
     const auto state = BeginRendering(pipeline);
+    {
+        // Draws and vertices by primitive type, for the memory report in OnSubmit.
+        const u32 type = static_cast<u32>(regs.primitive_type) & 31;
+        ++draw_stats[type].draws;
+        draw_stats[type].vertices += regs.num_indices;
+        draw_stats[type].largest = std::max<u64>(draw_stats[type].largest, regs.num_indices);
+        draw_stats[type].indexed += is_indexed ? 1 : 0;
+    }
 
     buffer_cache.BindVertexBuffers(*pipeline);
-    if (is_indexed) {
+    const bool quads_as_triangles = LiverpoolToVK::QuadListAsTriangles() &&
+                                    regs.primitive_type == AmdGpu::PrimitiveType::QuadList;
+    u32 num_indices = regs.num_indices;
+    if (quads_as_triangles) {
+        num_indices = buffer_cache.BindQuadListIndices(is_indexed, index_offset);
+    } else if (is_indexed) {
         buffer_cache.BindIndexBuffer(index_offset);
     }
 
     pipeline->BindResources(set_writes, buffer_barriers, push_data);
-    UpdateDynamicState(pipeline, is_indexed);
+    UpdateDynamicState(pipeline, is_indexed || quads_as_triangles);
     scheduler.BeginRendering(state);
 
     const auto& vs_info = pipeline->GetStage(Shader::LogicalStage::Vertex);
@@ -255,7 +268,11 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
     const auto cmdbuf = scheduler.CommandBuffer();
     cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->Handle());
 
-    if (is_indexed) {
+    if (quads_as_triangles) {
+        // The generated indices count from zero; the draw's first vertex becomes the offset.
+        cmdbuf.drawIndexed(num_indices, regs.num_instances.NumInstances(), 0, s32(vertex_offset),
+                           instance_offset);
+    } else if (is_indexed) {
         cmdbuf.drawIndexed(regs.num_indices, regs.num_instances.NumInstances(), 0,
                            s32(vertex_offset), instance_offset);
     } else {
@@ -281,6 +298,16 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
         if (!traced_indirect_filtered.exchange(true, std::memory_order_relaxed)) {
             LOG_CRITICAL(Render_Vulkan,
                         "BACHATA_DRAW_TRACE: first indirect draw call filtered by FilterDraw()");
+        }
+        return;
+    }
+    if (LiverpoolToVK::QuadListAsTriangles() &&
+        liverpool->regs.primitive_type == AmdGpu::PrimitiveType::QuadList) {
+        // Its indices are made on the CPU from the draw's count, which an indirect draw keeps on
+        // the GPU; the arguments would need a conversion pass first.
+        static std::atomic_bool warned{false};
+        if (!warned.exchange(true, std::memory_order_relaxed)) {
+            LOG_WARNING(Render_Vulkan, "Indirect QuadList draws are skipped");
         }
         return;
     }
@@ -435,6 +462,24 @@ void Rasterizer::OnSubmit() {
     texture_cache.ProcessDownloadImages();
     texture_cache.RunGarbageCollector();
     buffer_cache.RunGarbageCollector();
+    // Where GPU memory goes, every 600 submissions (about 10 s at 60): a phone has a few GB in all.
+    if (++memory_report_tick % 600 == 0) {
+        LOG_WARNING(Render_Vulkan,
+                    "GPU memory: {} MiB in use, buffers {} ({} MiB), images {} ({} MiB guest size)",
+                 instance.CanReportMemoryUsage() ? instance.GetDeviceMemoryUsage() >> 20 : 0,
+                 buffer_cache.RegisteredCount(), buffer_cache.RegisteredBytes() >> 20,
+                 texture_cache.RegisteredCount(), texture_cache.RegisteredBytes() >> 20);
+        std::string by_type;
+        for (u32 t = 0; t < draw_stats.size(); ++t) {
+            if (draw_stats[t].draws != 0) {
+                by_type += fmt::format(" type{}:{} draws ({} indexed)/{} verts/largest {}", t,
+                                       draw_stats[t].draws, draw_stats[t].indexed,
+                                       draw_stats[t].vertices, draw_stats[t].largest);
+            }
+        }
+        LOG_WARNING(Render_Vulkan, "Draws since the last report:{}", by_type);
+        draw_stats = {};
+    }
 }
 
 bool Rasterizer::BindResources(const Pipeline* pipeline) {
@@ -1371,6 +1416,8 @@ void Rasterizer::UpdatePrimitiveState(const bool is_indexed) const {
 
     const auto prim_restart =
         (regs.enable_primitive_restart & 1) != 0 &&
+        !(LiverpoolToVK::QuadListAsTriangles() &&
+          regs.primitive_type == AmdGpu::PrimitiveType::QuadList) &&
         (instance.IsListRestartSupported() || !is_list_topology(regs.primitive_type)) &&
         (instance.IsPatchListRestartSupported() || !is_patch_list_topology(regs.primitive_type));
     ASSERT_MSG(!is_indexed || !prim_restart || regs.primitive_restart_index == 0xFFFF ||

@@ -5,6 +5,7 @@
 
 #include <span>
 #include "common/assert.h"
+#include "common/phone_path.h"
 #include "video_core/amdgpu/pixel_format.h"
 #include "video_core/amdgpu/regs_color.h"
 #include "video_core/amdgpu/regs_depth.h"
@@ -22,6 +23,18 @@ vk::CompareOp CompareOp(AmdGpu::CompareFunc func);
 bool IsPrimitiveCulled(AmdGpu::PrimitiveType type);
 
 vk::PrimitiveTopology PrimitiveType(AmdGpu::PrimitiveType type);
+
+/// Quad lists drawn as indexed triangle lists (two triangles per quad, indices made on the CPU)
+/// instead of through tessellation. On the phone path MoltenVK emulates tessellation with
+/// per-draw scratch sized for the largest possible vertex outputs, which iOS cannot purge: a
+/// world of quad-list geometry took gigabytes of it.
+constexpr bool QuadListAsTriangles() {
+#if defined(AETHER_PHONE_PATH)
+    return true;
+#else
+    return false;
+#endif
+}
 
 vk::PolygonMode PolygonMode(AmdGpu::PolygonMode mode);
 

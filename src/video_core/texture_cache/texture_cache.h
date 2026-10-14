@@ -216,6 +216,14 @@ public:
     /// Runs the garbage collector.
     void RunGarbageCollector();
 
+    /// Guest bytes and images registered right now, for memory diagnostics.
+    u64 RegisteredBytes() const {
+        return registered_bytes;
+    }
+    u64 RegisteredCount() const {
+        return registered_count;
+    }
+
     template <typename Func>
     void ForEachImageInRegion(VAddr cpu_addr, size_t size, Func&& func) {
         using FuncReturn = typename std::invoke_result<Func, ImageId, Image&>::type;
@@ -330,6 +338,8 @@ private:
     tsl::robin_map<vk::Format, ImageId> null_images;
     std::unordered_set<ImageId> download_images;
     u64 total_used_memory = 0;
+    u64 registered_bytes = 0;
+    u64 registered_count = 0;
     u64 trigger_gc_memory = 0;
     u64 pressure_gc_memory = 0;
     u64 critical_gc_memory = 0;

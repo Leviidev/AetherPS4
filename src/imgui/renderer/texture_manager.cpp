@@ -173,6 +173,11 @@ void WorkerLoop() {
             const stbi_uc* pixels =
                 stbi_load_from_memory(png_raw.data(), png_raw.size(), &width, &height, nullptr, 4);
 
+            if (static_cast<u64>(width) * height > 1024 * 1024) {
+                LOG_ERROR(ImGui, "BACHATA_BIG_TEXTURE {}x{} ({} MiB) from {}", width, height,
+                          (static_cast<u64>(width) * height * 4) >> 20,
+                          path.empty() ? std::string("memory") : path.string());
+            }
             auto texture = Vulkan::UploadTexture(pixels, vk::Format::eR8G8B8A8Unorm, width, height,
                                                  width * height * 4 * sizeof(stbi_uc));
             stbi_image_free((void*)pixels);
