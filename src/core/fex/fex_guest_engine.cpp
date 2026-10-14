@@ -1313,6 +1313,23 @@ public:
   }
 
   uint64_t HandleSyscall(FEXCore::Core::CpuStateFrame* frame, FEXCore::HLE::SyscallArguments*) override {
+    // Resume after the SYSCALL on every return path. FEXCore stores the instruction's own
+    // address in state.rip before calling here, and Fathom's FEXCore line (husk-fex) ends the
+    // block at SYSCALL and resumes from state.rip, so without this the call repeats forever.
+    // The address is taken at entry and restored rather than incremented, because a nested
+    // guest call made by the HLE (CallGuest, e.g. a qsort comparator) leaves state.rip at the
+    // callback's last instruction. Bachata's own FEXCore continues the block after SYSCALL and
+    // never reads state.rip there, so this is harmless on it. Runs after the final
+    // FlushPendingOrbisSignal, which restores state.rip itself.
+    struct ResumeAfterSyscall {
+      FEXCore::Core::CpuStateFrame* Frame;
+      uint64_t SyscallRip;
+      ~ResumeAfterSyscall() {
+        if (Frame != nullptr) {
+          Frame->State.rip = SyscallRip + 2;
+        }
+      }
+    } resume_after_syscall {frame, frame != nullptr ? frame->State.rip : 0};
     // Desktop APC ExceptionHandler runs guest handler on the target thread around
     // normal execution. On FEX, host pthread_kill only wakes + queues Pending;
     // deliver here at HLE boundary (entry) so GC STW sees the handler.
