@@ -29,6 +29,7 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <cstdlib>
 #include <cmath>
 #include <csetjmp>
 #include <cstring>
@@ -790,6 +791,22 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     const vk::Extent2D image_size = {image.info.size.width, image.info.size.height};
     expected_ratio = static_cast<float>(image_size.width) / static_cast<float>(image_size.height);
 
+    // Harness knob: AETHER_SHOT_EVERY=<seconds> saves a game-only screenshot on that period, for
+    // checking a run's progress without a visible display (the Mac harness, a device test).
+    static const double shot_every = [] {
+        const char* value = std::getenv("AETHER_SHOT_EVERY");
+        return value != nullptr ? std::atof(value) : 0.0;
+    }();
+    if (shot_every > 0.0) {
+        using Clock = std::chrono::steady_clock;
+        const auto period = std::chrono::duration_cast<Clock::duration>(
+            std::chrono::duration<double>(shot_every));
+        static Clock::time_point next_shot = Clock::now() + period;
+        if (Clock::now() >= next_shot) {
+            next_shot = Clock::now() + period;
+            VideoCore::RequestScreenshot(VideoCore::ScreenshotRequest::GameOnly);
+        }
+    }
     const u32 capture_game_only_count = VideoCore::ConsumeGameOnlyScreenshotRequests();
     std::vector<ScreenshotReadback> pending_screenshots;
     if (capture_game_only_count > 0) {
