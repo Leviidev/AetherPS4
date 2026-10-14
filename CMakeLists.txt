@@ -1281,6 +1281,8 @@ set(INPUT src/input/controller.cpp
           src/input/input_handler.h
           src/input/input_mouse.cpp
           src/input/input_mouse.h
+          src/input/pad_script.cpp
+          src/input/pad_script.h
 )
 
 set(EMULATOR src/emulator.cpp

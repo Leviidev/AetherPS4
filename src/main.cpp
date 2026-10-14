@@ -24,6 +24,7 @@
 #include "core/user_settings.h"
 #include "common/singleton.h"
 #include "emulator.h"
+#include "input/pad_script.h"
 #include "input/controller.h"
 #include "imgui/big_picture/big_picture.h"
 #ifdef ENABLE_BACHATA_RUNTIME
@@ -489,6 +490,7 @@ int main(int argc, char* argv[]) {
         runtime_client.SendStopped(exit_code);
     };
 #endif
+    Input::StartPadScriptFromEnv();
     emulator->Run(ebootPath, gameArgs, overrideRoot);
 
     return 0;
