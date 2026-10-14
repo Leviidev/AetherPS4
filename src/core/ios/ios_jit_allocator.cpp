@@ -5,14 +5,13 @@
 //
 // See ios_jit_allocator.h for full protocol documentation.
 //
-// This translation unit is only compiled when targeting arm64-apple-ios.
-// On all other platforms the header's include guard keeps it inert.
+// Compiled for the phone path (AETHER_PHONE_PATH): iOS itself, and the Mac harness that runs the
+// phone's code. On the Mac the execute side comes from the process itself (see
+// MacGetJITMapping below) instead of StikDebug; everything after that is the same code.
 
-#ifdef __APPLE__
-#include <TargetConditionals.h>
-#endif
+#include "common/phone_path.h"
 
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(AETHER_PHONE_PATH)
 
 #include "core/ios/ios_jit_allocator.h"
 
@@ -25,6 +24,9 @@
 #include <mach/mach.h>          // mach_task_self
 #include <mach/vm_map.h>        // vm_remap, vm_protect, vm_deallocate (mach_vm.h is unavailable on iOS)
 #include <sys/mman.h>           // mmap, munmap, PROT_*, MAP_*
+#include <csetjmp>
+#include <csignal>
+#include <cstring>
 #include <thread>               // std::this_thread::sleep_for
 #include <utility>              // std::exchange
 
@@ -36,9 +38,11 @@
 // so providing the symbol ourselves via Darwin's public sys_icache_invalidate -- the same
 // primitive CodeCache.cpp already uses -- is simpler and more reliable than trying to coax a
 // different compiler-rt archive into the link.
+#if TARGET_OS_IPHONE
 extern "C" void __clear_cache(void* start, void* end) {
     sys_icache_invalidate(start, static_cast<size_t>(static_cast<char*>(end) - static_cast<char*>(start)));
 }
+#endif
 
 // BreakpointJIT.framework — the three BRK-trap JIT "syscalls".
 //
@@ -62,7 +66,64 @@ struct BreakpointJITSymbols {
     BreakJITDetachFn jit_detach = nullptr;
 };
 
+#if !TARGET_OS_IPHONE
+// The Mac harness stands in for StikDebug: a process that is not hardened may map anonymous
+// read+execute pages itself, and DualMappedRegion::Allocate then makes the writable alias with
+// vm_remap exactly as it does for StikDebug's pages on the phone. MAP_JIT is not used: a MAP_JIT
+// region cannot be vm_remap'd (KERN_INVALID_ADDRESS), and the phone has no MAP_JIT either.
+void* MacGetJITMapping(void* addr, size_t len) {
+    if (addr != nullptr) {
+        return nullptr; // the phone's grant-in-place branch does not work there either
+    }
+    void* rx = mmap(nullptr, len, PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_ANON, -1, 0);
+    return rx == MAP_FAILED ? nullptr : rx;
+}
+
+void MacJITDetach() {}
+
+sigjmp_buf g_selftest_jump;
+volatile sig_atomic_t g_selftest_running = 0;
+void SelftestFault(int sig) {
+    if (g_selftest_running) {
+        siglongjmp(g_selftest_jump, 1);
+    }
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+// Writes `movz w0, #0x5a5a; ret` through the writable alias and calls it through the executable
+// side, so a Mac that refuses this layout (a hardened build, say) fails here with a message
+// instead of with a SIGBUS somewhere inside the JIT later.
+bool SelftestPair(uint8_t* rw, uint8_t* rx) {
+    static const uint32_t code[2] = {0x528B4B40u, 0xD65F03C0u};
+    struct sigaction sa {}, old_bus {}, old_segv {}, old_ill {};
+    sa.sa_handler = SelftestFault;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGBUS, &sa, &old_bus);
+    sigaction(SIGSEGV, &sa, &old_segv);
+    sigaction(SIGILL, &sa, &old_ill);
+    bool ok = false;
+    g_selftest_running = 1;
+    if (sigsetjmp(g_selftest_jump, 1) == 0) {
+        std::memcpy(rw, code, sizeof(code));
+        sys_icache_invalidate(rx, sizeof(code));
+        ok = reinterpret_cast<int (*)()>(rx)() == 0x5a5a;
+        std::memset(rw, 0, sizeof(code));
+        sys_icache_invalidate(rx, sizeof(code));
+    }
+    g_selftest_running = 0;
+    sigaction(SIGBUS, &old_bus, nullptr);
+    sigaction(SIGSEGV, &old_segv, nullptr);
+    sigaction(SIGILL, &old_ill, nullptr);
+    return ok;
+}
+#endif
+
 const BreakpointJITSymbols& GetBreakpointJITSymbols() noexcept {
+#if !TARGET_OS_IPHONE
+    static const BreakpointJITSymbols mac_symbols{MacGetJITMapping, MacJITDetach};
+    return mac_symbols;
+#endif
     static const BreakpointJITSymbols symbols = [] {
         BreakpointJITSymbols s;
         void* handle = dlopen(
@@ -233,6 +294,23 @@ DualMappedRegion DualMappedRegion::Allocate(size_t bytes) noexcept {
     region.rx_addr = static_cast<uint8_t*>(rx);
     region.size    = bytes;
 
+#if !TARGET_OS_IPHONE
+    static std::atomic<int> s_selftest{0}; // 0 not run, 1 passed, 2 failed
+    if (s_selftest.load(std::memory_order_acquire) == 0) {
+        const bool ok = bytes >= 8 && SelftestPair(region.rw_addr, region.rx_addr);
+        s_selftest.store(ok ? 1 : 2, std::memory_order_release);
+        LOG_INFO(Core, "ios_jit_allocator: Mac phone-path JIT pair self-test {} (rw={} rx={})",
+                 ok ? "passed" : "FAILED", static_cast<void*>(region.rw_addr),
+                 static_cast<void*>(region.rx_addr));
+    }
+    if (s_selftest.load(std::memory_order_acquire) != 1) {
+        LOG_CRITICAL(Core, "ios_jit_allocator: this Mac process cannot run code written through a "
+                           "writable alias (hardened runtime?); refusing JIT region");
+        region.Release();
+        return region; // invalid
+    }
+#endif
+
     LOG_DEBUG(Core,
               "ios_jit_allocator: allocated dual-mapped region: "
               "rw={} rx={} size={}",
@@ -303,4 +381,4 @@ bool IsStikDebugLikelyDead() noexcept {
 
 } // namespace Core
 
-#endif // defined(__APPLE__) && TARGET_OS_IPHONE
+#endif // defined(AETHER_PHONE_PATH)

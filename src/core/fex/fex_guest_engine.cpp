@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 
+#include "common/phone_path.h"
 #include "fex_guest_engine.h"
 #include "common/boot_timer.h"
 
@@ -45,7 +46,7 @@
 #include <mach/arm/thread_status.h>
 #include <mach/mach.h>
 #include <TargetConditionals.h>
-#if TARGET_OS_IPHONE
+#if defined(AETHER_PHONE_PATH)
 // iOS dual-mapped JIT: see src/core/ios/ios_jit_allocator.h for full protocol docs.
 #include "core/ios/ios_jit_allocator.h"
 #else
@@ -584,7 +585,7 @@ bool RangesOverlap(const Core::GuestExecutionRange& lhs, const Core::GuestExecut
   return lhsEnd >= lhs.Begin && rhsEnd >= rhs.Begin && lhs.Begin < rhsEnd && rhs.Begin < lhsEnd;
 }
 
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(AETHER_PHONE_PATH)
 // iOS's SDK hard-blocks mach_vm.h entirely (#error mach_vm.h unsupported.) -- not a
 // portability gap, a deliberate platform restriction, same as CodeCache.cpp's mach_vm_remap
 // use elsewhere. This check is a defensive "fail fast with a clear error" diagnostic, not
@@ -862,7 +863,7 @@ private:
   int LastError;
 };
 
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(AETHER_PHONE_PATH)
 // DualMappedMapping — iOS equivalent of Mapping for allocations that need PROT_EXEC.
 //
 // On iOS, an unentitled app cannot add PROT_EXEC to any page via mprotect. Instead
@@ -915,7 +916,7 @@ public:
 private:
   Core::DualMappedRegion Region;
 };
-#endif // defined(__APPLE__) && TARGET_OS_IPHONE
+#endif // defined(AETHER_PHONE_PATH)
 
 class CallRetStack final {
 public:
@@ -2950,7 +2951,7 @@ public:
   fextl::unique_ptr<FEXCore::Context::Context> Context;
   std::unique_ptr<BridgeSignalDelegator> SignalDelegator;
   std::unique_ptr<BridgeSyscallHandler> Syscalls;
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(AETHER_PHONE_PATH)
   // iOS: trampolines need dual-mapped (RW write addr + RX exec addr) memory because
   // iOS cannot add PROT_EXEC via mprotect on unentitled processes. StikDebug must be
   // attached (via Phase 4's JIT-enablement flow) before Create() is called.
@@ -3057,7 +3058,7 @@ EngineResult<std::unique_ptr<GuestEngine>> GuestEngine::Create(GuestBridge& brid
   if (impl->Context == nullptr) {
     return fail(Failure(EngineStage::Context, ENOMEM));
   }
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(AETHER_PHONE_PATH)
   // iOS dual-mapped trampolines: write through RW addr, execute via RX addr.
   // BreakGetJITMapping (brk #0xf00d, x16=1) is called inside DualMappedMapping
   // constructor — StikDebug must be attached by the time Create() runs.

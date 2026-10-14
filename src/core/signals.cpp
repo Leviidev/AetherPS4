@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "common/phone_path.h"
 #include "common/arch.h"
 #include "common/assert.h"
 #include "common/crash_reporter.h"
@@ -51,7 +52,7 @@ extern std::array<OrbisKernelExceptionHandler, 32> Handlers;
 
 namespace Core {
 
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(AETHER_PHONE_PATH)
 // Every raw-memory dump in this file runs *inside* a signal handler already reporting some
 // other fault -- reading bytes/words around a fault address, walking a guest or native stack
 // via [fp]/[fp+8], etc. A direct pointer dereference has no way to know a neighboring address

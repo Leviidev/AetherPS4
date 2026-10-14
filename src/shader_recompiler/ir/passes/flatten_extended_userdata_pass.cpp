@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "common/phone_path.h"
 #include <array>
 #include <atomic>
 #include <cerrno>
@@ -38,7 +39,7 @@
 #ifdef __APPLE__
 #include <TargetConditionals.h>
 #endif
-#if defined(ARCH_ARM64) && defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(ARCH_ARM64) && defined(AETHER_PHONE_PATH)
 // Darwin's <ucontext.h> hard-errors on the deprecated getcontext/setcontext/swapcontext
 // declarations unless _XOPEN_SOURCE is defined; only the ucontext_t/mcontext_t *types* are
 // needed below (matching common/sigsys_trap.cpp's identical guard for the same header).
@@ -332,7 +333,7 @@ void FlattenExtendedUserdataPass(IR::Program& program) {
 
 } // namespace Shader::Optimization
 
-#elif defined(ARCH_ARM64) && (defined(__linux__) || (defined(__APPLE__) && TARGET_OS_IPHONE))
+#elif defined(ARCH_ARM64) && (defined(__linux__) || (defined(AETHER_PHONE_PATH)))
 
 namespace {
 
@@ -351,7 +352,7 @@ struct SrtCodeRange {
     uintptr_t end{};
 };
 
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(AETHER_PHONE_PATH)
 // iOS can't flip a single mapping between writable and executable (no W^X toggle available
 // to a sideloaded app) -- Core::DualMappedRegion gives two separate virtual addresses backed
 // by the same physical pages instead, matching the pattern used everywhere else this port
@@ -468,7 +469,7 @@ bool SrtWalkerSignalHandler(void* context, void* fault_address) {
 
     u32 instruction{};
     std::memcpy(&instruction, reinterpret_cast<const void*>(pc), sizeof(instruction));
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(AETHER_PHONE_PATH)
     // General-purpose x-registers (unlike pc/sp/fp/lr) aren't pointer-authentication-opaque
     // on Apple Silicon, so they're addressable directly through __x[] rather than needing
     // the arm_thread_state64_get_*/set_* accessor macros (see sigsys_trap.cpp's equivalent
@@ -613,7 +614,7 @@ PFN_SrtWalker RegisterWalkerCode(const u8* ptr, size_t size) {
     }
 
     std::unique_ptr<SrtCodeMapping> mapping;
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(AETHER_PHONE_PATH)
     // Pool only -- deliberately no fallback to a standalone per-walker Core::DualMappedRegion::
     // Allocate() here anymore. That fallback used to exist, but it's exactly the unsafe pattern
     // this whole pool was introduced to get away from (see IosSrtCodePool's own comment): unlike
@@ -689,7 +690,7 @@ PFN_SrtWalker RegisterWalkerCode(const u8* ptr, size_t size) {
     return function;
 }
 
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(AETHER_PHONE_PATH)
 void WarmUpIosSrtCodePool() {
     IosSrtCodePool::Instance();
 }

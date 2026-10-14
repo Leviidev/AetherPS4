@@ -59,6 +59,7 @@ option(ENABLE_TESTS "Build unit tests (requires GTest)" OFF)
 option(ENABLE_BACHATA_RUNTIME "Build x86-64 Android-container runtime mode" OFF)
 option(ENABLE_SYSTEM_LIBRARIES "Enable building against system libraries" OFF)
 option(ENABLE_FEX_GUEST_CPU "Build the native ARM64 FEXCore guest CPU backend" OFF)
+option(AETHER_MAC_PHONE_PATH "macOS only: build shadps4 on the code paths the phone runs (dual-mapped JIT, packed address space, arm64 SRT walker) so the Mac harness tests the phone's code" OFF)
 option(ENABLE_SHADPS4_IOS_LIB "Build shadps4_ios, the embeddable C-API library used by the standalone AetherPS4 app (builds for the host macOS architecture; arm64-apple-ios cross-compilation is a later phase)" OFF)
 set(FEXCORE_GUEST_CPU_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/runtime/sources/fex" CACHE PATH
     "Checked-out FEX source directory for the FEXCore guest CPU backend")
@@ -1345,6 +1346,20 @@ target_link_libraries(shadps4 PRIVATE magic_enum::magic_enum fmt::fmt toml11::to
 target_link_libraries(shadps4 PRIVATE Boost::headers GPUOpen::VulkanMemoryAllocator LibAtrac9 sirit Vulkan::Headers xxHash::xxhash Zydis::Zydis glslang::glslang SDL3::SDL3 pugixml::pugixml)
 target_link_libraries(shadps4 PRIVATE stb::headers lfreist-hwinfo::hwinfo nlohmann_json::nlohmann_json miniz::miniz fdk-aac CLI11::CLI11 OpenAL::OpenAL Cpp_Httplib miniupnpc::miniupnpc)
 target_link_libraries(shadps4 PRIVATE Freetype::Freetype)
+
+if (AETHER_MAC_PHONE_PATH)
+    if (NOT APPLE OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        message(FATAL_ERROR "AETHER_MAC_PHONE_PATH is for the macOS harness only")
+    endif()
+    # See src/common/phone_path.h. The allocator's execute side comes from the process itself
+    # on the Mac (no StikDebug); the rest of it is the phone's code.
+    target_compile_definitions(shadps4 PRIVATE AETHER_MAC_PHONE_PATH=1)
+    target_sources(shadps4 PRIVATE
+        src/common/phone_path.h
+        src/core/ios/ios_jit_allocator.cpp
+        src/core/ios/ios_jit_allocator.h
+    )
+endif()
 
 if (ENABLE_FEX_GUEST_CPU)
     # ARCHITECTURE_arm64 gates FEXCore's own arch-specific code (e.g. SHMStats.h's cycle

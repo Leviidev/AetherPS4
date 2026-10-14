@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "common/phone_path.h"
 #include <map>
 #include <fstream>
 #include <string>
@@ -40,7 +41,7 @@ namespace Core {
 
 // Constants used for mapping address space.
 constexpr VAddr SYSTEM_MANAGED_MIN = 0x400000ULL;
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(AETHER_PHONE_PATH)
 // DIAGNOSTIC: even the ~256GB reduced reservation below (matching Android's
 // ENABLE_BACHATA_RUNTIME window) still fails with ENOMEM on iOS. Before assuming this is
 // a debugger-mediated-allocation problem, first find out whether size is even the right
@@ -57,7 +58,7 @@ constexpr VAddr SYSTEM_RESERVED_MIN = 0x7FFFFC000ULL;
 constexpr VAddr SYSTEM_RESERVED_MAX = 0xFBFFFFFFFULL;
 // GPU-reserved memory ranges from 0x1000000000 - 0x6FFFFFFFFF, so increase the user minimum.
 constexpr VAddr USER_MIN = 0x7000000000ULL;
-#elif defined(__APPLE__) && TARGET_OS_IPHONE
+#elif defined(AETHER_PHONE_PATH)
 // See the SYSTEM_MANAGED_MAX comment above -- same diagnostic shrink.
 constexpr VAddr SYSTEM_RESERVED_MAX = 0x7FFFFC000ULL + 0x40000000ULL - 1;
 constexpr VAddr USER_MIN = 0x1000000000ULL;
@@ -75,7 +76,7 @@ constexpr VAddr USER_MAX = 0x54FFFFFFFFFFULL;
 #elif defined(__FreeBSD__)
 // FreeBSD address space is extremely volatile, keep this lower for safety.
 constexpr VAddr USER_MAX = 0xFFFFFFFFFFFULL;
-#elif defined(__APPLE__) && TARGET_OS_IPHONE
+#elif defined(AETHER_PHONE_PATH)
 // See the SYSTEM_MANAGED_MAX comment above -- same diagnostic shrink (~16GB user window).
 constexpr VAddr USER_MAX = 0x1000000000ULL + 0x400000000ULL - 1;
 #else
@@ -750,7 +751,7 @@ struct AddressSpace::Impl {
         const auto virtual_base =
             reinterpret_cast<u8*>(mmap(nullptr, virtual_size, protection_flags, map_flags, -1, 0));
         system_managed_base = virtual_base;
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(AETHER_PHONE_PATH)
         // iOS reaches this branch too (its sandbox refuses MAP_FIXED at the desktop platforms'
         // fixed absolute addresses outright -- EACCES, confirmed on-device -- ruling out the
         // three-separate-mmaps branch above). SYSTEM_RESERVED_MIN/USER_MIN - SYSTEM_MANAGED_MIN
@@ -800,7 +801,7 @@ struct AddressSpace::Impl {
         }
 #endif
 
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(AETHER_PHONE_PATH)
         // iOS sandboxes shm_open() (fails with EPERM, "Operation not permitted") -- POSIX
         // named shared memory lives in a system-wide /tmp-adjacent namespace the app sandbox
         // doesn't allow touching at all, unlike desktop macOS. The portable workaround: open a
@@ -887,7 +888,7 @@ struct AddressSpace::Impl {
         }
         void* ret = mmap(reinterpret_cast<void*>(virtual_addr), size, prot, MAP_FIXED | flag,
                          handle, host_offset);
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(AETHER_PHONE_PATH)
         if (ret == MAP_FAILED && errno == ENOMEM) {
             // iOS's mmap(MAP_FIXED) can refuse one very large request outright with ENOMEM even
             // when far more than `size` remains free in this process's whole address-space

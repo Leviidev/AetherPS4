@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 
+#include "common/phone_path.h"
 #include "hle_call_adapter.h"
 
 #include <cerrno>
@@ -62,7 +63,7 @@ HleVeneerResult HleVeneerAllocator::Allocate(const HleCallAdapter& adapter) {
     std::memcpy(code + operation_offset + sizeof(operation), suffix, sizeof(suffix));
 
     u64 address;
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(AETHER_PHONE_PATH)
     // See VeneerBatch's own doc comment (hle_call_adapter.h) for why this batches into a
     // shared dual-mapped region instead of one mmap+mprotect page per veneer.
     //

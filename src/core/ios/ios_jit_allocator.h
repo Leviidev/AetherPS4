@@ -68,11 +68,9 @@
 
 #pragma once
 
-#ifdef __APPLE__
-#include <TargetConditionals.h>
-#endif
+#include "common/phone_path.h"
 
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(AETHER_PHONE_PATH)
 
 #include <cstddef>
 #include <cstdint>
@@ -162,4 +160,4 @@ void MarkStikDebugLikelyDead() noexcept;
 
 } // namespace Core
 
-#endif // defined(__APPLE__) && TARGET_OS_IPHONE
+#endif // defined(AETHER_PHONE_PATH)

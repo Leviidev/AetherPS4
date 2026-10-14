@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
+#include "common/phone_path.h"
 #include "common/logging/log.h"
 #include "common/types.h"
 #include "guest_cpu.h"
@@ -28,7 +29,7 @@
 #ifdef __APPLE__
 #include <TargetConditionals.h>
 #endif
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(AETHER_PHONE_PATH)
 #include "core/ios/ios_jit_allocator.h"
 #endif
 
@@ -127,7 +128,7 @@ private:
         std::size_t size{};
     };
 
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(AETHER_PHONE_PATH)
     // Every veneer is only 16 bytes, but allocating one mmap+mprotect(PROT_EXEC) page per
     // veneer individually (the non-iOS path below still does exactly that) was confirmed
     // on-device as severe enough to hang app launch entirely for a game referencing a few
