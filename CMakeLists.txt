@@ -60,6 +60,7 @@ option(ENABLE_BACHATA_RUNTIME "Build x86-64 Android-container runtime mode" OFF)
 option(ENABLE_SYSTEM_LIBRARIES "Enable building against system libraries" OFF)
 option(ENABLE_FEX_GUEST_CPU "Build the native ARM64 FEXCore guest CPU backend" OFF)
 option(AETHER_MAC_PHONE_PATH "macOS only: build shadps4 on the code paths the phone runs (dual-mapped JIT, packed address space, arm64 SRT walker) so the Mac harness tests the phone's code" OFF)
+option(ENABLE_HUSK_MODULE "Build libhuskps4, the PS4 core as a Husk console module (needs ENABLE_SHADPS4_IOS_LIB and the phone path)" OFF)
 option(ENABLE_SHADPS4_IOS_LIB "Build shadps4_ios, the embeddable C-API library used by the standalone AetherPS4 app (builds for the host macOS architecture; arm64-apple-ios cross-compilation is a later phase)" OFF)
 set(FEXCORE_GUEST_CPU_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/runtime/sources/fex" CACHE PATH
     "Checked-out FEX source directory for the FEXCore guest CPU backend")
@@ -1289,6 +1290,8 @@ set(EMULATOR src/emulator.cpp
              src/emulator.h
              src/sdl_window.h
              src/sdl_window.cpp
+             src/platform/husk/host_surface.cpp
+             src/platform/husk/host_surface.h
 )
 
 if (APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
@@ -1349,13 +1352,36 @@ target_link_libraries(shadps4 PRIVATE Boost::headers GPUOpen::VulkanMemoryAlloca
 target_link_libraries(shadps4 PRIVATE stb::headers lfreist-hwinfo::hwinfo nlohmann_json::nlohmann_json miniz::miniz fdk-aac CLI11::CLI11 OpenAL::OpenAL Cpp_Httplib miniupnpc::miniupnpc)
 target_link_libraries(shadps4 PRIVATE Freetype::Freetype)
 
+# A FEXCore line with host-owned JIT regions (husk-fex: SetJITHostHooks) lets Core::SetJitHost
+# hand Husk's region to FEXCore too.
+set(AETHER_FEX_HAS_JIT_HOST OFF)
+if (ENABLE_FEX_GUEST_CPU AND EXISTS "${FEXCORE_GUEST_CPU_SOURCE_DIR}/FEXCore/include/FEXCore/Utils/AllocatorHooks.h")
+    file(STRINGS "${FEXCORE_GUEST_CPU_SOURCE_DIR}/FEXCore/include/FEXCore/Utils/AllocatorHooks.h"
+         _fex_jit_host REGEX "SetJITHostHooks")
+    if (_fex_jit_host)
+        set(AETHER_FEX_HAS_JIT_HOST ON)
+    endif()
+endif()
+
+# The phone path on a macOS target (see src/common/phone_path.h); the allocator's execute side
+# comes from the process itself on the Mac (no StikDebug), the rest of it is the phone's code.
+function(aether_mac_phone_path target)
+    target_compile_definitions(${target} PRIVATE AETHER_MAC_PHONE_PATH=1)
+    target_sources(${target} PRIVATE
+        src/common/phone_path.h
+        src/core/ios/ios_jit_allocator.cpp
+        src/core/ios/ios_jit_allocator.h
+    )
+    if (ENABLE_FEX_GUEST_CPU)
+        target_compile_definitions(${target} PRIVATE FEX_MAC_PHONE_PATH=1)
+    endif()
+endfunction()
+
 if (AETHER_MAC_PHONE_PATH)
     if (NOT APPLE OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
         message(FATAL_ERROR "AETHER_MAC_PHONE_PATH is for the macOS harness only")
     endif()
-    # See src/common/phone_path.h. The allocator's execute side comes from the process itself
-    # on the Mac (no StikDebug); the rest of it is the phone's code.
-    target_compile_definitions(shadps4 PRIVATE AETHER_MAC_PHONE_PATH=1)
+    aether_mac_phone_path(shadps4)
     if (ENABLE_FEX_GUEST_CPU)
         # FEXCore's AllocatorHooks.h switches to the phone's dual-mapped JIT on FEX_MAC_PHONE_PATH,
         # and this target includes that header too, so both sides must agree: FEXCore has to be
@@ -1369,13 +1395,10 @@ if (AETHER_MAC_PHONE_PATH)
             message(FATAL_ERROR "AETHER_MAC_PHONE_PATH needs a FEXCore built with "
                                 "-DFEX_MAC_PHONE_PATH=1; ${FEXCORE_GUEST_CPU_BUILD_DIR} is not")
         endif()
-        target_compile_definitions(shadps4 PRIVATE FEX_MAC_PHONE_PATH=1)
     endif()
-    target_sources(shadps4 PRIVATE
-        src/common/phone_path.h
-        src/core/ios/ios_jit_allocator.cpp
-        src/core/ios/ios_jit_allocator.h
-    )
+endif()
+if (AETHER_FEX_HAS_JIT_HOST)
+    target_compile_definitions(shadps4 PRIVATE AETHER_FEX_HAS_JIT_HOST=1)
 endif()
 
 if (ENABLE_FEX_GUEST_CPU)
@@ -1751,6 +1774,43 @@ if (ENABLE_SHADPS4_IOS_LIB)
     if (APPLE)
         # Replacement for std::chrono::time_zone
         target_link_libraries(shadps4_ios PRIVATE date::date-tz epoll-shim)
+    endif()
+
+    if (AETHER_MAC_PHONE_PATH)
+        aether_mac_phone_path(shadps4_ios)
+    endif()
+    if (AETHER_FEX_HAS_JIT_HOST)
+        target_compile_definitions(shadps4_ios PRIVATE AETHER_FEX_HAS_JIT_HOST=1)
+    endif()
+
+    # libhuskps4: the PS4 core as one Husk console module (src/platform/husk/husk_module.cpp,
+    # contract in husk_console_abi.h). One exported symbol; everything else, the core's static
+    # libraries included, stays hidden inside the dylib.
+    if (ENABLE_HUSK_MODULE)
+        if (NOT (CMAKE_SYSTEM_NAME STREQUAL "iOS" OR AETHER_MAC_PHONE_PATH))
+            message(FATAL_ERROR "ENABLE_HUSK_MODULE needs the phone path: iOS, or macOS with AETHER_MAC_PHONE_PATH")
+        endif()
+        add_library(huskps4 SHARED
+            src/platform/husk/husk_module.cpp
+            src/platform/husk/husk_console_abi.h
+        )
+        target_include_directories(huskps4 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+        if (AETHER_MAC_PHONE_PATH)
+            target_compile_definitions(huskps4 PRIVATE AETHER_MAC_PHONE_PATH=1)
+        endif()
+        target_link_libraries(huskps4 PRIVATE shadps4_ios SDL3::SDL3)
+        set_target_properties(huskps4 PROPERTIES
+            C_VISIBILITY_PRESET hidden
+            CXX_VISIBILITY_PRESET hidden
+            VISIBILITY_INLINES_HIDDEN ON
+        )
+        target_link_options(huskps4 PRIVATE
+            "LINKER:-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/src/platform/husk/huskps4.exports"
+            "LINKER:-dead_strip"
+        )
+        if (APPLE)
+            target_link_libraries(huskps4 PRIVATE "-framework Foundation" "-framework QuartzCore" "-framework Metal")
+        endif()
     endif()
 
     # Phase 1 verification harness: links only against shadps4_ios's public C API
