@@ -16,6 +16,9 @@
 #include "core/ios/ios_jit_allocator.h"
 
 #include "common/logging/log.h"
+#if defined(AETHER_FEX_HAS_JIT_HOST)
+#include <FEXCore/Utils/AllocatorHooks.h>
+#endif
 
 #include <atomic>
 #include <chrono>
@@ -198,9 +201,48 @@ namespace {
 std::atomic<uint64_t> g_allocation_counter{0};
 }
 
+namespace {
+JitHost g_jit_host{};
+std::atomic<bool> g_has_jit_host{false};
+} // namespace
+
+void SetJitHost(const JitHost& host) noexcept {
+    g_jit_host = host;
+    g_has_jit_host.store(host.alloc != nullptr && host.free != nullptr, std::memory_order_release);
+#if defined(AETHER_FEX_HAS_JIT_HOST)
+    FEXCore::Allocator::SetJITHostHooks(FEXCore::Allocator::JITHostHooks{
+        .Alloc = host.alloc,
+        .Free = host.free,
+        .Delta = host.delta,
+        .RWBase = host.rw_base,
+        .Size = host.size,
+    });
+#endif
+}
+
+bool HasJitHost() noexcept {
+    return g_has_jit_host.load(std::memory_order_acquire);
+}
+
 DualMappedRegion DualMappedRegion::Allocate(size_t bytes) noexcept {
     DualMappedRegion region;
     const uint64_t request_number = g_allocation_counter.fetch_add(1, std::memory_order_relaxed) + 1;
+
+    if (HasJitHost()) {
+        void* rx = nullptr;
+        void* rw = g_jit_host.alloc(bytes, &rx);
+        if (rw == nullptr || rx == nullptr) {
+            LOG_CRITICAL(Core, "ios_jit_allocator #{}: the host refused {} KiB of JIT memory",
+                         request_number, bytes >> 10);
+            return region; // invalid
+        }
+        region.rw_addr = static_cast<uint8_t*>(rw);
+        region.rx_addr = static_cast<uint8_t*>(rx);
+        region.size = bytes;
+        LOG_INFO(Core, "ios_jit_allocator #{}: host gave {} KiB (rw={} rx={})", request_number,
+                 bytes >> 10, rw, rx);
+        return region;
+    }
 
     // Ask the StikDebug-serviced BRK protocol for a FRESH allocation (x0 == 0) to get the
     // EXECUTABLE side of the mapping -- see this file's top-of-file comment for why this is the
@@ -322,6 +364,13 @@ DualMappedRegion DualMappedRegion::Allocate(size_t bytes) noexcept {
 }
 
 void DualMappedRegion::Release() noexcept {
+    if (HasJitHost() && rw_addr != nullptr) {
+        g_jit_host.free(rw_addr, size);
+        rw_addr = nullptr;
+        rx_addr = nullptr;
+        size = 0;
+        return;
+    }
     if (rw_addr != nullptr) {
         vm_deallocate(mach_task_self(), reinterpret_cast<vm_address_t>(rw_addr), static_cast<vm_size_t>(size));
         rw_addr = nullptr;
@@ -353,6 +402,9 @@ DualMappedRegion& DualMappedRegion::operator=(DualMappedRegion&& o) noexcept {
 namespace IosJitAllocator {
 
 void Detach() noexcept {
+    if (HasJitHost()) {
+        return; // the host owns the debugger session, if there is one
+    }
     // BRK #0xf00d with x16=0 → JIT26Detach → GDB "D" (detach).
     // Safe to call on non-TXM and TXM devices alike.
     const auto& symbols = GetBreakpointJITSymbols();

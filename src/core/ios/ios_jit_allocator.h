@@ -122,6 +122,21 @@ struct DualMappedRegion {
     DualMappedRegion& operator=(DualMappedRegion&& o) noexcept;
 };
 
+// A host that owns one JIT region (Husk) hands it over before the emulator starts. From then on
+// DualMappedRegion::Allocate/Release take pages from the host and nothing traps to StikDebug;
+// Detach and the StikDebug watchdog have nothing to do.
+struct JitHost {
+    void* (*alloc)(size_t bytes, void** rx_out); // returns rw, stores rx
+    int (*free)(void* rw, size_t bytes);
+    // rx = rw + delta for every allocation; the region is [rw_base, rw_base + size) on the
+    // writable side. Passed on to FEXCore so its own translation is one addition.
+    intptr_t delta;
+    uintptr_t rw_base;
+    size_t size;
+};
+void SetJitHost(const JitHost& host) noexcept;
+[[nodiscard]] bool HasJitHost() noexcept;
+
 namespace IosJitAllocator {
 
 // Call once after all DualMappedRegion::Allocate() calls have completed,

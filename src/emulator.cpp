@@ -671,7 +671,9 @@ void Emulator::RunLoop() {
 
     window->InitTimers();
 #if defined(__APPLE__) && TARGET_OS_IPHONE
-    EnsureStikDebugDeathWatchdogStarted();
+    if (!Core::HasJitHost()) { // hosted: no StikDebug session to watch
+        EnsureStikDebugDeathWatchdogStarted();
+    }
 #endif
     LOG_CRITICAL(Core, "BACHATA_RUNLOOP: entering window event loop at {}ms",
                 Common::BootElapsedMs());

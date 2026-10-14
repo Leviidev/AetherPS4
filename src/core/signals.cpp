@@ -1337,8 +1337,12 @@ SignalDispatch::SignalDispatch() {
     ASSERT_MSG(sigaction(SIGSLEEP, &action, nullptr) == 0,
                "Failed to register sleep signal handler.");
 #if defined(__APPLE__) && TARGET_OS_IPHONE
-    ASSERT_MSG(sigaction(SIGTRAP, &action, nullptr) == 0,
-               "Failed to register JIT-mapping trap signal handler.");
+    // Hosted by Husk (a JIT host is set): no BRK is ever issued here, and SIGTRAP belongs to the
+    // host's own trap guard.
+    if (!Core::HasJitHost()) {
+        ASSERT_MSG(sigaction(SIGTRAP, &action, nullptr) == 0,
+                   "Failed to register JIT-mapping trap signal handler.");
+    }
 #endif
 #endif
 }
