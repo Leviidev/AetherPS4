@@ -370,11 +370,6 @@ bool AvPlayerSource::GetVideoData(AvPlayerFrameInfo& video_info) {
 }
 
 bool AvPlayerSource::GetVideoData(AvPlayerFrameInfoEx& video_info) {
-    if (m_current_video_frame.has_value()) {
-        m_video_buffers.Push(std::move(m_current_video_frame->buffer));
-        m_current_video_frame.reset();
-        m_video_buffers_cv.Notify();
-    }
 
     if (!IsActive() || m_is_paused) {
         const u64 count = ++m_trace_video_data_inactive_count;
@@ -418,6 +413,12 @@ bool AvPlayerSource::GetVideoData(AvPlayerFrameInfoEx& video_info) {
         }
     }
 
+    // The frame handed out last stays the game's until it is given the next one.
+    if (m_current_video_frame.has_value()) {
+        m_video_buffers.Push(std::move(m_current_video_frame->buffer));
+        m_current_video_frame.reset();
+        m_video_buffers_cv.Notify();
+    }
     auto frame = m_video_frames.Pop();
     video_info = frame->info;
     m_current_video_frame = std::move(frame);
@@ -434,12 +435,6 @@ bool AvPlayerSource::GetVideoData(AvPlayerFrameInfoEx& video_info) {
 }
 
 bool AvPlayerSource::GetAudioData(AvPlayerFrameInfo& audio_info) {
-    if (m_current_audio_frame.has_value()) {
-        // return the buffer to the queue
-        m_audio_buffers.Push(std::move(m_current_audio_frame->buffer));
-        m_current_audio_frame.reset();
-        m_audio_buffers_cv.Notify();
-    }
 
     if (!IsActive() || m_is_paused) {
         const u64 count = ++m_trace_audio_data_inactive_count;
@@ -461,6 +456,12 @@ bool AvPlayerSource::GetAudioData(AvPlayerFrameInfo& audio_info) {
         return false;
     }
 
+    // The frame handed out last stays the game's until it is given the next one.
+    if (m_current_audio_frame.has_value()) {
+        m_audio_buffers.Push(std::move(m_current_audio_frame->buffer));
+        m_current_audio_frame.reset();
+        m_audio_buffers_cv.Notify();
+    }
     auto frame = m_audio_frames.Pop();
     m_last_audio_ts = frame->info.timestamp;
     m_atomic_last_audio_ts.store(frame->info.timestamp, std::memory_order_relaxed);
