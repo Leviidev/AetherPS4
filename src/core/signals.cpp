@@ -735,6 +735,27 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
                         static_cast<unsigned long long>(ts.__x[17]),
                         static_cast<unsigned long long>(ts.__x[19]),
                         static_cast<unsigned long long>(arm_thread_state64_get_fp(ts)));
+            // AETHER_FAULT_STACK_DUMP=<file>: the guest stack from the live RSP up, page by page until an
+            // unreadable one (at most 16 MiB), for working out deep recursions offline. The file starts with
+            // the address of its first byte.
+            if (const char* dump_path = std::getenv("AETHER_FAULT_STACK_DUMP")) {
+                if (FILE* f = std::fopen(dump_path, "wb")) {
+                    constexpr vm_size_t page = 16384;
+                    vm_address_t at = (static_cast<vm_address_t>(ts.__x[8]) + page - 1) & ~(page - 1);
+                    std::fwrite(&at, sizeof(at), 1, f);
+                    static unsigned char buf[page];
+                    for (int i = 0; i < 1024; ++i, at += page) {
+                        vm_size_t got = 0;
+                        if (vm_read_overwrite(mach_task_self(), at, page,
+                                              reinterpret_cast<vm_address_t>(buf), &got) != KERN_SUCCESS ||
+                            got != page) {
+                            break;
+                        }
+                        std::fwrite(buf, 1, page, f);
+                    }
+                    std::fclose(f);
+                }
+            }
             // New crash class (guest RIP 0x7001342320): a SIGBUS write landing 8 bytes below
             // whatever this compiled block's host x8 register holds. x8 is guest RSP's fixed SRA
             // slot on this build -- FEXCore's x64::SRA table (Arm64Emitter.cpp) maps

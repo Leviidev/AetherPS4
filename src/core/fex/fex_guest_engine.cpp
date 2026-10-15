@@ -770,6 +770,7 @@ public:
                            traceEnabled ? "1" : "0");
       FexBlockTraceCount.store(0, std::memory_order_relaxed);
       LogMan::Msg::InstallHandler(FexMessageHandler);
+      ApplyConfigOverrides();
     }
     ++Users;
     return true;
@@ -786,6 +787,37 @@ public:
   }
 
 private:
+  // AETHER_FEX_CONFIG="Multiblock=0,MaxInst=1": FEX options by their config-file names, for narrowing down a
+  // translation bug by turning optimisations off.
+  static void ApplyConfigOverrides() {
+    const char* spec = std::getenv("AETHER_FEX_CONFIG");
+    if (spec == nullptr) return;
+    static constexpr std::pair<std::string_view, FEXCore::Config::ConfigOption> Options[] = {
+#define OPT_BASE(type, group, enum, json, default) {#json, FEXCore::Config::CONFIG_##enum},
+#include <FEXCore/Config/ConfigValues.inl>
+#undef OPT_BASE
+    };
+    std::string_view rest {spec};
+    while (!rest.empty()) {
+      const auto comma = rest.find(',');
+      const auto item = rest.substr(0, comma);
+      rest = comma == std::string_view::npos ? std::string_view {} : rest.substr(comma + 1);
+      const auto eq = item.find('=');
+      if (eq == std::string_view::npos) continue;
+      const auto name = item.substr(0, eq);
+      const auto value = item.substr(eq + 1);
+      bool found = false;
+      for (const auto& [option_name, option] : Options) {
+        if (option_name == name) {
+          FEXCore::Config::Set(option, fextl::string {value});
+          found = true;
+          break;
+        }
+      }
+      LOG_WARNING(Core, "FEX config {} = {}{}", name, value, found ? "" : " (no such option)");
+    }
+  }
+
   static inline std::mutex Mutex;
   static inline size_t Users {};
 };

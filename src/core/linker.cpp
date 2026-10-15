@@ -492,6 +492,14 @@ Linker::GuestFunctionResult Linker::RunGuestMain(EntryParams* params) {
         return GuestExecutionFailure{GuestExecutionStage::Mapping,
                                      stack.Error() == 0 ? ENOMEM : stack.Error()};
     }
+    {
+        const auto* proc = GetProcParam();
+        LOG_INFO(Core_Linker, "Main guest stack {:#x}-{:#x} ({:#x} bytes; the game asks for {})",
+                    stack.Top() - stackSize, stack.Top(), stackSize,
+                    proc && proc->main_thread_stack_size
+                        ? fmt::format("{:#x}", *proc->main_thread_stack_size)
+                        : std::string("nothing"));
+    }
 
     EntryParams guestParams = *params;
     auto cursor = stack.Top();
