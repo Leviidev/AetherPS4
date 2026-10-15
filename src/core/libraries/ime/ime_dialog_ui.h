@@ -72,6 +72,12 @@ public:
     ImeDialogState& operator=(ImeDialogState&& other);
 
     bool CopyTextToOrbisBuffer(bool use_original);
+    // Keeps the game's text, or puts `fallback` in when there is none.
+    void UseTextOrFallback(std::string_view fallback) {
+        if (std::string_view{current_text}.empty()) {
+            current_text.FromString(fallback);
+        }
+    }
     bool CallTextFilter();
     bool NormalizeNewlines();
     bool ClampCurrentTextToMaxLen();

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <new>
 #include "common/logging/log.h"
+#include "platform/husk/host_surface.h"
 #include "core/emulator_settings.h"
 #include "core/libraries/error_codes.h"
 #include "core/libraries/kernel/kernel.h"
@@ -1038,6 +1039,19 @@ static Error SetupDialogState(OrbisImeDialogParam* param, OrbisImeParamExtended*
         g_ime_dlg_client->dialog_state = 4;
     }
     g_ime_dlg_ui = ImeDialogUi(&g_ime_dlg_state, &g_ime_dlg_status, &g_ime_dlg_result);
+
+    if (Frontend::IsHuskHosted()) {
+        // Husk has no keyboard for this dialog yet: accept it at once with the game's own text,
+        // or a name when the field starts empty (a character or world name).
+        g_ime_dlg_state.UseTextOrFallback("Hunter");
+        g_ime_dlg_result.endstatus = OrbisImeDialogEndStatus::Ok;
+        g_ime_dlg_status = OrbisImeDialogStatus::Finished;
+        if (g_ime_dlg_client) {
+            g_ime_dlg_client->dialog_state = 5;
+        }
+        LOG_WARNING(Lib_ImeDialog, "Hosted: dialog accepted without a keyboard");
+        return Error::OK;
+    }
 
     LOG_INFO(Lib_ImeDialog, "sceImeDialogInit: successful, status now=Running");
     return Error::OK;

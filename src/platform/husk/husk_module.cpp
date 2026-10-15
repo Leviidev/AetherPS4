@@ -32,9 +32,10 @@
 
 namespace {
 
-// Phase 1-2 ceiling (see the PS4 plan): a 64 MiB code buffer, a 16 KiB dispatcher, trampolines,
-// HLE veneers and the shader-walker pool fit in 80 MiB.
-constexpr size_t kJitCeilingBytes = size_t{80} << 20;
+// Code buffers are 64 MiB, and a full one is replaced rather than refilled, so a few can be alive
+// at once while threads move to the newest; plus a 16 KiB dispatcher, trampolines, HLE veneers and
+// the shader-walker pool. The phone's region is 512 MiB.
+constexpr size_t kJitCeilingBytes = size_t{448} << 20;
 
 HuskHostV1 g_host{};
 std::atomic<int> g_state{HUSK_CONSOLE_IDLE};
