@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "common/phone_path.h"
 #include <algorithm>
 #include <bit>
 #include <chrono>
@@ -23,7 +24,13 @@
 namespace VideoCore {
 
 static constexpr size_t DataShareBufferSize = 64_KB;
+// The phone counts every byte of it against a ~6 GB process limit; uploads bigger than this take
+// a temporary buffer anyway.
+#ifdef AETHER_PHONE_PATH
+static constexpr size_t StagingBufferSize = 128_MB;
+#else
 static constexpr size_t StagingBufferSize = 512_MB;
+#endif
 static constexpr size_t DownloadBufferSize = 32_MB;
 static constexpr size_t UboStreamBufferSize = 64_MB;
 static constexpr size_t DeviceBufferSize = 128_MB;
