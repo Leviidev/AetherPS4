@@ -91,6 +91,9 @@ bool BufferCache::InvalidateMemory(VAddr device_addr, u64 size) {
         // handler chain can fall through to whichever handler (or the real diagnostic/
         // crash path) can actually resolve it, instead of retrying the same faulting
         // instruction forever against a page whose protection was never touched.
+        // Still let the tracker drop any protection it holds here: a buffer deleted while its
+        // pages were protected leaves them read-only otherwise, with nothing left to claim them.
+        memory_tracker->InvalidateRegion(device_addr, size, [] {});
         return false;
     }
     memory_tracker->InvalidateRegion(

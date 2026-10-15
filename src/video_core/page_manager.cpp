@@ -20,6 +20,10 @@
 #ifndef _WIN64
 #include <pthread.h>
 #include <sys/mman.h>
+#include <unistd.h>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#endif
 #include "common/adaptive_mutex.h"
 #ifdef ENABLE_USERFAULTFD
 #include <thread>
@@ -202,7 +206,7 @@ struct PageManager::Impl {
         Core::MemoryPermission requested_perms{};
         Core::MemoryPermission effective_perms{};
     };
-    static constexpr size_t kProtectRingSize = 64;
+    static constexpr size_t kProtectRingSize = 4096;
     std::mutex protect_ring_mutex{};
     std::array<ProtectRecord, kProtectRingSize> protect_ring{};
     u64 protect_sequence{};
@@ -261,6 +265,45 @@ struct PageManager::Impl {
         impl.Protect(address, size, perms);
     }
 
+#ifdef __APPLE__
+    // A permission or translation fault, as opposed to an alignment fault, which FEX's own
+    // handler deals with.
+    static bool IsPermissionFault(void* context) {
+#if defined(ARCH_ARM64)
+        // Translation and access flag faults (DFSC 0b0001xx, 0b0010xx) count too: a mapping being
+        // replaced is briefly absent, and an access landing in that window faults although the
+        // page is fine again.
+        const auto dfsc = static_cast<ucontext_t*>(context)->uc_mcontext->__es.__esr & 0x3c;
+        return dfsc == 0x0c || dfsc == 0x04 || dfsc == 0x08;
+#else
+        return true;
+#endif
+    }
+
+    // Polls the host protection of `addr` for up to ~200 ms until it allows the access.
+    static bool WaitForHostAccess(VAddr addr, bool is_write) {
+        const vm_prot_t needed = is_write ? VM_PROT_WRITE : VM_PROT_READ;
+        for (int i = 0; i < 2000; ++i) {
+            vm_address_t region = static_cast<vm_address_t>(addr);
+            vm_size_t size = 0;
+            vm_region_basic_info_data_64_t info {};
+            mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+            mach_port_t object = MACH_PORT_NULL;
+            if (vm_region_64(mach_task_self(), &region, &size, VM_REGION_BASIC_INFO_64,
+                             reinterpret_cast<vm_region_info_t>(&info), &count, &object) != KERN_SUCCESS ||
+                region > addr) {
+                return false;
+            }
+            if ((info.protection & needed) == needed) {
+                return true;
+            }
+            usleep(100);
+        }
+        LOG_CRITICAL(Render, "Fault at {:#x} (write={}) still not allowed after waiting", addr, is_write);
+        return false;
+    }
+#endif
+
     static bool GuestFaultSignalHandler(void* context, void* fault_address) {
         const auto addr = reinterpret_cast<VAddr>(fault_address);
         bool is_write = Common::IsWriteError(context);
@@ -289,14 +332,28 @@ struct PageManager::Impl {
             }
         }
         if (write_watcher_count == 0 && read_watcher_count == 0) {
+#ifdef __APPLE__
+            // Another thread can drop the last watcher of this host page between this access
+            // faulting and the handler running, with its mprotect still to land: retry once the
+            // page allows the access, rather than treating it as nothing of ours. A page that
+            // stays protected with no watchers is a real desync and still falls through.
+            if (IsPermissionFault(context) && rasterizer->IsMapped(addr, 1) &&
+                WaitForHostAccess(addr, is_write)) {
+                return true;
+            }
+#endif
             return false;
         }
-        if (is_write) {
-            return rasterizer->InvalidateMemory(addr, 8) || sibling_handled;
-        } else {
-            return rasterizer->ReadMemory(addr, 8);
+        const bool handled = is_write ? rasterizer->InvalidateMemory(addr, 8) || sibling_handled
+                                      : rasterizer->ReadMemory(addr, 8);
+#ifdef __APPLE__
+        // Two threads faulting on the same page: the first invalidation lifts the protection
+        // and leaves nothing for the second to do. Retry it once the page allows the access.
+        if (!handled && IsPermissionFault(context) && WaitForHostAccess(addr, is_write)) {
+            return true;
         }
-        return false;
+#endif
+        return handled;
     }
 #endif
 
@@ -547,35 +604,54 @@ bool PageManager::DumpRecentPageProtects(VAddr fault_addr, char* out_buf,
         return false;
     }
     auto* instance = Impl::s_instance;
-    std::array<Impl::ProtectRecord, Impl::kProtectRingSize> snapshot;
-    u64 sequence_snapshot;
-    {
-        std::scoped_lock lk{instance->protect_ring_mutex};
-        snapshot = instance->protect_ring;
-        sequence_snapshot = instance->protect_sequence;
-    }
-    const auto count = std::min<u64>(sequence_snapshot, Impl::kProtectRingSize);
     char* w = out_buf;
     char* const end = out_buf + out_buf_size;
-    for (u64 i = 0; i < count && w < end; ++i) {
-        const auto seq = sequence_snapshot - 1 - i;
-        const auto& rec = snapshot[seq % Impl::kProtectRingSize];
-        const bool overlaps = fault_addr >= rec.addr && fault_addr < rec.addr + rec.size;
-        const int written = std::snprintf(
-            w, static_cast<std::size_t>(end - w),
-            "[seq=%llu addr=%#llx size=%#llx perms=%#x thread=%#llx%s] ",
-            static_cast<unsigned long long>(rec.sequence),
-            static_cast<unsigned long long>(rec.addr), static_cast<unsigned long long>(rec.size),
-            static_cast<unsigned>(rec.effective_perms),
-            static_cast<unsigned long long>(rec.thread_id), overlaps ? " OVERLAPS_FAULT" : "");
-        if (written <= 0) {
-            break;
+    const auto put = [&](const char* fmt, auto... args) {
+        if (w < end) {
+            const int n = std::snprintf(w, static_cast<std::size_t>(end - w), fmt, args...);
+            if (n > 0) w += std::min<std::ptrdiff_t>(n, end - w);
         }
-        w += written;
+    };
+    // The watcher counts of the faulting host page's 4KB pages (Mprotect rounds every call out to
+    // the host page, so any of them can be what protects it).
+    constexpr VAddr kHostPage = 16_KB;
+    const VAddr host_page = fault_addr & ~(kHostPage - 1);
+    put("host page %#llx watchers(w/r):", static_cast<unsigned long long>(host_page));
+    for (VAddr a = host_page; a < host_page + kHostPage; a += PM_PAGE_SIZE) {
+        const auto& state = instance->cached_pages[a >> PM_PAGE_BITS];
+        put(" %u/%u", static_cast<unsigned>(state.num_write_watchers),
+            static_cast<unsigned>(state.num_read_watchers));
+    }
+    put(" | ");
+    std::scoped_lock lk{instance->protect_ring_mutex};
+    const u64 sequence = instance->protect_sequence;
+    const auto count = std::min<u64>(sequence, Impl::kProtectRingSize);
+    // The newest calls that reached this host page, then the newest calls overall.
+    int shown = 0;
+    for (u64 i = 0; i < count && shown < 16; ++i) {
+        const auto& rec = instance->protect_ring[(sequence - 1 - i) % Impl::kProtectRingSize];
+        const VAddr lo = rec.addr & ~(kHostPage - 1);
+        const VAddr hi = (rec.addr + rec.size + kHostPage - 1) & ~(kHostPage - 1);
+        if (host_page >= lo && host_page < hi) {
+            put("[seq=%llu addr=%#llx size=%#llx perms=%#x thread=%#llx%s] ",
+                static_cast<unsigned long long>(rec.sequence), static_cast<unsigned long long>(rec.addr),
+                static_cast<unsigned long long>(rec.size), static_cast<unsigned>(rec.effective_perms),
+                static_cast<unsigned long long>(rec.thread_id),
+                fault_addr >= rec.addr && fault_addr < rec.addr + rec.size ? " OVERLAPS_FAULT" : " HOST_PAGE");
+            ++shown;
+        }
+    }
+    put("| newest of %llu: ", static_cast<unsigned long long>(sequence));
+    for (u64 i = 0; i < count && i < 24; ++i) {
+        const auto& rec = instance->protect_ring[(sequence - 1 - i) % Impl::kProtectRingSize];
+        put("[seq=%llu addr=%#llx size=%#llx perms=%#x thread=%#llx] ",
+            static_cast<unsigned long long>(rec.sequence), static_cast<unsigned long long>(rec.addr),
+            static_cast<unsigned long long>(rec.size), static_cast<unsigned>(rec.effective_perms),
+            static_cast<unsigned long long>(rec.thread_id));
     }
     if (w < end) {
         *w = '\0';
-    } else if (out_buf_size > 0) {
+    } else {
         out_buf[out_buf_size - 1] = '\0';
     }
     return true;
