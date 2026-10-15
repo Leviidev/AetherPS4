@@ -143,7 +143,9 @@ s32 PS4_SYSV_ABI internal_wcscmp(const u16* str1, const u16* str2) {
         ++str1;
         ++str2;
     }
-    return static_cast<s32>(*str1) - static_cast<s32>(*str2);
+    // PS4's libc returns -1, 0 or 1 here, not the difference, and games test for exactly that:
+    // Bloodborne's behavior lookup took any other value for "equal" and resolved c9999 to c1180.
+    return *str1 == *str2 ? 0 : (*str1 < *str2 ? -1 : 1);
 }
 
 u16* PS4_SYSV_ABI internal_wcscpy(u16* dest, const u16* src) {
