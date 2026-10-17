@@ -24,6 +24,15 @@ DECLARE_ENUM_FLAG_OPERATORS(MemoryPermission)
 /**
  * Represents the user virtual address space backed by a dmem memory block
  */
+// mprotect() statistics for the GPU page watchers (atomics only: Protect runs inside the fault handler)
+struct ProtectStats {
+    u64 calls, ns, max_ns, bytes, faults, big_calls, big_ns, buf_registered, buf_orphan, tex;
+};
+ProtectStats TakeProtectStats();
+void CountGuestFault();
+enum class FaultKind { BufferRegistered, BufferOrphan, Texture };
+void CountFaultKind(FaultKind kind);
+
 class AddressSpace {
 public:
     explicit AddressSpace();

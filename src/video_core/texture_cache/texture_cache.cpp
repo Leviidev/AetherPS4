@@ -24,6 +24,8 @@
 #include "video_core/texture_cache/host_compatibility.h"
 #include "video_core/texture_cache/image_view.h"
 #include "video_core/texture_cache/texture_cache.h"
+
+#include <vk_mem_alloc.h>
 #include "video_core/texture_cache/tile_manager.h"
 
 namespace VideoCore {
@@ -1219,6 +1221,51 @@ void TextureCache::DeleteImage(ImageId image_id) {
         }
         slot_images.erase(image_id);
     });
+}
+
+
+std::string TextureCache::MemoryReport() {
+    std::scoped_lock lock{mutex};
+    struct Kind {
+        const char* name;
+        u64 count = 0;
+        u64 bytes = 0;
+    };
+    std::array<Kind, 5> kinds{{{"render targets"}, {"depth"}, {"textures"}, {"storage"}, {"other"}}};
+    std::vector<std::pair<u64, std::string>> largest;
+    for (Image& image : slot_images) {
+        u64 bytes = 0;
+        for (const auto& backing : image.backing_images) {
+            if (backing.image.allocation) {
+                VmaAllocationInfo info{};
+                vmaGetAllocationInfo(instance.GetAllocator(), backing.image.allocation, &info);
+                bytes += info.size;
+            }
+        }
+        Kind& kind = image.usage.render_target ? kinds[0]
+                     : image.usage.depth_target ? kinds[1]
+                     : image.usage.texture      ? kinds[2]
+                     : image.usage.storage      ? kinds[3]
+                                                : kinds[4];
+        ++kind.count;
+        kind.bytes += bytes;
+        largest.emplace_back(bytes, fmt::format("{}x{} {} mips {} layers {} x{} {} MiB",
+                                                image.info.size.width, image.info.size.height,
+                                                vk::to_string(image.info.pixel_format),
+                                                image.info.resources.levels,
+                                                image.info.resources.layers, image.info.num_samples,
+                                                bytes >> 20));
+    }
+    std::ranges::sort(largest, std::greater{});
+    std::string out;
+    for (const auto& kind : kinds) {
+        out += fmt::format(" {} {} ({} MiB);", kind.name, kind.count, kind.bytes >> 20);
+    }
+    out += " largest:";
+    for (size_t i = 0; i < std::min<size_t>(largest.size(), 6); ++i) {
+        out += " [" + largest[i].second + "]";
+    }
+    return out;
 }
 
 } // namespace VideoCore

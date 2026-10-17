@@ -305,6 +305,7 @@ struct PageManager::Impl {
 #endif
 
     static bool GuestFaultSignalHandler(void* context, void* fault_address) {
+        Core::CountGuestFault();
         const auto addr = reinterpret_cast<VAddr>(fault_address);
         bool is_write = Common::IsWriteError(context);
         size_t write_watcher_count = 0;
@@ -344,7 +345,7 @@ struct PageManager::Impl {
 #endif
             return false;
         }
-        const bool handled = is_write ? rasterizer->InvalidateMemory(addr, 8) || sibling_handled
+        const bool handled = is_write ? rasterizer->InvalidateMemoryOnFault(addr) || sibling_handled
                                       : rasterizer->ReadMemory(addr, 8);
 #ifdef __APPLE__
         // Two threads faulting on the same page: the first invalidation lifts the protection
@@ -388,11 +389,25 @@ struct PageManager::Impl {
                 Protect(addr, size, host_page_perms(head));
                 return;
             }
-            Protect(addr, head + host_page_size - addr, host_page_perms(head));
-            if (head + host_page_size < tail) {
-                Protect(head + host_page_size, tail - head - host_page_size, perms);
+            // Up to three pieces (head host page, the pages between, tail host page); neighbours that
+            // want the same protection go in one mprotect: each call costs on Apple hosts.
+            const auto head_perms = host_page_perms(head);
+            const auto tail_perms = host_page_perms(tail);
+            const u64 mid_start = head + host_page_size;
+            const bool has_mid = mid_start < tail;
+            VAddr run_start = addr;
+            auto run_perms = head_perms;
+            if (has_mid && perms != run_perms) {
+                Protect(run_start, mid_start - run_start, run_perms);
+                run_start = mid_start;
+                run_perms = perms;
             }
-            Protect(tail, end - tail, host_page_perms(tail));
+            if (tail_perms != run_perms) {
+                Protect(run_start, tail - run_start, run_perms);
+                run_start = tail;
+                run_perms = tail_perms;
+            }
+            Protect(run_start, end - run_start, run_perms);
             return;
         }
 #endif

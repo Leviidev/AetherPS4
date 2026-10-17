@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <string>
+
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -215,6 +217,9 @@ public:
 
     /// Runs the garbage collector.
     void RunGarbageCollector();
+
+    /// Host memory of the cached images by kind, and the largest ones, for memory diagnostics.
+    std::string MemoryReport();
 
     /// Guest bytes and images registered right now, for memory diagnostics.
     u64 RegisteredBytes() const {

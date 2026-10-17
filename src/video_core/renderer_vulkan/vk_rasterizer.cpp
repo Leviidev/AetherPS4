@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <atomic>
+#include <cstdlib>
 
 #include "common/debug.h"
 #include "common/logging/log.h"
 #include "core/emulator_settings.h"
+#include "core/address_space.h"
 #include "core/memory.h"
 #include "shader_recompiler/runtime_info.h"
 #include "video_core/amdgpu/liverpool.h"
@@ -469,6 +471,14 @@ void Rasterizer::OnSubmit() {
                  instance.CanReportMemoryUsage() ? instance.GetDeviceMemoryUsage() >> 20 : 0,
                  buffer_cache.RegisteredCount(), buffer_cache.RegisteredBytes() >> 20,
                  texture_cache.RegisteredCount(), texture_cache.RegisteredBytes() >> 20);
+        LOG_WARNING(Render_Vulkan, "Images by kind:{}", texture_cache.MemoryReport());
+        const auto ps = Core::TakeProtectStats();
+        LOG_WARNING(Render_Vulkan,
+                    "Page watchers since the last report: {} guest faults ({} in buffers, {} orphaned, "
+                    "{} images), {} mprotect calls, {} ms in mprotect (longest {} us; {} calls of 1 MiB "
+                    "or more took {} ms), {} MiB protected",
+                    ps.faults, ps.buf_registered, ps.buf_orphan, ps.tex, ps.calls, ps.ns / 1000000,
+                    ps.max_ns / 1000, ps.big_calls, ps.big_ns / 1000000, ps.bytes >> 20);
         std::string by_type;
         for (u32 t = 0; t < draw_stats.size(); ++t) {
             if (draw_stats[t].draws != 0) {
@@ -1151,6 +1161,42 @@ bool Rasterizer::InvalidateMemory(VAddr addr, u64 size) {
     // report handled when one of the caches actually did something.
     const bool buffer_handled = buffer_cache.InvalidateMemory(addr, size);
     const bool texture_handled = texture_cache.InvalidateMemory(addr, size);
+    if (texture_handled) {
+        Core::CountFaultKind(Core::FaultKind::Texture);
+    }
+    return buffer_handled || texture_handled;
+}
+
+// A write fault on a buffer page releases a window around it at once, so a copy across many watched pages faults once
+// instead of once per page (the extra pages are uploaded again on use). On Apple hosts every fault costs a signal and
+// several mprotect calls (Bloodborne: ~250k faults per 600 submissions, 2.7x fewer with 64 KB). BB_FAULT_WINDOW=<bytes,
+// a power of two> turns it on.
+static const u64 s_fault_window = [] {
+    // Off until it is proven on a phone: two of four variants of it crashed Bloodborne on the Mac.
+    constexpr u64 default_window = 0;
+    const char* v = std::getenv("BB_FAULT_WINDOW");
+    const u64 w = v ? std::strtoull(v, nullptr, 0) : default_window;
+    return (w >= 4096 && (w & (w - 1)) == 0) ? w : 0;
+}();
+
+bool Rasterizer::InvalidateMemoryOnFault(VAddr addr) {
+    if (s_fault_window == 0) {
+        return InvalidateMemory(addr, 8);
+    }
+    if (!IsMapped(addr, 8)) {
+        return false;
+    }
+    VAddr start = addr & ~(s_fault_window - 1);
+    u64 size = s_fault_window;
+    if (!IsMapped(start, size)) {
+        start = addr;
+        size = 8;
+    }
+    const bool buffer_handled = buffer_cache.InvalidateMemory(start, size);
+    const bool texture_handled = texture_cache.InvalidateMemory(addr, 8);
+    if (texture_handled) {
+        Core::CountFaultKind(Core::FaultKind::Texture);
+    }
     return buffer_handled || texture_handled;
 }
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "common/phone_path.h"
+#include <atomic>
 #include <map>
 #include <fstream>
 #include <string>
@@ -38,6 +39,23 @@ asm(".zerofill USER_AREA,USER_AREA,__USER_AREA,0x5F9000000000");
 #endif
 
 namespace Core {
+
+namespace {
+std::atomic<u64> s_protect_calls, s_protect_ns, s_protect_max_ns, s_protect_bytes, s_guest_faults;
+std::atomic<u64> s_big_calls, s_big_ns, s_fault_kind[3];
+}
+ProtectStats TakeProtectStats() {
+    return {s_protect_calls.exchange(0), s_protect_ns.exchange(0), s_protect_max_ns.exchange(0),
+            s_protect_bytes.exchange(0), s_guest_faults.exchange(0), s_big_calls.exchange(0),
+            s_big_ns.exchange(0), s_fault_kind[0].exchange(0), s_fault_kind[1].exchange(0),
+            s_fault_kind[2].exchange(0)};
+}
+void CountFaultKind(FaultKind kind) {
+    s_fault_kind[static_cast<int>(kind)].fetch_add(1, std::memory_order_relaxed);
+}
+void CountGuestFault() {
+    s_guest_faults.fetch_add(1, std::memory_order_relaxed);
+}
 
 // Constants used for mapping address space.
 constexpr VAddr SYSTEM_MANAGED_MIN = 0x400000ULL;
@@ -987,7 +1005,19 @@ struct AddressSpace::Impl {
         const VAddr aligned_addr = virtual_addr & ~(static_cast<VAddr>(host_page_size) - 1);
         const u64 aligned_size =
             Common::AlignUp((virtual_addr + size) - aligned_addr, host_page_size);
+        const u64 t0 = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
         int ret = mprotect(reinterpret_cast<void*>(aligned_addr), aligned_size, flags);
+        const u64 dt = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - t0;
+        s_protect_calls.fetch_add(1, std::memory_order_relaxed);
+        s_protect_ns.fetch_add(dt, std::memory_order_relaxed);
+        s_protect_bytes.fetch_add(aligned_size, std::memory_order_relaxed);
+        if (aligned_size >= (1ull << 20)) {
+            s_big_calls.fetch_add(1, std::memory_order_relaxed);
+            s_big_ns.fetch_add(dt, std::memory_order_relaxed);
+        }
+        for (u64 m = s_protect_max_ns.load(std::memory_order_relaxed);
+             dt > m && !s_protect_max_ns.compare_exchange_weak(m, dt);) {
+        }
 #else
         int ret = mprotect(reinterpret_cast<void*>(virtual_addr), size, flags);
 #endif

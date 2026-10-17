@@ -100,9 +100,11 @@ bool BufferCache::InvalidateMemory(VAddr device_addr, u64 size) {
         // instruction forever against a page whose protection was never touched.
         // Still let the tracker drop any protection it holds here: a buffer deleted while its
         // pages were protected leaves them read-only otherwise, with nothing left to claim them.
+        Core::CountFaultKind(Core::FaultKind::BufferOrphan);
         memory_tracker->InvalidateRegion(device_addr, size, [] {});
         return false;
     }
+    Core::CountFaultKind(Core::FaultKind::BufferRegistered);
     memory_tracker->InvalidateRegion(
         device_addr, size, [this, device_addr, size] { ReadMemory(device_addr, size, true); });
     return true;
