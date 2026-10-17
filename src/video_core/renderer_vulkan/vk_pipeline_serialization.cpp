@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <new>
 
 #include "common/serdes.h"
 #include "core/emulator_settings.h"
@@ -15,7 +16,7 @@
 namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
 static constexpr u32 ShaderBinaryVersion = 2u;
-static constexpr u32 ShaderMetaVersion = 2u;
+static constexpr u32 ShaderMetaVersion = 3u;
 static constexpr u32 PipelineKeyVersion = 2u;
 } // namespace Serialization
 
@@ -395,6 +396,9 @@ void Info::Serialize(Serialization::Archive& ar) const {
 
     info.Write(this, sizeof(InfoPersistent));
     info.Write(flattened_ud_buf);
+    // images and samplers are small_vectors here, whose bytes above hold a pointer: their elements go separately
+    info.Write(images);
+    info.Write(samplers);
     srt_info.Serialize(ar);
 }
 
@@ -402,7 +406,12 @@ bool Info::Deserialize(Serialization::Archive& ar) {
     Serialization::Reader info{ar};
 
     info.Read(this, sizeof(Shader::InfoPersistent));
+    // the bytes just read for these two point into the process that wrote the cache: start them empty
+    new (&images) ImageResourceList();
+    new (&samplers) SamplerResourceList();
     info.Read(flattened_ud_buf);
+    info.Read(images);
+    info.Read(samplers);
 
     return srt_info.Deserialize(ar);
 }
