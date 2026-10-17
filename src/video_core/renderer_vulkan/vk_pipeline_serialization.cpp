@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2025-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
+
 #include "common/serdes.h"
 #include "core/emulator_settings.h"
 #include "shader_recompiler/frontend/fetch_shader.h"
@@ -140,6 +142,14 @@ bool ComputePipeline::SerializationSupport::Deserialize(Serialization::Archive& 
     return true;
 }
 
+// A layout whose binding count comes from the bound image (the dynamic-index mip fallback) can only
+// be built at draw time: preloading would read the image through a stale user-data pointer.
+static bool NeedsGuestImageForLayout(const Shader::Info* info) {
+    return info && std::any_of(info->images.begin(), info->images.end(), [](const auto& image) {
+               return image.mip_fallback_mode == Shader::MipStorageFallbackMode::DynamicIndex;
+           });
+}
+
 bool PipelineCache::LoadComputePipeline(Serialization::Archive& ar) {
     compute_key.Deserialize(ar);
 
@@ -156,6 +166,11 @@ bool PipelineCache::LoadComputePipeline(Serialization::Archive& ar) {
     Serialization::Archive meta_ar{std::move(meta_blob)};
 
     if (!LoadPipelineStage(meta_ar, 0)) {
+        return false;
+    }
+    if (NeedsGuestImageForLayout(infos[0])) {
+        infos.fill(nullptr);
+        modules.fill(nullptr);
         return false;
     }
 
@@ -232,6 +247,13 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
         if (!LoadPipelineStage(meta_ar, stage_idx)) {
             return false;
         }
+    }
+
+    if (std::any_of(infos.begin(), infos.end(), NeedsGuestImageForLayout)) {
+        infos.fill(nullptr);
+        modules.fill(nullptr);
+        fetch_shader.reset();
+        return false;
     }
 
     const auto [it, is_new] = graphics_pipelines.try_emplace(graphics_key);

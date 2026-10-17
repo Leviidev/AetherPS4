@@ -124,10 +124,13 @@ struct ImageResource {
     }
 
     u32 NumBindings(const auto& info) const {
+        // Only the dynamic-index mip fallback needs the image itself; a pipeline preloaded from
+        // the cache has no guest state to read it from.
+        if (mip_fallback_mode != MipStorageFallbackMode::DynamicIndex) {
+            return 1;
+        }
         const AmdGpu::Image tsharp = GetSharp(info);
-        return (mip_fallback_mode == MipStorageFallbackMode::DynamicIndex)
-                   ? (tsharp.last_level - tsharp.base_level + 1)
-                   : 1;
+        return tsharp.last_level - tsharp.base_level + 1;
     }
 };
 using ImageResourceList = boost::container::small_vector<ImageResource, NUM_IMAGES>;
