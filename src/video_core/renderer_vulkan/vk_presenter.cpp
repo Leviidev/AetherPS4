@@ -30,6 +30,8 @@
 #include <cctype>
 #include <chrono>
 #include <cstdlib>
+#include <fstream>
+#include <thread>
 #include <cmath>
 #include <csetjmp>
 #include <cstring>
@@ -439,57 +441,61 @@ static bool WritePng(const std::filesystem::path& path, const std::span<const u8
     return true;
 }
 
+// Writes one converted screenshot and its copies. Off the GPU scheduler's priority thread: a PNG of
+// a full frame takes long enough there to hold back the GPU work queued behind it.
+static void WriteScreenshotFiles(const std::vector<std::filesystem::path>& paths,
+                                 const std::vector<u8>& rgba, u32 width, u32 height, bool notify) {
+    const auto& primary_path = paths.front();
+    if (!WritePng(primary_path, rgba, width, height)) {
+        LOG_ERROR(Render_Vulkan, "Failed saving screenshot to {}", primary_path.string());
+        return;
+    }
+    LOG_INFO(Render_Vulkan, "Saved screenshot: {}", primary_path.string());
+    const auto queue_notification = [notify](const std::filesystem::path& path) {
+        if (!notify) {
+            return;
+        }
+        std::ifstream file(path, std::ios::binary | std::ios::ate);
+        std::vector<u8> imgdata;
+        if (file) {
+            imgdata.resize(static_cast<size_t>(file.tellg()));
+            file.seekg(0);
+            file.read(reinterpret_cast<char*>(imgdata.data()), static_cast<std::streamsize>(imgdata.size()));
+        }
+        shadNotifications::QueueNotification("Saved screenshot:\n" + path.string(), 3.0f,
+                                             shadNotifications::position::BottomRight, imgdata);
+    };
+    queue_notification(primary_path);
+    for (size_t i = 1; i < paths.size(); ++i) {
+        const auto& path = paths[i];
+        std::error_code ec{};
+        std::filesystem::copy_file(primary_path, path, std::filesystem::copy_options::none, ec);
+        if (ec && !WritePng(path, rgba, width, height)) {
+            // copy_file can fail for transient reasons on some filesystems: write it again
+            LOG_ERROR(Render_Vulkan, "Failed saving screenshot to {}", path.string());
+            continue;
+        }
+        LOG_INFO(Render_Vulkan, "Saved screenshot: {}", path.string());
+        queue_notification(path);
+    }
+}
+
 static void SavePendingScreenshots(const std::vector<ScreenshotReadback>& readbacks) {
+    // The harness's periodic shots (AETHER_SHOT_EVERY) want no notification on screen.
+    static const bool automatic = std::getenv("AETHER_SHOT_EVERY") != nullptr;
     for (const auto& readback : readbacks) {
         if (readback.paths.empty()) {
             continue;
         }
-
+        // The readback buffer goes with this operation: convert here, write elsewhere.
         std::vector<u8> rgba;
         if (!ConvertReadbackToRgba8(readback, rgba)) {
             continue;
         }
-
-        const auto& primary_path = readback.paths.front();
-        if (!WritePng(primary_path, rgba, readback.width, readback.height)) {
-            LOG_ERROR(Render_Vulkan, "Failed saving screenshot to {}", primary_path.string());
-            continue;
-        }
-
-        LOG_INFO(Render_Vulkan, "Saved screenshot: {}", primary_path.string());
-
-        std::ifstream file(primary_path, std::ios::binary);
-        std::vector<u8> imgdata;
-        if (file) {
-            imgdata = std::vector<u8>(std::istreambuf_iterator<char>(file),
-                                      std::istreambuf_iterator<char>());
-        }
-        shadNotifications::QueueNotification("Saved screenshot:\n" + primary_path.string(), 3.0f,
-                                             shadNotifications::position::BottomRight, imgdata);
-
-        for (size_t i = 1; i < readback.paths.size(); ++i) {
-            const auto& path = readback.paths[i];
-            std::error_code ec{};
-            std::filesystem::copy_file(primary_path, path, std::filesystem::copy_options::none, ec);
-            if (ec) {
-                // Fallback for platforms/filesystems where copy_file can fail for transient
-                // reasons.
-                if (!WritePng(path, rgba, readback.width, readback.height)) {
-                    LOG_ERROR(Render_Vulkan, "Failed saving screenshot to {}", path.string());
-                    continue;
-                }
-            }
-
-            LOG_INFO(Render_Vulkan, "Saved screenshot: {}", path.string());
-            std::ifstream file(path, std::ios::binary);
-            std::vector<u8> imgdata;
-            if (file) {
-                imgdata = std::vector<u8>(std::istreambuf_iterator<char>(file),
-                                          std::istreambuf_iterator<char>());
-            }
-            shadNotifications::QueueNotification("Saved screenshot:\n" + path.string(), 3.0f,
-                                                 shadNotifications::position::BottomRight, imgdata);
-        }
+        std::thread([paths = readback.paths, rgba = std::move(rgba), width = readback.width,
+                     height = readback.height] {
+            WriteScreenshotFiles(paths, rgba, width, height, !automatic);
+        }).detach();
     }
 }
 
