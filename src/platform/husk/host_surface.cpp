@@ -36,6 +36,20 @@ bool IsHuskHosted() {
     return g_husk_hosted.load(std::memory_order_acquire);
 }
 
+namespace {
+std::atomic<HostTextRequester> g_text_requester{nullptr};
+} // namespace
+
+void SetHostTextRequester(HostTextRequester requester) {
+    g_text_requester.store(requester, std::memory_order_release);
+}
+
+bool RequestHostText(const char* title, const char* initial, unsigned max_chars, HostTextDone done,
+                     void* ctx) {
+    const auto requester = g_text_requester.load(std::memory_order_acquire);
+    return requester != nullptr && requester(title, initial, max_chars, done, ctx) == 0;
+}
+
 bool HasHostSurface() {
     std::scoped_lock lock{g_mutex};
     return g_surface.metal_layer != nullptr;

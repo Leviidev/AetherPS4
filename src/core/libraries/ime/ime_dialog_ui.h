@@ -72,6 +72,20 @@ public:
     ImeDialogState& operator=(ImeDialogState&& other);
 
     bool CopyTextToOrbisBuffer(bool use_original);
+    // For a dialog answered by the host's keyboard (Husk): what to show, and the text it typed.
+    std::string_view Title() const {
+        return title.empty() ? std::string_view{} : std::string_view{title.data()};
+    }
+    std::string_view Text() const {
+        return std::string_view{current_text};
+    }
+    u32 MaxTextLength() const {
+        return max_text_length;
+    }
+    void SetText(std::string_view text) {
+        current_text.FromString(text);
+        ClampCurrentTextToMaxLen();
+    }
     // Keeps the game's text, or puts `fallback` in when there is none.
     void UseTextOrFallback(std::string_view fallback) {
         if (std::string_view{current_text}.empty()) {

@@ -28,4 +28,14 @@ HostSurface GetHostSurface();
 void SetHuskHosted(bool hosted);
 bool IsHuskHosted();
 
+// Husk's keyboard for a game's text dialog (HuskHostV1::request_text): done(ctx, text) comes later,
+// on any thread, with UTF-8 text or nullptr when cancelled. RequestHostText is false when there is
+// no keyboard to ask (a host without one, or it refused).
+using HostTextDone = void (*)(void* ctx, const char* text);
+using HostTextRequester = int (*)(const char* title, const char* initial, unsigned max_chars,
+                                  HostTextDone done, void* ctx);
+void SetHostTextRequester(HostTextRequester requester);
+bool RequestHostText(const char* title, const char* initial, unsigned max_chars, HostTextDone done,
+                     void* ctx);
+
 } // namespace Frontend

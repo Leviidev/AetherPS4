@@ -49,6 +49,15 @@ typedef struct HuskHostV1 {
     /* Full path of the Vulkan implementation to load directly (MoltenVK in Husk's Frameworks), or
      * NULL for the platform default. */
     const char *vulkan_library_path;
+
+    /* Asks the player for text: a game's keyboard dialog (a character or world name). Husk shows
+     * its keyboard and later calls done(ctx, text) once, on any thread, with the UTF-8 text, or
+     * with NULL when the player cancelled. title and initial are UTF-8 and may be empty; max_chars
+     * is the field's limit in characters. Returns 0 when Husk took the request, nonzero when it
+     * cannot ask now (the module then answers for the player). Absent from hosts built before it:
+     * struct_size says. */
+    int (*request_text)(const char *title, const char *initial, uint32_t max_chars,
+                        void (*done)(void *ctx, const char *text), void *ctx);
 } HuskHostV1;
 
 /* Controller state Husk merges from its pads and the on-screen pad. Buttons are the PS4 pad's

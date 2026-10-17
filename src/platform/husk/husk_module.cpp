@@ -82,6 +82,9 @@ int Init(const HuskHostV1* host, const char* user_dir) {
         .rw_base = g_host.jit_rw_base,
         .size = g_host.jit_size,
     });
+    // Absent (zero) from hosts built before the keyboard: dialogs are then answered for the player.
+    Frontend::SetHostTextRequester(
+        reinterpret_cast<Frontend::HostTextRequester>(g_host.request_text));
     if (g_host.vulkan_library_path != nullptr && g_host.vulkan_library_path[0] != '\0') {
         // vk_platform.cpp and sdl_window.cpp load this library directly, with no loader.
         setenv("AETHER_VULKAN_LIBRARY", g_host.vulkan_library_path, 1);

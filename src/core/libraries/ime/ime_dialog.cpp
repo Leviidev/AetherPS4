@@ -4,7 +4,9 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <mutex>
 #include <new>
+#include <string>
 #include "common/logging/log.h"
 #include "platform/husk/host_surface.h"
 #include "core/emulator_settings.h"
@@ -226,6 +228,49 @@ static int InitDialogInternalWithClient(OrbisImeDialogParam* param, OrbisImePara
     }
 
     return static_cast<int>(Error::OK);
+}
+
+// Husk's keyboard answers on its UI thread; the answer waits here and is applied on the game's thread
+// when it next asks for the dialog's status. Each dialog has a generation, so an answer for one the
+// game has already closed is dropped.
+static std::mutex g_host_text_mutex;
+static std::uintptr_t g_host_text_generation = 0;
+static bool g_host_text_ready = false;
+static bool g_host_text_cancelled = false;
+static std::string g_host_text;
+
+static void OnHostText(void* ctx, const char* text) {
+    std::scoped_lock lock{g_host_text_mutex};
+    if (reinterpret_cast<std::uintptr_t>(ctx) != g_host_text_generation) {
+        return;
+    }
+    g_host_text_ready = true;
+    g_host_text_cancelled = text == nullptr;
+    g_host_text = text != nullptr ? text : "";
+}
+
+static void ForgetHostText() {
+    std::scoped_lock lock{g_host_text_mutex};
+    ++g_host_text_generation;
+    g_host_text_ready = false;
+}
+
+static void ApplyHostText() {
+    std::scoped_lock lock{g_host_text_mutex};
+    if (!g_host_text_ready || g_ime_dlg_status != OrbisImeDialogStatus::Running) {
+        return;
+    }
+    g_host_text_ready = false;
+    if (!g_host_text_cancelled) {
+        g_ime_dlg_state.SetText(g_host_text);
+    }
+    g_ime_dlg_result.endstatus =
+        g_host_text_cancelled ? OrbisImeDialogEndStatus::UserCanceled : OrbisImeDialogEndStatus::Ok;
+    g_ime_dlg_status = OrbisImeDialogStatus::Finished;
+    if (g_ime_dlg_client) {
+        g_ime_dlg_client->dialog_state = 5;
+    }
+    LOG_INFO(Lib_ImeDialog, "Hosted: the player {}", g_host_text_cancelled ? "cancelled" : "typed the text");
 }
 
 static void CommitDialogResultIfNeeded() {
@@ -583,6 +628,7 @@ Error PS4_SYSV_ABI sceImeDialogForceClose() {
     if (g_ime_dlg_ext_keyboard_filter_active) {
         NotifyExtKeyboardFilterState(false);
     }
+    ForgetHostText();
     g_ime_dlg_status = OrbisImeDialogStatus::None;
     g_ime_dlg_ui = ImeDialogUi();
     g_ime_dlg_state = ImeDialogState();
@@ -957,6 +1003,7 @@ OrbisImeDialogStatus PS4_SYSV_ABI sceImeDialogGetStatus() {
         LOG_DEBUG(Lib_ImeDialog, "GetStatus -> None (no client)");
         return OrbisImeDialogStatus::None;
     }
+    ApplyHostText();
 
     if (g_ime_dlg_client->dialog_state == 5) {
         g_ime_dlg_status = OrbisImeDialogStatus::Finished;
@@ -1038,11 +1085,24 @@ static Error SetupDialogState(OrbisImeDialogParam* param, OrbisImeParamExtended*
     if (g_ime_dlg_client) {
         g_ime_dlg_client->dialog_state = 4;
     }
-    g_ime_dlg_ui = ImeDialogUi(&g_ime_dlg_state, &g_ime_dlg_status, &g_ime_dlg_result);
-
     if (Frontend::IsHuskHosted()) {
-        // Husk has no keyboard for this dialog yet: accept it at once with the game's own text,
-        // or a name when the field starts empty (a character or world name).
+        // Husk's keyboard: the dialog stays Running until the player answers (see ApplyHostText).
+        ForgetHostText();
+        std::uintptr_t generation;
+        {
+            std::scoped_lock lock{g_host_text_mutex};
+            generation = g_host_text_generation;
+        }
+        const std::string title{g_ime_dlg_state.Title()};
+        const std::string initial{g_ime_dlg_state.Text()};
+        if (Frontend::RequestHostText(title.c_str(), initial.c_str(),
+                                      g_ime_dlg_state.MaxTextLength(), &OnHostText,
+                                      reinterpret_cast<void*>(generation))) {
+            LOG_INFO(Lib_ImeDialog, "Hosted: asked Husk's keyboard for the text");
+            return Error::OK;
+        }
+        // No keyboard to ask: accept it at once with the game's own text, or a name when the field
+        // starts empty (a character or world name).
         g_ime_dlg_state.UseTextOrFallback("Hunter");
         g_ime_dlg_result.endstatus = OrbisImeDialogEndStatus::Ok;
         g_ime_dlg_status = OrbisImeDialogStatus::Finished;
@@ -1052,6 +1112,7 @@ static Error SetupDialogState(OrbisImeDialogParam* param, OrbisImeParamExtended*
         LOG_WARNING(Lib_ImeDialog, "Hosted: dialog accepted without a keyboard");
         return Error::OK;
     }
+    g_ime_dlg_ui = ImeDialogUi(&g_ime_dlg_state, &g_ime_dlg_status, &g_ime_dlg_result);
 
     LOG_INFO(Lib_ImeDialog, "sceImeDialogInit: successful, status now=Running");
     return Error::OK;
@@ -1354,6 +1415,7 @@ Error PS4_SYSV_ABI sceImeDialogTerm() {
     if (g_ime_dlg_ext_keyboard_filter_active) {
         NotifyExtKeyboardFilterState(false);
     }
+    ForgetHostText();
     g_ime_dlg_status = OrbisImeDialogStatus::None;
     g_ime_dlg_ui = ImeDialogUi();
     g_ime_dlg_state = ImeDialogState();
