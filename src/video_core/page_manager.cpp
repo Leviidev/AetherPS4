@@ -297,6 +297,13 @@ struct PageManager::Impl {
             if ((info.protection & needed) == needed) {
                 return true;
             }
+            // The GPU thread can protect the page again right after this fault's invalidation lifted
+            // it (it re-tracks a buffer it just uploaded), and the access then never gets through by
+            // waiting alone: release the host page's watchers again every 2 ms.
+            if (is_write && i % 20 == 19 && rasterizer != nullptr) {
+                const VAddr host_page = addr & ~static_cast<VAddr>(16_KB - 1);
+                rasterizer->InvalidateMemory(host_page, 16_KB);
+            }
             usleep(100);
         }
         LOG_CRITICAL(Render, "Fault at {:#x} (write={}) still not allowed after waiting", addr, is_write);
