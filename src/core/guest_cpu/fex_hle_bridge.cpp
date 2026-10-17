@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: MIT
 
+#include <vector>
+#include <string>
+#include <cstdlib>
+#include <unordered_map>
 #include "fex_hle_bridge.h"
 
 #include <algorithm>
@@ -9,6 +13,8 @@
 #include <cstdio>
 #include <exception>
 #include <mutex>
+
+#include <fmt/format.h>
 #include "common/assert.h"
 #include "common/logging/log.h"
 
@@ -59,6 +65,47 @@ HleGuestBridge::HleGuestBridge(HleCallRegistry& registry_, RangeValidator valida
     : registry{registry_}, validator{validator_}, validator_context{validator_context_},
       reporter{reporter_}, reporter_context{reporter_context_},
       executable_query{executable_query_}, executable_query_context{executable_query_context_} {}
+
+namespace {
+// AETHER_HLE_PROFILE=1: wall time spent in each HLE function (waits included), the 15 largest
+// logged every 10 s; finds which library call a busy guest thread is sitting in.
+bool HleProfileEnabled() {
+    static const bool enabled = std::getenv("AETHER_HLE_PROFILE") != nullptr;
+    return enabled;
+}
+void HleProfileRecord(const void* key, std::string_view name, u64 ns) {
+    struct Entry {
+        std::string_view name;
+        u64 calls = 0, ns = 0;
+    };
+    static std::mutex mutex;
+    static std::unordered_map<const void*, Entry> entries;
+    static u64 last_report = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+    std::vector<Entry> top;
+    {
+        std::scoped_lock lock{mutex};
+        auto& e = entries[key];
+        e.name = name;
+        ++e.calls;
+        e.ns += ns;
+        const u64 now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+        if (now - last_report < 10'000'000'000ull) {
+            return;
+        }
+        last_report = now;
+        for (const auto& [k, v] : entries) {
+            top.push_back(v);
+        }
+        entries.clear();
+    }
+    std::sort(top.begin(), top.end(), [](const Entry& a, const Entry& b) { return a.ns > b.ns; });
+    std::string line;
+    for (size_t i = 0; i < top.size() && i < 15; ++i) {
+        line += fmt::format(" | {} {}x {}ms", top[i].name, top[i].calls, top[i].ns / 1'000'000);
+    }
+    LOG_WARNING(Core, "HLE time in the last 10 s:{}", line);
+}
+} // namespace
 
 AetherPS4::Fex::EngineResult<bool> HleGuestBridge::Invoke(HleCallFrame& frame) {
     const auto adapter = registry.Find(frame.operation);
@@ -118,8 +165,13 @@ AetherPS4::Fex::EngineResult<bool> HleGuestBridge::Invoke(HleCallFrame& frame) {
     // allocation site downstream of it catches all of them at once, and logs enough to identify
     // the actual next one immediately instead of costing another full log-analysis cycle.
     HleCallResult result{false};
+    const u64 profile_start = HleProfileEnabled() ? clock_gettime_nsec_np(CLOCK_UPTIME_RAW) : 0;
     try {
         result = adapter->Invoke(frame);
+        if (profile_start != 0) {
+            HleProfileRecord(adapter.get(), adapter->Name(),
+                             clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - profile_start);
+        }
     } catch (const std::exception& e) {
         LOG_CRITICAL(Debug,
                      "BACHATA_HLE_INVOKE_THREW: operation={} name={} what=\"{}\"",
