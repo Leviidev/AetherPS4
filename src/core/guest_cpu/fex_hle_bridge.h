@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
+#include <atomic>
 #include "core/fex/fex_guest_engine.h"
 #include "hle_call_adapter.h"
 
@@ -51,6 +52,7 @@ private:
     void* executable_query_context;
     mutable std::shared_mutex host_range_mutex;
     std::vector<HostRange> host_ranges;
+    std::atomic<std::size_t> host_range_count{0};
 };
 
 } // namespace Core::GuestCpu

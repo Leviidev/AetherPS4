@@ -108,7 +108,7 @@ void HleProfileRecord(const void* key, std::string_view name, u64 ns) {
 } // namespace
 
 AetherPS4::Fex::EngineResult<bool> HleGuestBridge::Invoke(HleCallFrame& frame) {
-    const auto adapter = registry.Find(frame.operation);
+    HleCallAdapter* const adapter = registry.FindFast(frame.operation);
     if (adapter == nullptr) {
         const HleCallFailure failure{ENOSYS, "unregistered HLE operation"};
         Report(failure);
@@ -125,7 +125,10 @@ AetherPS4::Fex::EngineResult<bool> HleGuestBridge::Invoke(HleCallFrame& frame) {
     // during the first 256 total calls -- like whatever void(void*) HLE function corrupted the
     // host allocator during Journey's actual gameplay -- still gets its one, only log line
     // whenever it first runs, no matter how deep into the session that is.
-    const bool trace = !adapter->traced_once.exchange(true, std::memory_order_relaxed);
+    // Read before writing: an exchange on every call keeps a hot adapter's cache line moving
+    // between the threads calling it.
+    const bool trace = !adapter->traced_once.load(std::memory_order_relaxed) &&
+                       !adapter->traced_once.exchange(true, std::memory_order_relaxed);
     if (trace) {
         std::fprintf(stderr, "BACHATA_FEX_HLE_BEGIN operation=%llu name=%.*s rsp=%#llx\n",
                      static_cast<unsigned long long>(frame.operation),
@@ -169,7 +172,7 @@ AetherPS4::Fex::EngineResult<bool> HleGuestBridge::Invoke(HleCallFrame& frame) {
     try {
         result = adapter->Invoke(frame);
         if (profile_start != 0) {
-            HleProfileRecord(adapter.get(), adapter->Name(),
+            HleProfileRecord(adapter, adapter->Name(),
                              clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - profile_start);
         }
     } catch (const std::exception& e) {
@@ -245,6 +248,7 @@ bool HleGuestBridge::PublishHostRange(void* context, std::uintptr_t address, std
         return false;
     }
     bridge->host_ranges.push_back(range);
+    bridge->host_range_count.store(bridge->host_ranges.size(), std::memory_order_release);
     return true;
 }
 
@@ -259,6 +263,7 @@ bool HleGuestBridge::RevokeHostRange(void* context, std::uintptr_t address) {
         return false;
     }
     bridge->host_ranges.erase(range);
+    bridge->host_range_count.store(bridge->host_ranges.size(), std::memory_order_release);
     return true;
 }
 
@@ -268,6 +273,10 @@ bool HleGuestBridge::ValidatePublishedHostRange(std::uintptr_t address, std::siz
         return false;
     }
     const auto end = address + size;
+    // Almost always nothing is published: skip the lock (every guest memcpy validates two ranges)
+    if (host_range_count.load(std::memory_order_acquire) == 0) {
+        return false;
+    }
     std::shared_lock lock{host_range_mutex};
     return std::ranges::any_of(host_ranges, [&](const HostRange& range) {
         return range.begin <= address && end <= range.end && (!writable || range.writable);

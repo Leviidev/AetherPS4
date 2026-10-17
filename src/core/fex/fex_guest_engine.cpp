@@ -382,7 +382,12 @@ void HleStallWatchdogThread() {
     // or the thread has no active FEX context at all (already exited or never started).
     EnsureGuestRipSamplerInstalled();
     void* raw_impl = g_guest_engine_impl_for_diagnostics.load(std::memory_order_acquire);
-    static constexpr const char* kSampleTargets[] = {"Game:Main", "[RAGE] RenderThread"};
+    // AETHER_RIP_SAMPLE_THREAD=<guest thread name> samples that thread instead of RAGE's
+    static const char* const kSecondTarget = [] {
+      const char* v = std::getenv("AETHER_RIP_SAMPLE_THREAD");
+      return v != nullptr && v[0] != 0 ? v : "[RAGE] RenderThread";
+    }();
+    const char* const kSampleTargets[] = {"Game:Main", kSecondTarget};
     for (int which = 0; which < 2; ++which) {
       const pthread_t handle =
           GuestEngine::FindGuestThreadHandleByName(raw_impl, kSampleTargets[which]);
@@ -434,9 +439,16 @@ bool IsCurrentThreadGameMain() {
 // point for other threads that later rename themselves. Re-checking the name (cheap: one
 // pthread_getname_np, no allocation) on every call is the correct tradeoff here.
 bool IsCurrentThreadRenderingThread() {
-  char name[64] = {};
-  pthread_getname_np(pthread_self(), name, sizeof(name));
-  return std::strcmp(name, "RenderingThread") == 0;
+  // Asked on every HLE call (~200k a second in Bloodborne): look at the name again only every
+  // 1024 calls, which still catches UE4 naming the thread after it starts.
+  thread_local bool cached = false;
+  thread_local unsigned calls = 0;
+  if ((calls++ & 1023) == 0) {
+    char name[64] = {};
+    pthread_getname_np(pthread_self(), name, sizeof(name));
+    cached = std::strcmp(name, "RenderingThread") == 0;
+  }
+  return cached;
 }
 
 void SafepointSignalHandler(int, siginfo_t*, void* rawContext) noexcept {
