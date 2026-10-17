@@ -4,6 +4,7 @@
 #include "hle_call_adapter.h"
 
 #include <cerrno>
+#include <span>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -20,6 +21,9 @@ std::shared_ptr<HleCallAdapter> HleCallRegistry::Register(std::shared_ptr<HleCal
     }
     adapter->AssignOperation(next_operation++, name);
     adapters.emplace_back(adapter);
+    if (adapter->Operation() < fast.size()) {
+        fast[adapter->Operation()].store(adapter.get(), std::memory_order_release);
+    }
     return adapter;
 }
 
@@ -61,6 +65,30 @@ HleVeneerResult HleVeneerAllocator::Allocate(const HleCallAdapter& adapter) {
     const auto operation_offset = sizeof(preserve_fourth_argument) + sizeof(prefix);
     std::memcpy(code + operation_offset, &operation, sizeof(operation));
     std::memcpy(code + operation_offset + sizeof(operation), suffix, sizeof(suffix));
+
+    // memcpy and memset as guest x86 instead of a call out: Bloodborne makes ~150k of them a
+    // second, and FEX turns rep movsb/stosb into a native copy without leaving the JIT, where the
+    // bridge's round trip costs more than a small copy. The SysV ABI has DF clear on entry.
+    // AETHER_HLE_INLINE_MEM=0 sends them through the bridge again.
+    static const bool inline_mem = [] {
+        const char* v = std::getenv("AETHER_HLE_INLINE_MEM");
+        return v == nullptr || v[0] != '0';
+    }();
+    if (inline_mem) {
+        // mov rax, rdi; mov rcx, rdx; rep movsb; ret
+        static constexpr u8 memcpy_body[]{0x48, 0x89, 0xf8, 0x48, 0x89, 0xd1, 0xf3, 0xa4, 0xc3};
+        // mov r8, rdi; mov eax, esi; mov rcx, rdx; rep stosb; mov rax, r8; ret
+        static constexpr u8 memset_body[]{0x49, 0x89, 0xf8, 0x89, 0xf0, 0x48, 0x89, 0xd1,
+                                          0xf3, 0xaa, 0x4c, 0x89, 0xc0, 0xc3};
+        const auto name = adapter.Name();
+        const auto body = name.starts_with("Q3VBxCXhUHs#") ? std::span<const u8>{memcpy_body}
+                          : name.starts_with("8zTFvBIAIN8#") ? std::span<const u8>{memset_body}
+                                                             : std::span<const u8>{};
+        if (!body.empty()) {
+            std::memset(code, 0xcc, sizeof(code));
+            std::memcpy(code, body.data(), body.size());
+        }
+    }
 
     u64 address;
 #if defined(AETHER_PHONE_PATH)

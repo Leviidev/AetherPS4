@@ -93,8 +93,17 @@ public:
     std::shared_ptr<HleCallAdapter> Register(std::shared_ptr<HleCallAdapter> adapter,
                                              std::string_view name);
     [[nodiscard]] std::shared_ptr<HleCallAdapter> Find(u64 operation) const;
+    /// The adapter for an operation without a lock or a reference count: every guest HLE call
+    /// looks one up (Bloodborne makes ~200k a second), and adapters live as long as the registry.
+    [[nodiscard]] HleCallAdapter* FindFast(u64 operation) const {
+        if (operation != 0 && operation < fast.size()) {
+            return fast[operation].load(std::memory_order_acquire);
+        }
+        return Find(operation).get();
+    }
 
 private:
+    std::array<std::atomic<HleCallAdapter*>, 32768> fast{};
     mutable std::shared_mutex registry_mutex;
     u64 next_operation{1};
     std::vector<std::shared_ptr<HleCallAdapter>> adapters;
