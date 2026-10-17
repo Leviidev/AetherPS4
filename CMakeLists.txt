@@ -1652,33 +1652,6 @@ if (ENABLE_SHADPS4_IOS_LIB)
             src/core/ios/ios_jit_allocator.h
         )
 
-        # PKG extraction (bachata_pkg_probe/bachata_pkg_extract) -- ported from
-        # tools/pkg-extract/ (itself ported from the Bachata Android runtime's
-        # JNI module), since neither shadps4_run() nor anything else in this
-        # tree can turn a raw, encrypted .pkg into the extracted eboot.bin +
-        # sce_sys/ directory it actually needs. See src/core/pkg_extract/pkg_extractor.h
-        # for the C API surface. Not compiled with BACHATA_HAVE_LIBDEFLATE, so
-        # PFSC block decompression falls back to the already-linked ZLIB::ZLIB
-        # instead of pulling in a new dependency.
-        target_sources(shadps4_ios PRIVATE
-            src/core/pkg_extract/aes.c
-            src/core/pkg_extract/aes.h
-            src/core/pkg_extract/aes_neon.h
-            src/core/pkg_extract/keys.h
-            src/core/pkg_extract/pfs.h
-            src/core/pkg_extract/pkg_crypto.cpp
-            src/core/pkg_extract/pkg_crypto.h
-            src/core/pkg_extract/pkg_extractor.cpp
-            src/core/pkg_extract/pkg_extractor.h
-            src/core/pkg_extract/pkg_rsa_native.cpp
-            src/core/pkg_extract/pkg_rsa_native.h
-            src/core/pkg_extract/pkg_type.cpp
-            src/core/pkg_extract/pkg_type.h
-            src/core/pkg_extract/types.h
-        )
-        # LibreSSL's BN_* (RSA modexp) comes in transitively via Cpp_Httplib,
-        # already linked into shadps4_ios below.
-
         # System module import (bachata_sysmodules_import_zip): lets the app extract a
         # user-picked ZIP of dumped, real PS4 system modules (.sprx files -- Sony-provided
         # code shadPS4 can't legally ship, must be dumped from the user's own console)
@@ -1698,6 +1671,34 @@ if (ENABLE_SHADPS4_IOS_LIB)
             src/core/user_profile_bridge/user_profile_bridge.h
         )
     endif()
+
+    # PKG extraction (bachata_pkg_probe/bachata_pkg_extract), on iOS and on the Mac phone
+    # path for libhuskps4's install_package -- ported from
+    # tools/pkg-extract/ (itself ported from the Bachata Android runtime's
+    # JNI module), since neither shadps4_run() nor anything else in this
+    # tree can turn a raw, encrypted .pkg into the extracted eboot.bin +
+    # sce_sys/ directory it actually needs. See src/core/pkg_extract/pkg_extractor.h
+    # for the C API surface. Not compiled with BACHATA_HAVE_LIBDEFLATE, so
+    # PFSC block decompression falls back to the already-linked ZLIB::ZLIB
+    # instead of pulling in a new dependency.
+    target_sources(shadps4_ios PRIVATE
+        src/core/pkg_extract/aes.c
+        src/core/pkg_extract/aes.h
+        src/core/pkg_extract/aes_neon.h
+        src/core/pkg_extract/keys.h
+        src/core/pkg_extract/pfs.h
+        src/core/pkg_extract/pkg_crypto.cpp
+        src/core/pkg_extract/pkg_crypto.h
+        src/core/pkg_extract/pkg_extractor.cpp
+        src/core/pkg_extract/pkg_extractor.h
+        src/core/pkg_extract/pkg_rsa_native.cpp
+        src/core/pkg_extract/pkg_rsa_native.h
+        src/core/pkg_extract/pkg_type.cpp
+        src/core/pkg_extract/pkg_type.h
+        src/core/pkg_extract/types.h
+    )
+    # LibreSSL's BN_* (RSA modexp) comes in transitively via Cpp_Httplib,
+    # already linked into shadps4_ios below.
 
     create_target_directory_groups(shadps4_ios)
 

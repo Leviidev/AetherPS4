@@ -10,11 +10,14 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <filesystem>
+#include <unistd.h>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -23,6 +26,7 @@
 
 #include "common/phone_path.h"
 #include "core/ios/ios_jit_allocator.h"
+#include "core/pkg_extract/pkg_extractor.h"
 #include "platform/husk/host_surface.h"
 #include "platform/ios/shadps4_ios_api.h"
 
@@ -208,6 +212,60 @@ int TakePendingRestart(char* path, int path_size, char* args, int args_size) {
     return shadps4_take_pending_restart(path, path_size, args, args_size);
 }
 
+// A package through the extractor AetherPS4 imports with (core/pkg_extract): it opens fake
+// packages with the published fake-package keys and refuses the rest.
+struct PackageProgress {
+    void (*fn)(void*, uint64_t, uint64_t);
+    void* ctx;
+};
+
+int InstallPackage(const char* package, const char* dest_dir,
+                   void (*progress)(void* ctx, uint64_t done, uint64_t total), void* ctx, char* err,
+                   int err_size) {
+    auto fail = [&](const char* message) {
+        if (err != nullptr && err_size > 0) {
+            std::snprintf(err, err_size, "%s", message);
+        }
+        return 1;
+    };
+    if (package == nullptr || dest_dir == nullptr) {
+        return fail("missing arguments");
+    }
+    const int fd = open(package, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        char message[160];
+        std::snprintf(message, sizeof(message), "the package could not be opened: %s", std::strerror(errno));
+        return fail(message);
+    }
+    BachataPkgProbe probe{};
+    const int probed = bachata_pkg_probe(fd, &probe);
+    if (probed != 0) {
+        close(fd);
+        return fail(probed == 1 ? "this package is locked with a passcode"
+                    : probe.message[0] == 0 || std::strcmp(probe.message, "Invalid PKG header") == 0
+                        ? "this is not a PS4 package"
+                        : "this is a retail package, which only a PS4 can open; use a fake package (fPKG) or the game's extracted folder");
+    }
+    PackageProgress p{progress, ctx};
+    const int extracted = bachata_pkg_extract(
+        fd, dest_dir, nullptr,
+        progress == nullptr ? nullptr
+                            : +[](void* c, uint64_t done, uint64_t total, const char*) {
+                                  auto* pp = static_cast<PackageProgress*>(c);
+                                  pp->fn(pp->ctx, done, total);
+                              },
+        &p);
+    close(fd);
+    if (extracted != 0) {
+        std::error_code ec;
+        std::filesystem::remove_all(dest_dir, ec);
+        return fail(extracted == 1   ? "this package is locked with a passcode"
+                    : extracted == 2 ? "the install was cancelled"
+                                     : "the package could not be extracted (is there enough space?)");
+    }
+    return 0;
+}
+
 const HuskConsoleModuleV1 kModule{
     .struct_size = sizeof(HuskConsoleModuleV1),
     .version = HUSK_CONSOLE_ABI_VERSION,
@@ -222,6 +280,7 @@ const HuskConsoleModuleV1 kModule{
     .resize = Resize,
     .stop = Stop,
     .take_pending_restart = TakePendingRestart,
+    .install_package = InstallPackage,
 };
 
 } // namespace

@@ -108,6 +108,16 @@ typedef struct HuskConsoleModuleV1 {
     /* After STOPPED: when the game asked to start another executable (sceSystemServiceLoadExec),
      * its path and '\n'-joined args are copied out and 1 is returned; else 0. */
     int (*take_pending_restart)(char *path, int path_size, char *args, int args_size);
+
+    /* Extracts a package file (.pkg) into dest_dir, which it creates: eboot.bin and sce_sys/ for
+     * a game, the changed files for an update. Needs no init and no running game, and runs on the
+     * caller's thread. Only packages that open without a console's own keys install (fake
+     * packages and homebrew); a retail package is refused. progress(ctx, done, total) may be
+     * NULL. Returns 0 when extracted; else copies a message to err and returns nonzero.
+     * Absent from modules built before it: struct_size says. */
+    int (*install_package)(const char *package, const char *dest_dir,
+                           void (*progress)(void *ctx, uint64_t done, uint64_t total), void *ctx,
+                           char *err, int err_size);
 } HuskConsoleModuleV1;
 
 /* The module's one exported symbol. Returns NULL when it cannot run in this process. */
