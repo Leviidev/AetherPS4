@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <cstdlib>
+
 #include "common/div_ceil.h"
 #include "common/logging/log.h"
 #include "core/emulator_settings.h"
@@ -131,6 +133,41 @@ public:
             }
         }
 
+        if constexpr (type == Type::CPU) {
+            // Uploads: runs up to 64 KB apart become one copy when nothing between them is GPU
+            // written (those pages already match on the GPU, so copying them again is only
+            // redundant). Metal pays per copy region: Bloodborne's frames carried thousands of
+            // small ones and the driver's per-copy resource tracking ran its command thread flat.
+            // Off by default (AETHER_UPLOAD_MERGE=1 turns it on): with it Bloodborne's threads queued
+            // on the region locks it holds longer (3.2 fps against 5-6).
+            static const bool merge = [] {
+                const char* v = std::getenv("AETHER_UPLOAD_MERGE");
+                return v != nullptr && v[0] == '1';
+            }();
+            constexpr size_t merge_gap_pages = 16;
+            if (merge) {
+                const RegionBits& gpu_bits = GetRegionBits<Type::GPU>();
+                size_t run_start = NUM_PAGES_PER_REGION, run_end = 0;
+                for (const auto& [start, end] : mask) {
+                    if (run_start != NUM_PAGES_PER_REGION && start - run_end <= merge_gap_pages &&
+                        !RegionBits(gpu_bits, run_end, start).Any()) {
+                        run_end = end;
+                        continue;
+                    }
+                    if (run_start != NUM_PAGES_PER_REGION) {
+                        func(cpu_addr + run_start * TRACKER_BYTES_PER_PAGE,
+                             (run_end - run_start) * TRACKER_BYTES_PER_PAGE);
+                    }
+                    run_start = start;
+                    run_end = end;
+                }
+                if (run_start != NUM_PAGES_PER_REGION) {
+                    func(cpu_addr + run_start * TRACKER_BYTES_PER_PAGE,
+                         (run_end - run_start) * TRACKER_BYTES_PER_PAGE);
+                }
+                return;
+            }
+        }
         for (const auto& [start, end] : mask) {
             func(cpu_addr + start * TRACKER_BYTES_PER_PAGE, (end - start) * TRACKER_BYTES_PER_PAGE);
         }
