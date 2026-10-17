@@ -54,6 +54,7 @@
 #include "core/memory.h"
 #include "core/user_settings.h"
 #include "emulator.h"
+#include "platform/husk/host_surface.h"
 #include "video_core/cache_storage.h"
 #include "video_core/renderdoc.h"
 
@@ -334,6 +335,11 @@ void Emulator::PrepareWindow(std::filesystem::path file, std::vector<std::string
     }
 
     EmulatorSettings.Load(id);
+    // Hosted in Husk (a phone): keep compiled shaders and pipelines between launches, so a game
+    // compiles each one once instead of on every start. Set after Load, over a saved config.
+    if (Frontend::IsHuskHosted()) {
+        EmulatorSettings.SetPipelineCacheEnabled(true);
+    }
     // Switch to configured log
     Common::Log::Switch((!id.empty() && EmulatorSettings.IsLogSeparate()) ? id + ".log"
                                                                           : "shad_log.txt");
