@@ -95,9 +95,12 @@ void CommandPool::Allocate(std::size_t begin, std::size_t end) {
         device.allocateCommandBuffers(&buffer_alloc_info, cmd_buffers.data() + begin);
     ASSERT(result == vk::Result::eSuccess);
 
+#ifndef __APPLE__
+    // MoltenVK labels every Metal encoder of a named command buffer (~4% CPU per frame in Bloodborne): left unnamed there
     for (std::size_t i = begin; i < end; ++i) {
         SetObjectName(device, cmd_buffers[i], "CommandPool: Command Buffer {}", i);
     }
+#endif
 }
 
 vk::CommandBuffer CommandPool::Commit() {

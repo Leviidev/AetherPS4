@@ -1070,6 +1070,16 @@ RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
         state.num_layers = 1;
     }
 
+    // Draws with no pixel shader and no attachments (vertex shaders that only write memory) make no visible fragments, but
+    // the render area stayed at the device maximum (16384x16384): Apple's tiler walks ~260k tiles for each such pass, ~6 ms
+    // per frame in Bloodborne's city on an M4 Max (bbport's macOS port). A tiny area keeps the vertex work.
+    if (state.num_color_attachments == 0 && !state.depth_stencil_attachment.has_depth &&
+        !state.depth_stencil_attachment.has_stencil &&
+        pipeline->GetStages()[u32(Shader::LogicalStage::Fragment)] == nullptr) {
+        state.width = 16;
+        state.height = 16;
+    }
+
     return state;
 }
 

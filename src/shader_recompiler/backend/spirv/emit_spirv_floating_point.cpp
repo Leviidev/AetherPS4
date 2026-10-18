@@ -4,10 +4,30 @@
 #include "shader_recompiler/backend/spirv/emit_spirv_instructions.h"
 #include "shader_recompiler/backend/spirv/spirv_emit_context.h"
 
+#include <cstdlib>
+#include <cstring>
+
 namespace Shader::Backend::SPIRV {
 
+// NoContraction ("precise") only where results must match across shaders: positions, so depth prepasses and later passes
+// agree. SPIRV-Cross turns each precise add, multiply and FMA into a call to an [[clang::optnone]] helper that the Metal
+// compiler cannot optimize; on fragment and compute shaders that cost Bloodborne 19.6 -> 12.1 ms of GPU time per frame on an
+// M4 Max (bbport's macOS port). AETHER_SPIRV_PRECISE=all puts it back everywhere, =none nowhere (with a fresh shader cache).
+static int PreciseMode() {
+    static const int mode = [] {
+        const char* env = std::getenv("AETHER_SPIRV_PRECISE");
+        return !env ? 0 : !std::strcmp(env, "all") ? 1 : !std::strcmp(env, "none") ? 2 : 0;
+    }();
+    return mode;
+}
+
 Id Decorate(EmitContext& ctx, IR::Inst* inst, Id op) {
-    ctx.Decorate(op, spv::Decoration::NoContraction);
+    if (PreciseMode() == 2) {
+        return op;
+    }
+    if (PreciseMode() == 1 || (ctx.stage != Stage::Fragment && ctx.stage != Stage::Compute)) {
+        ctx.Decorate(op, spv::Decoration::NoContraction);
+    }
     return op;
 }
 

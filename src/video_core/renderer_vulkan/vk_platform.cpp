@@ -428,6 +428,16 @@ vk::UniqueInstance CreateInstance(Frontend::WindowSystemType window_type, bool e
         },
     };
 
+#ifdef __APPLE__
+    // MoltenVK reads these when the first instance is made; the environment overrides them (bbport's macOS port measured both
+    // on Bloodborne): Metal commands encoded while they are recorded instead of all at once inside the flip's submit (late
+    // frames ~6x fewer), and push descriptors bound directly instead of through Metal argument buffers (+13-16% FPS).
+    setenv("MVK_CONFIG_PREFILL_METAL_COMMAND_BUFFERS", "2", 0);
+    setenv("MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS", "0", 0);
+    LOG_INFO(Render_Vulkan, "MoltenVK: prefilled command buffers {}, Metal argument buffers {}",
+             std::getenv("MVK_CONFIG_PREFILL_METAL_COMMAND_BUFFERS"),
+             std::getenv("MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS"));
+#endif
     auto [instance_result, instance] = vk::createInstanceUnique(instance_ci_chain.get());
     ASSERT_MSG(instance_result == vk::Result::eSuccess, "Failed to create instance: {}",
                vk::to_string(instance_result));
