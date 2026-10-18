@@ -835,14 +835,29 @@ struct AddressSpace::Impl {
         // mmap(MAP_SHARED, fd, offset) from multiple places (see backing_fd's reuse in Map())
         // all alias the same physical pages, which is the whole reason this isn't just
         // MAP_ANONYMOUS.
-        const char* tmp_dir = getenv("TMPDIR");
-        const auto shm_path = fmt::format("{}/BackingDmem{}", tmp_dir != nullptr ? tmp_dir : "/tmp", getpid());
-        backing_fd = open(shm_path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
-        if (backing_fd < 0) {
-            LOG_CRITICAL(Kernel_Vmm, "open (iOS shared-memory workaround) failed: {}", strerror(errno));
-            throw std::bad_alloc{};
+        // A file-backed dmem is paged to disk instead of compressed under memory pressure.
+        // AETHER_DMEM_SHM=1 (macOS only, measuring) uses POSIX shared memory like the desktop build.
+        backing_fd = -1;
+#if !TARGET_OS_IPHONE
+        if (const char* shm = getenv("AETHER_DMEM_SHM"); shm != nullptr && shm[0] == '1') {
+            const auto name = fmt::format("/BackingDmem{}", getpid());
+            backing_fd = shm_open(name.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
+            if (backing_fd >= 0) {
+                shm_unlink(name.c_str());
+            }
+            LOG_INFO(Kernel_Vmm, "dmem backing: shared memory {}", backing_fd >= 0 ? "ok" : "failed, using a file");
         }
-        unlink(shm_path.c_str());
+#endif
+        if (backing_fd < 0) {
+            const char* tmp_dir = getenv("TMPDIR");
+            const auto shm_path = fmt::format("{}/BackingDmem{}", tmp_dir != nullptr ? tmp_dir : "/tmp", getpid());
+            backing_fd = open(shm_path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
+            if (backing_fd < 0) {
+                LOG_CRITICAL(Kernel_Vmm, "open (iOS shared-memory workaround) failed: {}", strerror(errno));
+                throw std::bad_alloc{};
+            }
+            unlink(shm_path.c_str());
+        }
 #elif defined(__APPLE__)
         const auto shm_path = fmt::format("/BackingDmem{}", getpid());
         backing_fd = shm_open(shm_path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);

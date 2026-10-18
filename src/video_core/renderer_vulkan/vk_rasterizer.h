@@ -63,6 +63,7 @@ public:
     bool InvalidateMemory(VAddr addr, u64 size);
     /// A CPU write faulted at addr: invalidate it, and the buffer memory around it (see s_fault_window)
     bool InvalidateMemoryOnFault(VAddr addr);
+    u32 draws_since_flush = 0;
     bool ReadMemory(VAddr addr, u64 size);
     bool IsMapped(VAddr addr, u64 size);
     void MapMemory(VAddr addr, u64 size);

@@ -286,6 +286,13 @@ private:
     RangeSet gpu_modified_ranges;
     SplitRangeMap<BufferId> buffer_ranges;
     PageTable page_table;
+public:
+    struct UploadStats {
+        u64 calls = 0, regions = 0, bytes = 0, written = 0, pass_breaks = 0, stream_bytes = 0, stream_calls = 0;
+        u64 by_size[3]{};
+    } upload_stats;
+private:
+    bool uploading_indices = false;
 };
 
 } // namespace VideoCore

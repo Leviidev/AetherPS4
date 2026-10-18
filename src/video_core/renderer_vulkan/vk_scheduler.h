@@ -372,6 +372,7 @@ public:
 
     /// Ends current rendering scope.
     void EndRendering();
+    bool IsRendering() const { return is_rendering; }
 
     /// Returns the current render state.
     const RenderState& GetRenderState() const {

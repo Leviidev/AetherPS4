@@ -3,6 +3,7 @@
 
 #include "common/phone_path.h"
 #include <algorithm>
+#include <cstdlib>
 #include <bit>
 #include <chrono>
 #include "common/alignment.h"
@@ -292,7 +293,9 @@ void BufferCache::BindIndexBuffer(u32 index_offset) {
 
     // Bind index buffer.
     const u32 index_buffer_size = regs.num_indices * index_size;
+    uploading_indices = true;
     const auto [vk_buffer, offset] = ObtainBuffer(index_address, index_buffer_size, false);
+    uploading_indices = false;
     const auto cmdbuf = scheduler.CommandBuffer();
     cmdbuf.bindIndexBuffer(vk_buffer->Handle(), offset, index_type);
 }
@@ -477,6 +480,8 @@ std::pair<Buffer*, u32> BufferCache::ObtainBuffer(VAddr device_addr, u32 size, b
     // For read-only buffers use device local stream buffer to reduce renderpass breaks.
     if (!is_written && size <= CACHING_PAGESIZE && !IsRegionGpuModified(device_addr, size)) {
         const u64 offset = stream_buffer.Copy(device_addr, size, instance.UniformMinAlignment());
+        ++upload_stats.stream_calls;
+        upload_stats.stream_bytes += size;
         return {&stream_buffer, offset};
     }
     if (IsBufferInvalid(buffer_id)) {
@@ -1021,9 +1026,23 @@ bool BufferCache::SynchronizeBuffer(Buffer& buffer, VAddr device_addr, u32 size,
             copies.emplace_back(total_size_bytes, device_addr_out - buffer_start, range_size);
             total_size_bytes += range_size;
         },
-        [&] { src_buffer = UploadCopies(buffer, copies, total_size_bytes); });
+        [&] {
+            // AETHER_SKIP_UPLOADS=1 (measurement only, the picture is wrong): no buffer uploads but index buffers
+            static const bool skip = std::getenv("AETHER_SKIP_UPLOADS") != nullptr;
+            if (!skip || uploading_indices) {
+                src_buffer = UploadCopies(buffer, copies, total_size_bytes);
+            }
+        });
 
     if (src_buffer) {
+        ++upload_stats.calls;
+        upload_stats.regions += copies.size();
+        upload_stats.bytes += total_size_bytes;
+        upload_stats.written += is_written ? 1 : 0;
+        for (const auto& c : copies) {
+            ++upload_stats.by_size[c.size <= 4_KB ? 0 : c.size <= 64_KB ? 1 : 2];
+        }
+        upload_stats.pass_breaks += scheduler.IsRendering() ? 1 : 0;
         scheduler.EndRendering();
         const auto cmdbuf = scheduler.CommandBuffer();
         const vk::BufferMemoryBarrier2 pre_barrier = {

@@ -194,6 +194,16 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
     RENDERER_TRACE;
 
     scheduler.PopPendingOperations();
+    // AETHER_FLUSH_DRAWS=<n>: submit what is recorded every n draws, so the GPU starts on a frame
+    // while the rest of it is still being recorded (otherwise it all goes at the flip).
+    static const u32 s_flush_draws = [] {
+        const char* v = std::getenv("AETHER_FLUSH_DRAWS");
+        return v ? static_cast<u32>(std::strtoul(v, nullptr, 10)) : 0u;
+    }();
+    if (s_flush_draws != 0 && ++draws_since_flush >= s_flush_draws) {
+        draws_since_flush = 0;
+        scheduler.Flush();
+    }
 
     // Trace-once diagnostics (BACHATA_DRAW_TRACE): three early-return paths below can each
     // silently skip every single draw call while frame presentation keeps succeeding
@@ -472,6 +482,14 @@ void Rasterizer::OnSubmit() {
                  buffer_cache.RegisteredCount(), buffer_cache.RegisteredBytes() >> 20,
                  texture_cache.RegisteredCount(), texture_cache.RegisteredBytes() >> 20);
         LOG_WARNING(Render_Vulkan, "Images by kind:{}", texture_cache.MemoryReport());
+        auto& us = buffer_cache.upload_stats;
+        LOG_WARNING(Render_Vulkan,
+                    "Buffer uploads since the last report: {} calls ({} for written buffers), {} copy regions "
+                    "({} up to 4 KB, {} up to 64 KB, {} larger), {} MiB, {} render passes ended by them; "
+                    "{} read-only bindings from the stream buffer ({} MiB)",
+                    us.calls, us.written, us.regions, us.by_size[0], us.by_size[1], us.by_size[2],
+                    us.bytes >> 20, us.pass_breaks, us.stream_calls, us.stream_bytes >> 20);
+        us = {};
         const auto ps = Core::TakeProtectStats();
         LOG_WARNING(Render_Vulkan,
                     "Page watchers since the last report: {} guest faults ({} in buffers, {} orphaned, "
