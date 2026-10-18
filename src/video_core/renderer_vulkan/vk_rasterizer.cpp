@@ -1198,10 +1198,11 @@ bool Rasterizer::InvalidateMemory(VAddr addr, u64 size) {
 // A write fault on a buffer page releases a window around it at once, so a copy across many watched pages faults once
 // instead of once per page (the extra pages are uploaded again on use). On Apple hosts every fault costs a signal and
 // several mprotect calls (Bloodborne: ~250k faults per 600 submissions, 2.7x fewer with 64 KB). BB_FAULT_WINDOW=<bytes,
-// a power of two> turns it on.
+// a power of two> sets it, 0 turns it off.
 static const u64 s_fault_window = [] {
-    // Off until it is proven on a phone: two of four variants of it crashed Bloodborne on the Mac.
-    constexpr u64 default_window = 0;
+    // 256 KiB, as bbport's macOS port: Bloodborne on the Mac went from ~255k to ~42k faults per report (mprotect time
+    // 8.9 -> 2.3 s), stable for 900 s in game once a still-blocked write fault retries its invalidation.
+    constexpr u64 default_window = 256_KB;
     const char* v = std::getenv("BB_FAULT_WINDOW");
     const u64 w = v ? std::strtoull(v, nullptr, 0) : default_window;
     return (w >= 4096 && (w & (w - 1)) == 0) ? w : 0;
