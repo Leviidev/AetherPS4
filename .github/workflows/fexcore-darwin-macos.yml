@@ -1,0 +1,67 @@
+name: FEXCore Darwin ARM64 smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ios-port-fex-darwin
+    paths:
+      - 'runtime/sources/fexcore-darwin/**'
+      - 'runtime/patches/fex-fexcore-only.patch'
+      - 'runtime/probes/**'
+      - 'runtime/scripts/build-fexcore-darwin-macos.sh'
+      - 'src/core/fex/**'
+      - 'src/core/guest_cpu/**'
+      - '.github/workflows/fexcore-darwin-macos.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fexcore-darwin-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    # macos-26 is an Apple Silicon ARM64 GitHub-hosted runner.
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Verify ARM64 macOS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = "Darwin"
+          test "$(uname -m)" = "arm64"
+          xcode-select -p
+          xcrun --sdk macosx --show-sdk-version
+
+      - name: Install build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install cmake ninja llvm
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+
+      - name: Install Python build helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/fex-build-venv"
+          "$RUNNER_TEMP/fex-build-venv/bin/python" -m pip install --upgrade pip packaging
+          echo "$RUNNER_TEMP/fex-build-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Build and run Darwin FEXCore smoke tests
+        shell: bash
+        run: bash runtime/scripts/build-fexcore-darwin-macos.sh
+
+      - name: Upload ARM64 smoke binaries and libraries
+        uses: actions/upload-artifact@v4
+        with:
+          name: fexcore-darwin-arm64-smoke
+          path: runtime/build/fexcore-darwin-macos-stage/
+          if-no-files-found: error
+          retention-days: 7
